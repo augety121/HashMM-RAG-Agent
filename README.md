@@ -149,7 +149,7 @@ docker-compose.yml Full-stack deployment
 
 ## Changelog
 
-### v0.9.0 (2025-05-16) — Agentic RAG
+### v0.1.1 (2025-05-16) — Agentic RAG
 
 - Agentic pipeline: intent classification → skill routing → evaluation → retry
 - Two-stage retrieval: hash coarse ranking → BGE-M3 cosine re-ranking
@@ -166,7 +166,7 @@ docker-compose.yml Full-stack deployment
 - Clean index rebuild script (removed 48% junk chunks)
 - max_tokens increased from 800 to 4096 (fixes table truncation)
 
-### v0.5.0 (2025-05-16) — Benchmark Release
+### v0.1.0 (2025-05-16) — Benchmark Release
 
 - Cross-modal hash network: BGE-M3 + SigLIP-2 → 256-bit binary codes
 - ViDoRe v2 benchmark: 98.5% of BGE-M3 nDCG@5 at 124× compression
