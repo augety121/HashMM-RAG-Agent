@@ -20,7 +20,7 @@ logger = get_logger("hashmm.agent.llm")
 def make_llm_fn(
     cfg: HashMMConfig,
     temperature: float = 0.1,
-    max_tokens: int = 800,
+    max_tokens: int = 4096,
 ) -> Callable[[str], str] | None:
     """Build a str→str LLM callable from config. Returns None if no API key.
 

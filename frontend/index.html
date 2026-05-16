@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HashMM-RAG</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap');
+:root{
+  --bg:#f5f5f7;--wh:#fff;--s1:#f0f0f3;--s2:#e5e5ea;--bd:#d9d9e3;
+  --tx:#1d1d1f;--tx2:#636366;--tx3:#aeaeb2;
+  --acc:#7c3aed;--acc2:#6d28d9;--accl:rgba(124,58,237,.08);
+  --grn:#059669;--grnl:rgba(5,150,105,.08);
+  --f:'Noto Sans SC',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--f);background:var(--bg);color:var(--tx)}
+
+/* Layout */
+.app{display:flex;height:100vh}
+.sb{width:260px;background:var(--wh);border-right:1px solid var(--bd);display:flex;flex-direction:column;transition:margin .25s;flex-shrink:0}
+.sb.hide{margin-left:-260px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* Sidebar */
+.sb-top{padding:12px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px}
+.sb-top b{font-size:14px;flex:1}
+.ib{all:unset;cursor:pointer;width:32px;height:32px;display:grid;place-items:center;border-radius:8px;font-size:14px;color:var(--tx2);transition:.12s}
+.ib:hover{background:var(--s1)}
+.nb{all:unset;cursor:pointer;padding:6px 12px;border:1px solid var(--bd);border-radius:8px;font-size:12px;color:var(--tx2);font-family:var(--f);transition:.12s;white-space:nowrap}
+.nb:hover{background:var(--s1);color:var(--tx)}
+.sb-list{flex:1;overflow-y:auto;padding:6px}
+.hi{padding:8px 10px;border-radius:8px;font-size:13px;cursor:pointer;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:1px;transition:.1s}
+.hi:hover{background:var(--s1);color:var(--tx)}
+.hi.act{background:var(--accl);color:var(--acc);font-weight:500}
+.sb-btm{border-top:1px solid var(--bd);padding:8px}
+.sb-user{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;transition:.12s}
+.sb-user:hover{background:var(--s1)}
+.av{width:32px;height:32px;border-radius:50%;background:var(--acc);display:grid;place-items:center;color:#fff;font-size:13px;font-weight:600;flex-shrink:0}
+.uname{font-size:13px;font-weight:500}
+.urole{font-size:11px;color:var(--tx3)}
+.sb-link{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;color:var(--tx2);cursor:pointer;transition:.1s}
+.sb-link:hover{background:var(--s1);color:var(--tx)}
+
+/* Topbar */
+.topbar{height:48px;border-bottom:1px solid var(--bd);background:var(--wh);display:flex;align-items:center;padding:0 16px;gap:8px;flex-shrink:0}
+.topbar h2{font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Chat */
+.chat{flex:1;overflow-y:auto}
+.ci{max-width:780px;margin:0 auto;padding:20px}
+.m{margin-bottom:24px;animation:fi .25s ease}
+@keyframes fi{from{opacity:0;transform:translateY(4px)}}
+.m-u{display:flex;justify-content:flex-end}.m-a{display:flex;gap:10px}
+.mi{width:28px;height:28px;border-radius:8px;background:var(--acc);display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0;margin-top:2px}
+.ubbl{background:var(--acc);color:#fff;padding:10px 16px;border-radius:18px 18px 4px 18px;font-size:14px;line-height:1.7;max-width:70%;word-break:break-word}
+.abody{flex:1;min-width:0}
+.atxt{font-size:14.5px;line-height:1.85;color:var(--tx)}
+.atxt strong,.atxt b{color:var(--acc2)}
+.atxt table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}
+.atxt th{background:var(--s1);font-weight:600;text-align:left;padding:8px 12px;border:1px solid var(--bd)}
+.atxt td{padding:8px 12px;border:1px solid var(--bd)}
+.atxt tr:hover{background:var(--s1)}
+.atxt code{font-family:var(--mono);font-size:12px;background:var(--s1);padding:1px 5px;border-radius:4px}
+.atxt .katex{font-size:14px}
+.atxt .katex-display{margin:4px 0;overflow-x:auto}
+.atxt .math-block{display:block;margin:4px 0;overflow-x:auto}
+.atxt .math-inline{display:inline}
+.atxt p{margin:0}.atxt br+br{display:none}
+.atime{font-size:11px;color:var(--tx3);margin-top:4px}
+.cite{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:4px;background:var(--accl);color:var(--acc);font-size:9px;font-weight:700;cursor:pointer;vertical-align:super;position:relative;top:-2px;transition:.12s}
+.cite:hover{background:var(--acc);color:#fff}
+
+/* Sources */
+.spanel{margin-top:10px;border:1px solid var(--bd);border-radius:10px;overflow:hidden}
+.stoggle{padding:8px 12px;background:var(--s1);cursor:pointer;font-size:12px;font-weight:500;color:var(--tx2);display:flex;align-items:center;gap:5px;user-select:none}
+.stoggle:hover{background:var(--s2)}
+.sbody{display:none;padding:6px}.sbody.open{display:block}
+.sc{padding:8px;border-radius:8px;font-size:12px;margin-bottom:3px;background:var(--bg);border:1px solid transparent;transition:.12s;cursor:pointer}
+.sc:hover{border-color:var(--acc)}
+.sc-h{display:flex;justify-content:space-between;margin-bottom:2px}
+.sc-m{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;background:var(--accl);color:var(--acc)}
+.sc-s{font-family:var(--mono);color:var(--grn);font-size:10px}
+.sc-t{color:var(--tx2);font-size:11px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* Thinking */
+.think{display:flex;gap:10px;margin-bottom:16px;animation:fi .25s}
+.thbody{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--tx2);line-height:1.6}
+.thbody .st{margin-bottom:3px}.thbody b{color:var(--tx)}
+.dpulse{width:6px;height:6px;border-radius:50%;background:var(--acc);display:inline-block;animation:pp 1s infinite}
+@keyframes pp{0%,100%{opacity:.3}50%{opacity:1}}
+
+/* Empty */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:40px}
+.empty h3{font-size:18px;font-weight:700;margin-bottom:6px}
+.empty p{font-size:13px;color:var(--tx2);max-width:400px;line-height:1.7;margin-bottom:16px}
+.eqg{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:480px}
+.eq{font-size:12.5px;color:var(--tx);cursor:pointer;padding:12px;background:var(--wh);border:1px solid var(--bd);border-radius:10px;transition:.15s;text-align:left;line-height:1.5}
+.eq:hover{border-color:var(--acc);box-shadow:0 2px 8px rgba(0,0,0,.04)}
+
+/* Input */
+.iptw{padding:12px 20px;flex-shrink:0}
+.ipti{max-width:780px;margin:0 auto}
+.iw{display:flex;gap:8px;background:var(--wh);border:1.5px solid var(--bd);border-radius:24px;padding:4px 4px 4px 18px;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.iw:focus-within{border-color:var(--acc);box-shadow:0 0 0 3px rgba(124,58,237,.06)}
+.iw input{flex:1;background:none;border:none;color:var(--tx);font-size:14px;font-family:var(--f);outline:none;padding:10px 0;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.iw input::placeholder{color:var(--tx3)}
+.sbtn{width:40px;height:40px;border-radius:50%;border:none;background:var(--acc);color:#fff;cursor:pointer;font-size:16px;display:grid;place-items:center;transition:.15s}
+.sbtn:hover{background:var(--acc2)}.sbtn:disabled{opacity:.2;cursor:not-allowed}
+
+/* Settings Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;z-index:100;place-items:center}
+.modal-bg.show{display:grid}
+.modal{background:var(--wh);border-radius:16px;width:480px;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.15)}
+.modal-hdr{padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center}
+.modal-hdr h3{font-size:15px;font-weight:600}
+.modal-body{padding:20px}
+.setting-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--s1)}
+.setting-row:last-child{border:none}
+.setting-label{font-size:13px;font-weight:500}
+.setting-desc{font-size:11px;color:var(--tx3);margin-top:2px}
+.colors{display:flex;gap:8px}
+.cdot{width:28px;height:28px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:.12s}
+.cdot:hover{transform:scale(1.15)}
+.cdot.sel{border-color:var(--tx);transform:scale(1.15)}
+.setting-val{font-size:12px;color:var(--tx2);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="app">
+<!-- Sidebar -->
+<div class="sb" id="sb">
+  <div class="sb-top">
+    <button class="ib" onclick="toggleSb()" title="折叠">☰</button>
+    <b>HashMM-RAG</b>
+    <button class="nb" onclick="newChat()">+ 新对话</button>
+  </div>
+  <div class="sb-list" id="hist"></div>
+  <div class="sb-btm">
+    <div class="sb-link" onclick="openSettings()">⚙️ 设置</div>
+    <div class="sb-user" onclick="openSettings()">
+      <div class="av">管</div>
+      <div><div class="uname">管理员</div><div class="urole" id="sInfo">256-bit · — 文档块</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="topbar">
+    <button class="ib" id="sbToggle" onclick="toggleSb()" style="display:none">☰</button>
+    <h2 id="title">有什么可以帮忙的？</h2>
+  </div>
+  <div class="chat" id="chat"><div class="ci" id="ci">
+    <div class="empty" id="emp">
+      <h3>有什么可以帮忙的？</h3>
+      <p>我是 HashMM-RAG 学术助手，专注于跨模态哈希与信息检索领域。可以回答论文相关问题，也可以结合背景知识补充解答。</p>
+      <div class="eqg">
+        <div class="eq" onclick="ask(this)">What is DCMH and how does its loss function work?</div>
+        <div class="eq" onclick="ask(this)">Explain quantization loss in cross-modal hashing</div>
+        <div class="eq" onclick="ask(this)">How does Hash-RAG integrate hashing with RAG?</div>
+        <div class="eq" onclick="ask(this)">Compare ColPali and ColBERT for document retrieval</div>
+      </div>
+    </div>
+  </div></div>
+  <div class="iptw"><div class="ipti"><div class="iw">
+    <input id="qi" placeholder="有问题，尽管问" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
+    <button class="sbtn" id="sendbtn" onclick="send()">↑</button>
+  </div></div></div>
+</div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeSettings()">
+<div class="modal">
+  <div class="modal-hdr"><h3>设置</h3><button class="ib" onclick="closeSettings()">✕</button></div>
+  <div class="modal-body">
+    <div class="setting-row">
+      <div><div class="setting-label">重点色</div><div class="setting-desc">对话界面的主题色</div></div>
+      <div class="colors" id="colorPicker"></div>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">哈希位数</div><div class="setting-desc">检索索引配置</div></div>
+      <div class="setting-val" id="setBits">256-bit</div>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">OCR 引擎</div><div class="setting-desc">文档文字提取</div></div>
+      <div class="setting-val">PaddleOCR</div>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">LLM</div><div class="setting-desc">语言模型连接状态</div></div>
+      <div class="setting-val" id="setLLM">检测中...</div>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">索引大小</div><div class="setting-desc">FAISS 二进制索引</div></div>
+      <div class="setting-val" id="setIdx">—</div>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">文档块数</div><div class="setting-desc">已索引的内容片段</div></div>
+      <div class="setting-val" id="setChunks">—</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const A=location.origin;
+let sid=null;
+const THEMES=[
+  {name:'紫色',c:'#7c3aed',c2:'#6d28d9'},
+  {name:'蓝色',c:'#2563eb',c2:'#1d4ed8'},
+  {name:'绿色',c:'#059669',c2:'#047857'},
+  {name:'橙色',c:'#d97706',c2:'#b45309'},
+  {name:'粉色',c:'#db2777',c2:'#be185d'},
+  {name:'红色',c:'#dc2626',c2:'#b91c1c'},
+];
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8)}
+function $(id){return document.getElementById(id)}
+function esc(t){return(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function scroll(){$("chat").scrollTo({top:$("chat").scrollHeight,behavior:"smooth"})}
+function render(t){
+  // Protect LaTeX blocks from escaping: extract, replace with placeholders
+  const mathBlocks=[];
+  // Block math $$...$$
+  t=t.replace(/\$\$([\s\S]+?)\$\$/g,(_,m)=>{mathBlocks.push({d:true,m});return `%%MATH${mathBlocks.length-1}%%`});
+  // Inline math $...$
+  t=t.replace(/\$([^\$\n]+?)\$/g,(_,m)=>{mathBlocks.push({d:false,m});return `%%MATH${mathBlocks.length-1}%%`});
+  // Also catch \[...\] and \(...\)
+  t=t.replace(/\\\[([\s\S]+?)\\\]/g,(_,m)=>{mathBlocks.push({d:true,m});return `%%MATH${mathBlocks.length-1}%%`});
+  t=t.replace(/\\\(([\s\S]+?)\\\)/g,(_,m)=>{mathBlocks.push({d:false,m});return `%%MATH${mathBlocks.length-1}%%`});
+
+  // Markdown table → HTML table
+  t=t.replace(/(\|.+\|[ \t]*\n?)+/g,function(table){
+    const rows=table.trim().split('\n').filter(r=>r.includes('|'));
+    if(rows.length<2)return table;
+    const parse=r=>r.split('|').slice(1,-1).map(c=>c.trim());
+    const hdr=parse(rows[0]);
+    const isSep=r=>/^[\s|:-]+$/.test(r);
+    const startBody=isSep(rows[1])?2:1;
+    let h='<table><thead><tr>'+hdr.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>';
+    for(let i=startBody;i<rows.length;i++){
+      const cells=parse(rows[i]);
+      if(cells.length===0||isSep(rows[i]))continue;
+      h+='<tr>'+cells.map(c=>'<td>'+esc(c)+'</td>').join('')+'</tr>';
+    }
+    return h+'</tbody></table>';
+  });
+
+  // Escape remaining HTML
+  t=t.replace(/<(?!\/?(?:table|thead|tbody|tr|th|td)[ >])/g,'&lt;');
+
+  // Headers → bold (compact spacing)
+  t=t.replace(/^#{1,4}\s+(.+)/gm,'<div style="font-weight:700;font-size:15px;margin:8px 0 2px">$1</div>');
+  t=t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  t=t.replace(/\[(\d+)\]/g,'<span class="cite" onclick="openSrc($1)">$1</span>');
+  t=t.replace(/\[来源(\d+)\]/g,'<span class="cite" onclick="openSrc($1)">$1</span>');
+  t=t.replace(/^[-•] (.+)/gm,'<div style="padding-left:16px;text-indent:-12px">• $1</div>');
+  t=t.replace(/^(\d+)\.\s+(.+)/gm,'<div style="padding-left:20px;text-indent:-20px">$1. $2</div>');
+  t=t.replace(/\n/g,'<br>');
+
+  // Restore math blocks as KaTeX-renderable spans
+  t=t.replace(/%%MATH(\d+)%%/g,(_,i)=>{
+    const b=mathBlocks[+i];
+    if(!b)return '';
+    return b.d?`<span class="math-block">$$${b.m}$$</span>`:`<span class="math-inline">$${b.m}$</span>`;
+  });
+  return t;
+}
+
+function renderMath(el){
+  if(window.renderMathInElement){
+    try{
+      renderMathInElement(el,{
+        delimiters:[
+          {left:"$$",right:"$$",display:true},
+          {left:"$",right:"$",display:false},
+        ],
+        throwOnError:false,
+        trust:true
+      });
+    }catch(e){console.warn('KaTeX error:',e)}
+  }
+}
+
+// ── Sidebar ──
+function toggleSb(){const s=$("sb");s.classList.toggle("hide");$("sbToggle").style.display=s.classList.contains("hide")?"grid":"none"}
+
+// ── Settings ──
+function openSettings(){$("modalBg").classList.add("show")}
+function closeSettings(){$("modalBg").classList.remove("show")}
+function initColors(){
+  const p=$("colorPicker");p.innerHTML="";
+  const saved=localStorage.getItem("hmm_theme")||THEMES[0].c;
+  THEMES.forEach(t=>{
+    const d=document.createElement("div");d.className="cdot"+(t.c===saved?" sel":"");
+    d.style.background=t.c;d.title=t.name;
+    d.onclick=()=>{applyTheme(t);document.querySelectorAll(".cdot").forEach(x=>x.classList.remove("sel"));d.classList.add("sel")};
+    p.appendChild(d);
+  });
+  const th=THEMES.find(t=>t.c===saved)||THEMES[0];applyTheme(th);
+}
+function applyTheme(t){
+  document.documentElement.style.setProperty("--acc",t.c);
+  document.documentElement.style.setProperty("--acc2",t.c2);
+  document.documentElement.style.setProperty("--accl",t.c+"14");
+  localStorage.setItem("hmm_theme",t.c);
+}
+
+// ── History (localStorage) ──
+function saveHist(){
+  const data=JSON.parse(localStorage.getItem("hmm_s")||"{}");
+  if(sid&&window._msgs&&window._msgs.length){data[sid]={t:window._title||"对话",m:window._msgs,ts:Date.now()}}
+  localStorage.setItem("hmm_s",JSON.stringify(data));
+}
+function loadHist(){
+  const data=JSON.parse(localStorage.getItem("hmm_s")||"{}");
+  const h=$("hist");h.innerHTML="";
+  Object.entries(data).sort((a,b)=>(b[1].ts||0)-(a[1].ts||0)).slice(0,50).forEach(([id,s])=>{
+    const d=document.createElement("div");d.className="hi"+(id===sid?" act":"");
+    d.textContent=s.t||"对话";d.onclick=()=>loadSession(id,s);h.appendChild(d);
+  });
+}
+function loadSession(id,s){
+  sid=id;window._msgs=s.m||[];window._title=s.t;
+  $("title").textContent=s.t||"对话";
+  const ci=$("ci");ci.innerHTML="";
+  s.m.forEach(m=>{if(m.r==="user")addUser(m.c);else addBot(m.c,m.s)});
+  loadHist();scroll();
+}
+
+// ── Messages ──
+function addUser(text){
+  const e=$("emp");if(e)e.remove();
+  const d=document.createElement("div");d.className="m m-u";
+  d.innerHTML=`<div class="ubbl">${esc(text)}</div>`;
+  $("ci").appendChild(d);scroll();
+}
+function addBot(text,sources){
+  const d=document.createElement("div");d.className="m m-a";
+  let sh="";
+  if(sources&&sources.length){
+    const cards=sources.map((s,i)=>`<div class="sc"><div class="sc-h"><span class="sc-m">[${i+1}] ${s.modality||'text'}</span><span class="sc-s">${s.score||''}</span></div><div class="sc-t">${esc(s.text).slice(0,180)}</div></div>`).join("");
+    sh=`<div class="spanel"><div class="stoggle" onclick="this.nextElementSibling.classList.toggle('open')">📎 ${sources.length} 条参考来源 ▾</div><div class="sbody">${cards}</div></div>`;
+  }
+  d.innerHTML=`<div class="mi">H</div><div class="abody"><div class="atxt">${render(text)}</div>${sh}<div class="atime">${new Date().toLocaleTimeString()}</div></div>`;
+  $("ci").appendChild(d);
+  // Render LaTeX formulas
+  const atxt=d.querySelector(".atxt");
+  if(atxt)renderMath(atxt);
+  scroll();return d;
+}
+function addThink(html){
+  const d=document.createElement("div");d.className="think";d.id="thk";
+  d.innerHTML=`<div class="mi">H</div><div class="thbody">${html}<div class="st"><div class="dpulse"></div></div></div>`;
+  $("ci").appendChild(d);scroll();
+}
+function updThink(html){const t=$("thk");if(t)t.querySelector(".thbody").innerHTML=html+'<div class="st"><div class="dpulse"></div></div>';scroll()}
+function rmThink(){const t=$("thk");if(t)t.remove()}
+function openSrc(n){document.querySelectorAll(".sbody").forEach(b=>b.classList.add("open"));const c=document.querySelectorAll(".sc");if(c[n-1]){c[n-1].style.background="var(--accl)";setTimeout(()=>c[n-1].style.background="",2000)}}
+
+// ── Send ──
+async function send(){
+  const i=$("qi"),q=i.value.trim();if(!q)return;
+  i.value="";$("sendbtn").disabled=true;
+  if(!sid){sid=uid();window._msgs=[];window._title=q.slice(0,25)}
+  $("title").textContent=window._title;
+  addUser(q);
+  window._msgs.push({r:"user",c:q});
+  addThink('<div class="st"><b>思考中</b> 正在分析并检索...</div>');
+  try{
+    const r=await fetch(A+"/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:q,session_id:sid})});
+    const d=await r.json();
+    if(d.session_id)sid=d.session_id;
+    // Show real trace from agent
+    if(d.trace&&d.trace.length){
+      updThink(d.trace.map(t=>`<div class="st"><b>${t.node}</b> ${esc(t.detail)}</div>`).join(''));
+    }
+    await new Promise(r=>setTimeout(r,500));
+    rmThink();
+    // Display complete answer at once
+    addBot(d.answer,d.sources);
+    window._msgs.push({r:"assistant",c:d.answer,s:d.sources});
+    saveHist();loadHist();
+  }catch(e){rmThink();addBot("请求失败："+e.message)}
+  $("sendbtn").disabled=false;
+}
+function ask(el){$("qi").value=el.textContent;send()}
+function newChat(){
+  sid=null;window._msgs=[];window._title="";
+  $("ci").innerHTML=`<div class="empty" id="emp"><h3>有什么可以帮忙的？</h3><p>跨模态哈希与信息检索领域学术助手</p><div class="eqg"><div class="eq" onclick="ask(this)">What is DCMH?</div><div class="eq" onclick="ask(this)">Explain quantization loss</div><div class="eq" onclick="ask(this)">How does Hash-RAG work?</div><div class="eq" onclick="ask(this)">Compare supervised vs unsupervised hashing</div></div></div>`;
+  $("title").textContent="有什么可以帮忙的？";
+  document.querySelectorAll(".hi").forEach(h=>h.classList.remove("act"));
+}
+
+// ── Init ──
+async function init(){
+  initColors();
+  try{const r=await fetch(A+"/api/corpus/stats");const d=await r.json();
+    $("sInfo").textContent=`${d.hash_bits}-bit · ${d.total_chunks.toLocaleString()} 文档块`;
+    $("setBits").textContent=d.hash_bits+"-bit";
+    $("setChunks").textContent=d.total_chunks.toLocaleString();
+    $("setIdx").textContent=d.index_size_kb+" KB";
+    $("setLLM").textContent=d.llm_ready?"✅ 已连接":"⚠️ 未配置";
+    $("setLLM").style.color=d.llm_ready?"var(--grn)":"var(--amb)";
+  }catch(e){}
+  loadHist();
+}
+init();
+</script>
+</body>
+</html>
