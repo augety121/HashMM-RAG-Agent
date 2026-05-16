@@ -243,21 +243,21 @@ tests/             86 unit tests
 
 ## References
 
-DCMH (CVPR 2017) · Hash-RAG (ACL 2025) · ViDoRe v2 (2025) · BGE-M3 (2024) · ColPali (2024) · Mem0 (ECAI 2025) · PaddleOCR
+- **[DCMH]** (CVPR 2017)  
+- **[Hash-RAG]** (ACL 2025)  
+- **[ViDoRe v2]** (2025)  
+- **[BGE-M3]** (2024)  
+- **[ColPali]** (2024)  
+- **[Mem0]** (ECAI 2025)  
+- **[PaddleOCR]**  
 
-**[DCMH](https://openaccess.thecvf.com/content_cvpr_2017/html/Jiang_Deep_Cross-Modal_Hashing_CVPR_2017_paper.html) (CVPR 2017)**：
-
-**[Hash-RAG](https://aclanthology.org/2025.findings-acl.1376/) (ACL 2025)**：
-
-**[ViDoRe v2](https://arxiv.org/abs/2505.17166) (2025)**：
-
-**[BGE-M3](https://arxiv.org/abs/2402.03216) (2024)**：
-
-**[ColPali](https://arxiv.org/abs/2407.01449) (2024)**：
-
-**[Mem0](https://arxiv.org/abs/2504.19413) (ECAI 2025)**：
-
-**[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)**：
+[DCMH]: https://openaccess.thecvf.com/content_cvpr_2017/html/Jiang_Deep_Cross-Modal_Hashing_CVPR_2017_paper.html
+[Hash-RAG]: https://aclanthology.org/2025.findings-acl.1376/
+[ViDoRe v2]: https://arxiv.org/abs/2505.17166
+[BGE-M3]: https://arxiv.org/abs/2402.03216
+[ColPali]: https://arxiv.org/abs/2407.01449
+[Mem0]: https://arxiv.org/abs/2504.19413
+[PaddleOCR]: https://github.com/PaddlePaddle/PaddleOCR
 
 
 ## License
