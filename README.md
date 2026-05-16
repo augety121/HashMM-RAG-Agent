@@ -1,233 +1,191 @@
 # HashMM-RAG
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests: 86 passed](https://img.shields.io/badge/tests-86%20passed-brightgreen)]()
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-
 **Cross-modal hash-augmented multimodal RAG agent.**
 
-HashMM-RAG replaces the dense-vector retrieval layer in multimodal RAG with
-learned cross-modal hash codes. On the ViDoRe v2 biomedical benchmark,
-**256-bit HashMM-RAG matches 99.7% of BGE-M3's nDCG@5 (0.385 vs 0.386) while
-using a 124× smaller index** (32 KB vs 3.97 MB). The system combines a
-DCMH-style cross-modal hash network, a LangGraph agent with rule-based
-routing, a three-layer memory system with hash-indexed semantic cache, and an
-MCP server for integration with Claude Desktop / Cursor.
-
-> **v0.5.0** — M1–M7 closed. M6 MCP server shipped. 86 tests. PaddleOCR.
+HashMM-RAG 将跨模态哈希检索与 Agentic RAG 系统结合，实现了 **98.5% of BGE-M3 检索精度，索引压缩 124 倍**。系统包含意图分类、两阶段检索（hash 粗排 + cosine 精排）、三层记忆、语义缓存、安全防护等生产级能力。
 
 ---
 
-## Benchmark Results
+## Benchmark
 
-ViDoRe v2 `biomedical_lectures_eng_v2` (1,016 documents, 160 queries).
-OCR: PaddleOCR v2.x. Evaluation: pytrec_eval.
+ViDoRe v2 benchmark（biomedical + economics，PaddleOCR，256-bit）
 
-| Model | nDCG@5 | nDCG@10 | R@5 | R@10 | MAP | Index | Compression |
-|---|---|---|---|---|---|---|---|
-| BGE-M3 dense | **0.3861** | 0.4193 | 0.4341 | 0.5322 | 0.3570 | 3.97 MB | 1× |
-| HashMM-RAG 256-bit | 0.3851 | 0.4203 | 0.4325 | 0.5333 | 0.3516 | 0.03 MB | **124×** |
-| HashMM-RAG 128-bit | 0.3567 | 0.3887 | 0.3946 | 0.4890 | 0.3204 | 0.02 MB | **199×** |
+| Model | nDCG@5 | Index Size | Compression |
+|---|---|---|---|
+| BGE-M3 dense | 0.2761 | 2.8 MB | 1× |
+| **HashMM-RAG 256-bit** | **0.2721** | **23 KB** | **124×** |
 
-**256-bit HashMM-RAG matches BGE-M3 within 0.1 pts nDCG@5 — functionally
-equivalent retrieval quality at 1/124th the storage.**
-
-### PaddleOCR Impact
-
-Switching OCR from Tesseract to PaddleOCR improved both models significantly:
-
-| Configuration | BGE-M3 nDCG@5 | HashMM-RAG 128-bit nDCG@5 |
-|---|---|---|
-| Tesseract (v0.4.0) | 0.3250 | 0.3052 |
-| PaddleOCR (v0.5.0) | 0.3861 (+6.1 pts) | 0.3567 (+5.2 pts) |
-
-OCR quality is the single largest contributor to retrieval performance on
-slide-heavy datasets.
-
----
+98.5% of BGE-M3 quality at 1/124th the storage.
 
 ## Architecture
 
 ```
-                       PDFs / images / tables
-                        │
-       ┌────────────────▼───────────────┐
-       │ M1  Ingestion                  │  MinerU adapter → typed chunks
-       │     + cross-modal pair extract │  (text / image / table / chart)
-       └────────────────┬───────────────┘
-                        │
-       ┌────────────────▼───────────────┐
-       │ M2  Cross-Modal Hash Net       │  DCMH-style: BGE-M3 + SigLIP-2
-       │     128/256-bit binary codes   │  → shared code space via MLP heads
-       └────────────────┬───────────────┘
-                        │
-       ┌────────────────▼───────────────┐
-       │ M3  Retrieval Layer            │  vector / hash / hybrid (RRF)
-       │     + Hamming dedup            │
-       └────────────────┬───────────────┘
-                        │
-       ┌────────────────▼───────────────────────────────┐
-       │ M4  LangGraph Agent (9 nodes)                  │
-       │   semcache → classify → plan → retrieve →      │
-       │   check → {generate | refine} → write → END    │
-       └────────────────┬───────────────────────────────┘
-                        │
-       ┌────────────────▼───────────────┐
-       │ M5  Three-Layer Memory         │  working / episodic / semcache
-       │     hash-indexed cache:        │  O(N) Hamming + O(K·d) cosine
-       └────────────────────────────────┘
-
-       ┌────────────────────────────────┐
-       │ M6  MCP Server                 │  cross_modal_search tool
-       │     Claude Desktop / Cursor    │  stdio transport
-       └────────────────────────────────┘
-
-       ┌────────────────────────────────┐
-       │ M7  Benchmark                  │  ViDoRe v2, pytrec_eval
-       │     PaddleOCR + fine-tuning    │
-       └────────────────────────────────┘
+User Query
+  → Safety Check (prompt injection / banned words / XSS)
+  → Follow-up Detection (理解"它""这个"等代词)
+  → Intent Classification (academic_kb / academic_open / compare / chitchat)
+  → Semantic Cache (cosine > 0.92 → cache hit, 0 LLM calls)
+  → Query Rewrite (中文 → 英文关键词)
+  → Two-Stage Retrieval:
+      Stage 1: FAISS Binary Hamming (hash 粗排, top-20)
+      Stage 2: BGE-M3 Cosine Similarity (精排, top-5)
+      Fallback: BM25 Keyword Search
+  → LLM Generation (DeepSeek / OpenAI compatible)
+  → Answer Evaluation (LLM 1-5 质量评分, 不达标自动重试)
+  → Persistent Memory (sessions / profiles / episodes 写磁盘)
+  → Structured Metrics (延迟 / 缓存命中率 / token 用量)
 ```
 
----
+## Tech Stack
+
+| Component | Choice |
+|---|---|
+| Text Encoder | BGE-M3 (1024-d, frozen) |
+| Image Encoder | SigLIP-2 base (768-d, frozen) |
+| Hash Net | CrossModalHashNet, 256-bit |
+| Agent | LangGraph + FastAPI |
+| LLM | DeepSeek / OpenAI compatible |
+| OCR | PaddleOCR v2.x |
+| Vector DB | FAISS Binary |
+| MCP | FastMCP (mcp ≥1.2) |
 
 ## Quick Start
 
 ```bash
-# ── Environment ────────────────────────────────────────────────────
-export HF_ENDPOINT=https://hf-mirror.com
-export MINERU_MODEL_SOURCE=modelscope
-pip install -e ".[hash,ingest,agent,eval,mcp]"
-pip install "paddleocr<3" --break-system-packages
+# 1. Clone
+git clone https://github.com/augety121/hashmm-rag.git
+cd hashmm-rag
 
-# ── 1. Bootstrap corpus ───────────────────────────────────────────
-bash scripts/run_parse_overnight.sh
+# 2. Install
+pip install -e ".[hash,agent,eval,mcp]"
+pip install "paddleocr<3" fastapi uvicorn --break-system-packages
 
-# ── 2. Train hash net + build index ──────────────────────────────
-python scripts/03_train_hash_net.py --pairs data/pairs.jsonl
-python scripts/04_build_index.py --chunks data/chunks.jsonl
+# 3. Train (需要 GPU)
+python scripts/01_download_models.py
+python scripts/02_extract_pairs.py --parsed data/parsed --chunks data/chunks.jsonl --pairs data/pairs.jsonl
+HASH_BITS=256 python scripts/03_train_hash_net.py --pairs data/pairs.jsonl
+HASH_BITS=256 python scripts/04_build_index.py --chunks data/chunks.jsonl
 
-# ── 3. Query ──────────────────────────────────────────────────────
-python scripts/05_query.py --query "cross-modal hashing"
-python scripts/06_agent_query.py --query "compare ColPali and ColBERT"
+# 4. Clean index (去除 48% 噪音 chunk)
+HASH_BITS=256 python scripts/17_rebuild_clean_index.py
 
-# ── 4. Benchmark (PaddleOCR) ─────────────────────────────────────
+# 5. Launch
+export LLM_API_KEY="your-deepseek-key"
+export LLM_BASE_URL="https://api.deepseek.com/v1"
+export LLM_MODEL="deepseek-chat"
+HASH_BITS=256 PYTHONPATH=. uvicorn hashmm.api.server:app --host 0.0.0.0 --port 8000
+```
+
+Open `http://localhost:8000` for the web UI.
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Web UI |
+| `/api/chat` | POST | Agent chat (JSON: `{message, session_id}`) |
+| `/api/corpus/stats` | GET | Index statistics |
+| `/api/sessions` | GET | List conversation sessions |
+| `/api/sessions/{id}` | GET | Get session history |
+| `/api/metrics` | GET | Latency / cache hit rate / LLM calls |
+| `/api/experience` | GET | Episode log + user profiles |
+| `/api/health` | GET | Readiness probe |
+| `/docs` | GET | OpenAPI documentation |
+
+## Benchmark Commands
+
+```bash
+# Run ViDoRe v2 benchmark
 HASH_BITS=256 python scripts/09_run_vidore.py \
     --dataset biomedical_lectures_eng_v2 --retriever both --ocr paddleocr
 
-# ── 5. Launch demo ────────────────────────────────────────────────
-pip install gradio --break-system-packages
-python scripts/demo_gradio.py
+# Multi-subset generalization test
+HASH_BITS=256 python scripts/16_run_generalization.py --ocr paddleocr
 
-# ── 6. Start MCP server (for Claude Desktop / Cursor) ────────────
-python -m hashmm.mcp_server.server
+# Fine-tune on target domain
+python scripts/10_finetune_vidore.py --dataset biomedical_lectures_eng_v2
 ```
 
-### Claude Desktop Integration
+## MCP Server (Claude Desktop / Cursor)
 
-Add to `~/.config/claude/claude_desktop_config.json`:
+```bash
+PYTHONPATH=. python -m hashmm.mcp_server
+```
 
+Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
     "hashmm-rag": {
       "command": "python",
-      "args": ["-m", "hashmm.mcp_server.server"],
-      "cwd": "/root/autodl-tmp"
+      "args": ["-m", "hashmm.mcp_server"],
+      "cwd": "/path/to/hashmm-rag"
     }
   }
 }
 ```
-
-Then ask Claude: *"Search my papers for cross-modal hashing methods"* — it
-calls `cross_modal_search` automatically.
-
----
 
 ## Project Structure
 
 ```
 hashmm/
   ingestion/       M1 — MinerU adapter, chunk + pair extraction
-  hashing/         M2 — CrossModalHashNet, losses, FAISS bridge, training
-  retrieval/       M3 — vector / hash / hybrid, RRF, Hamming dedup
-  agent/           M4 — LangGraph state machine (9 nodes, 2 conditional edges)
-  memory/          M5 — working / episodic / hash-indexed semantic cache
-  benchmark/       M7 — ViDoRe loader, PaddleOCR, pytrec_eval evaluator
-  mcp_server/      M6 — FastMCP server (tools + resources + prompts)
-  config.py        Pydantic config with env-var overrides
+  hashing/         M2 — CrossModalHashNet, FAISS bridge, training
+  retrieval/       M3 — vector / hash / hybrid, RRF
+  agent/           M4 — LangGraph state machine (9 nodes)
+  memory/          M5 — working / episodic / semantic cache
+  benchmark/       M7 — ViDoRe loader, PaddleOCR, pytrec_eval
+  mcp_server/      M6 — FastMCP server
+  api/             REST API — Agentic RAG server (v0.9)
+  config.py        Pydantic config
 
-scripts/
-  00-10            Pipeline scripts (download → parse → train → index → query → benchmark)
-  demo_gradio.py   Interactive web demo
-  16_run_generalization.py   Multi-subset benchmark runner
-
-tests/             86 unit tests (no GPU required)
+frontend/          Web UI
+scripts/           Pipeline scripts (01-17)
+tests/             86 unit tests
+Dockerfile         Production container
+docker-compose.yml Full-stack deployment
+.github/workflows/ CI (lint + test + docker)
 ```
 
----
+## Changelog
 
-## Key Design Decisions
+### v0.9.0 (2025-05-16) — Agentic RAG
 
-| Decision | Why |
-|---|---|
-| DCMH-style hashing | Learnable cross-modal alignment into shared binary space |
-| `BatchNorm1d(affine=False)` | Hard anti-collapse: forces zero-mean unit-variance per bit |
-| Frozen encoders + trainable heads | Cache encoder outputs once; iterate on hash heads in minutes |
-| 256-bit codes (vs 128) | 99.7% of BGE-M3 at 124× compression (vs 92% at 199×) |
-| PaddleOCR over Tesseract | +6 pts nDCG on slide-heavy datasets |
-| LangGraph state machine | Rule-based routing keeps 90% of queries deterministic |
-| Hash-indexed semantic cache | O(N) Hamming + O(K·d) cosine ≪ O(N·d) full scan |
-| MCP server (FastMCP) | One implementation, callable from Claude / Cursor / LangGraph |
+- Agentic pipeline: intent classification → skill routing → evaluation → retry
+- Two-stage retrieval: hash coarse ranking → BGE-M3 cosine re-ranking
+- BM25 keyword search as fallback retrieval skill
+- Hermes-style 3-layer memory (working / semantic / episodic)
+- User profiling: topic tracking, language preference, adaptive responses
+- Semantic cache: similar queries hit cache, 0 LLM calls
+- Persistent storage: sessions/profiles/episodes survive restart
+- Safety: prompt injection detection, banned words, XSS filtering, output sanitization
+- Follow-up detection: understands pronouns and context references
+- Structured metrics: latency, cache hit rate, LLM call count
+- Answer quality evaluation: LLM scores 1-5, auto-retry if below threshold
+- Experience logging: tracks which strategies work for which query types
+- Clean index rebuild script (removed 48% junk chunks)
+- max_tokens increased from 800 to 4096 (fixes table truncation)
 
----
+### v0.5.0 (2025-05-16) — Benchmark Release
 
-## Tests
-
-```bash
-pytest tests/ -v    # 86 tests, no GPU
-```
-
-| File | Tests | Coverage |
-|---|---|---|
-| `test_agent.py` | 25 | Intent, routing, quality checks, refine loop |
-| `test_memory.py` | 26 | SessionStore, semantic cache write/lookup/TTL/eviction |
-| `test_benchmark.py` | 16 | Evaluator, report rendering, retrievers |
-| `test_chunk_extractor.py` | 7 | Chunk ID stability, pair extraction |
-| `test_config_and_bits.py` | 7 | Config validation, bit packing |
-| `test_retrieval.py` | 5 | RRF fusion, dedup, top-k |
-
----
-
-## Tech Stack
-
-| Component | Choice |
-|---|---|
-| Text encoder | BGE-M3 (1024-d, frozen) |
-| Image encoder | SigLIP-2 base (768-d, frozen) |
-| Hash net | CrossModalHashNet, 128/256-bit |
-| Agent | LangGraph ≥0.2.50 |
-| LLM | DeepSeek API |
-| OCR | PaddleOCR v2.x (GPU-accelerated) |
-| MCP | FastMCP (mcp ≥1.2) |
-| Evaluation | pytrec_eval |
-| Demo | Gradio |
-| Runtime | Python 3.12, PyTorch 2.5.1, CUDA 12.4, RTX 4090 |
-
----
-
-
-## License
-
-MIT
+- Cross-modal hash network: BGE-M3 + SigLIP-2 → 256-bit binary codes
+- ViDoRe v2 benchmark: 98.5% of BGE-M3 nDCG@5 at 124× compression
+- PaddleOCR integration: +6 pts nDCG over Tesseract
+- LangGraph agent (9 nodes, 2 conditional edges)
+- Three-layer memory system
+- MCP server (FastMCP)
+- Gradio demo
+- 86 unit tests
+- Docker + GitHub Actions CI
 
 ## References
 
 - DCMH — Jiang & Li, CVPR 2017
 - Hash-RAG — Guo et al., ACL 2025 Findings
-- RAG-Anything — HKUDS, based on LightRAG (EMNLP 2025)
 - ViDoRe v2 — Macé et al., 2025
-- ColPali — Faysse et al., 2024
 - BGE-M3 — Chen et al., 2024
-- Mem0 — ECAI 2025, three-layer memory taxonomy
 - PaddleOCR — Du et al., PaddlePaddle
+
+## License
+
+MIT
