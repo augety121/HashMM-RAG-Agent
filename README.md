@@ -216,14 +216,6 @@ pytest tests/ -v    # 86 tests, no GPU
 
 ---
 
-## Related Work
-
-This project builds on the cross-modal hashing research in
-[PAMIH](https://github.com/augety121/PAMIH) (Prototype-Anchored
-Multi-Instance Hashing), which achieves SOTA results on MIRFLICKR-25K,
-NUS-WIDE, MS COCO, and IAPR TC-12. HashMM-RAG applies the same
-cross-modal hashing principles to a production RAG system with LangGraph
-orchestration, three-layer memory, and MCP integration.
 
 ## License
 
