@@ -1,0 +1,43 @@
+# 后端 CI 质量门（GitHub Actions）——push 到仓库即自动跑（V78 评测驱动）
+# 跑的是不依赖 GPU/LLM 的全部回归：mini_runner + bench selftest + highlight + 评估门 harness 自检。
+#
+# 【评估质量门 · 方案 P0 验证者】
+#   CI（无模型）：python -m hashmm.evaluation.gate --stub   —— 自检案例可加载 + harness 接线（本文件已接）
+#   测「正在运行的后端」（推荐·测用户实际走的路径，测试机无需模型/transformers）：
+#     先起后端（AutoDL / 容器 / 打包 app 的本地后端默认 127.0.0.1:17680），再：
+#     python -m hashmm.evaluation.gate --api http://127.0.0.1:17680 --gate 0.85 --baseline hashmm/evaluation/baseline.json
+#     首次加 --update-baseline 写基线；需鉴权加 --token <jwt>。
+#   真机直连管线（在配好 transformers+模型+索引的机器，如 AutoDL）：
+#     python -m hashmm.evaluation.gate --gate 0.85 --baseline hashmm/evaluation/baseline.json --update-baseline
+#   【V103.51 质量门 · LLM-as-judge】对带 judge/rubric 的案例追加「答得好不好」打分（有用性/完整性/落地/条理）：
+#     默认开启；--api/--stream 模式会用同一后端的 /api/llm/tools 当 judge。关掉用 --no-judge，调阈值用 --judge-threshold 0.6。
+#     judge 不可用（无模型/解析失败）时该维不计入，绝不因 judge 故障误判——契约仍是硬红线。
+#   旧的 LLM bench 仍可用：python -m hashmm.tools.agent_bench --gate 0.8
+name: backend-ci
+on:
+  push:
+    paths: ["hashmm/**", "tests/**", "scripts/**"]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: 后端回归（211+ 用例）
+        run: python tests/_mini_runner.py
+      - name: Bench harness 自检（脚本化 LLM 全链路）
+        run: python -m hashmm.tools.agent_bench --selftest
+      - name: 评估质量门 harness 自检（金标准案例可加载 + 接线）
+        run: python -m hashmm.evaluation.gate --stub
+      - name: 远程信令中继单测（自定义 runner，非 pytest 风格）
+        run: python tests/test_remote_hub.py
+      - name: 远程能力扩展单测（WOL + 文件传输纯逻辑）
+        run: node desktop/services/test_remote-extensions.js
+      - name: 前端高亮回归（61 项）
+        run: node scripts/check_highlight.mjs

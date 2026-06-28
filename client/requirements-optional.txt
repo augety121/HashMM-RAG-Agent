@@ -1,0 +1,34 @@
+# HashMM optional / heavy dependencies. Not required for the core RAG chain;
+# missing packages degrade gracefully. Install: pip install -r requirements-optional.txt
+# NOTE: keep this file ASCII-only (see note in requirements.txt).
+
+# -- GPU embedding / rerank (CUDA; for local-first GPU deploys) --
+# torch>=2.0              # install per your CUDA env, not forced here
+# FlagEmbedding>=1.2      # BGE-M3 embedding + bge-reranker-v2-m3
+# transformers>=4.38      # FlagEmbedding dependency
+
+# -- Document generation (create_document: PPTX/DOCX/XLSX) --
+python-pptx>=0.6.23
+python-docx>=1.1
+openpyxl>=3.1
+Pillow>=10.0
+
+# -- Design render (HASHMM_DESIGN_RENDER; HTML->image, PPT->preview) --
+# playwright>=1.40        # precise HTML screenshots (playwright install chromium)
+# system tools (apt): wkhtmltopdf / libreoffice / ffmpeg
+
+# -- Cache (optional; falls back to in-memory) --
+# redis>=5.0
+
+# -- Web page parsing (online fallback retrieval) --
+beautifulsoup4>=4.12
+
+# -- Standard trace export (optional; stdlib OTLP/JSON exporter otherwise) --
+# opentelemetry-sdk>=1.20
+
+# -- Document conversion (optional) --
+PyPDF2>=3.0
+pandas>=2.0
+
+# Claude（Anthropic）原生模型适配（model_manager 的 anthropic provider）
+anthropic>=0.39.0
