@@ -85,6 +85,9 @@ Seven layers top-to-bottom, with a **governance & observability** column on the 
 **契约只有几条 / Only a few contracts.** 前后端之间是 `/api` 和 SSE，桌面壳层同源反代、无跨域；桌面原生能力通过 preload 桥以 `hashmm` 命名空间暴露；本地嵌入走 `/local/embed`。一条**降级铁律**贯穿全局——契约任意一侧缺位，另一侧返回 503 / 空对象 / 原样数据，**绝不抛错进主链**。<br>
 The front/back boundary is `/api` + SSE with same-origin proxying; native powers are exposed through a preload bridge under the `hashmm` namespace; local embedding goes through `/local/embed`. A **degradation rule** runs throughout — if either side is missing, the other returns 503 / an empty object / pass-through data and **never throws into the main chain**.
 
+<p align="center"><img src="docs/kg.png" alt="知识图谱 / Knowledge graph" width="100%"></p>
+<p align="center"><sub>知识图谱：一批公司财报抽出 533 实体 · 546 关系 · 33 社区，实体类型分布与高连接度实体排名一目了然。<br>Knowledge graph: 533 entities · 546 relations · 33 communities extracted from a batch of financial reports.</sub></p>
+
 ---
 
 ## 深度检索 · Deep Retrieval
@@ -138,8 +141,16 @@ Desktop, web, mobile and the GPU backend form a four-client suite — **one acco
 - **互传文件 / File transfer** — 桌面生成的 Word 推到手机查看/下载；也能在手机上让桌面把电脑里的某个文件发过来。<br>Push desktop-generated docs to the phone, or ask the desktop to send a file from the PC.
 - **手机远控电脑 / Phone-controls-PC** — 把桌面画面投到手机并接管键鼠，校园网/公司网穿不透时走中继。<br>Cast the desktop to the phone and take over keyboard/mouse, with a relay mode for restrictive networks.
 
-> 截图位（建议补上真机截图）/ Screenshot slots (drop your real captures here):
-> `docs/desktop.png` 桌面主界面 · `docs/mobile.png` 手机对话 · `docs/kg.png` 知识图谱 · `docs/eval.png` 质量评测台
+<table>
+<tr>
+<td width="64%"><img src="docs/desktop.png" alt="桌面端主界面 / Desktop main UI"></td>
+<td width="36%"><img src="docs/mobile.png" alt="手机端「小哈」/ Mobile app (Xiaoha)"></td>
+</tr>
+<tr>
+<td align="center"><sub>桌面端主界面 · 对话 / 工作台 / 终端，输入区含深度检索 · 电脑操作 · 文档过滤<br>Desktop main UI — chat / workbench / terminal, with deep retrieval · computer use · doc filter</sub></td>
+<td align="center"><sub>手机端助手「小哈」对话主界面<br>Mobile assistant "Xiaoha"</sub></td>
+</tr>
+</table>
 
 ---
 
@@ -151,6 +162,9 @@ Desktop, web, mobile and the GPU backend form a four-client suite — **one acco
 - **deny-first 权限审计 / deny-first audit** — 默认拒绝、按策略放行，谁调了什么、是否高危、是否成功都可追溯，导出 CSV。
 - **质量评测台 / quality bench** — 约 283 条金标准全面体检，画趋势、做两次运行对比，防止改 prompt 或换配置后偷偷退步。
 - **知识时效治理 / knowledge freshness** — 给文档设生效/到期日期，过期自动归档、不再进入检索。
+
+<p align="center"><img src="docs/eval.png" alt="质量评测台 / Quality bench" width="100%"></p>
+<p align="center"><sub>质量评测台：对约 283 条金标准跑全面体检，画质量趋势、对比两次运行检测回归——改 prompt 或换配置后是变好还是变差，一眼可见。<br>Quality bench: full check over ~283 gold items, trend lines and run-to-run regression comparison.</sub></p>
 
 ---
 
