@@ -1,0 +1,1049 @@
+/* ═══════════════════════════════════════════════════════════════════
+   v29: New Component Styles
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── UserMenu ── */
+.user-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  font-size: 13px;
+  transition: background-color 150ms ease;
+  color: var(--text-secondary);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.user-menu-item:hover {
+  background: var(--bg-secondary);
+}
+.user-menu-danger {
+  color: #ef4444;
+}
+.user-menu-danger:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+.user-menu-accent {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ── ThinkingPanel ── */
+.thinking-panel {
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+.thinking-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 150ms;
+}
+.thinking-panel-header:hover {
+  color: var(--text-secondary);
+}
+.thinking-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.thinking-dots span {
+  animation: thinkDot 1.4s ease-in-out infinite;
+  opacity: 0.3;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes thinkDot {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.thinking-panel-chevron {
+  transition: transform 200ms ease;
+  flex-shrink: 0;
+}
+.thinking-panel-content {
+  padding: 0 14px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* ── DiffViewer ── */
+.diff-viewer {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+}
+.diff-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+  border: none;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.diff-viewer-icon { color: var(--text-tertiary); flex-shrink: 0; }
+.diff-viewer-filename { font-size: 12px; font-weight: 600; color: var(--text-primary); flex: 1; text-align: left; }
+.diff-viewer-stats { display: flex; gap: 6px; font-size: 11px; font-weight: 600; }
+.diff-stat-add { color: #22c55e; }
+.diff-stat-del { color: #ef4444; }
+.diff-viewer-chevron { color: var(--text-tertiary); transition: transform 200ms ease; flex-shrink: 0; }
+.diff-viewer-body { overflow-x: auto; }
+.diff-line {
+  display: flex;
+  line-height: 1.7;
+  min-height: 22px;
+}
+.diff-line-num {
+  display: inline-block;
+  width: 40px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-tertiary);
+  opacity: 0.5;
+  flex-shrink: 0;
+  user-select: none;
+}
+.diff-line-marker {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+  font-weight: 600;
+  user-select: none;
+}
+.diff-line-content {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding-right: 12px;
+}
+.diff-line-add {
+  background: rgba(34, 197, 94, 0.08);
+}
+.diff-line-add .diff-line-marker { color: #22c55e; }
+.diff-line-remove {
+  background: rgba(239, 68, 68, 0.08);
+}
+.diff-line-remove .diff-line-marker { color: #ef4444; }
+.diff-line-range {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+/* ── Enhanced Code Block ── */
+.code-block {
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+}
+.dark .code-block {
+  border-color: #313244;
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+.dark .code-header {
+  background: #1e1e2e;
+  border-color: #313244;
+}
+.code-lang {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.code-copy {
+  padding: 2px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 150ms;
+}
+.code-copy:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.code-pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--bg-secondary);
+}
+.dark .code-pre {
+  background: #11111b;
+}
+.code-pre code {
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+}
+
+/* ── Welcome card overflow fix ── */
+.template-card .template-text,
+.template-card span[class*="truncate"] {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+/* ── Enhanced Code Block v29 ── */
+.enhanced-code-block {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.dark .enhanced-code-block {
+  background: #11111b;
+  border-color: #313244;
+}
+.ecb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.dark .ecb-header {
+  background: #1e1e2e;
+  border-color: #313244;
+}
+.ecb-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ecb-lang {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+.ecb-filename {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  truncate: true;
+}
+.ecb-linecount {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+.ecb-header-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.ecb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 150ms;
+  white-space: nowrap;
+}
+.ecb-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.ecb-btn-run {
+  color: #22c55e;
+}
+.ecb-btn-run:hover {
+  background: rgba(34, 197, 94, 0.1);
+}
+.ecb-body {
+  display: flex;
+  overflow-x: auto;
+}
+.ecb-line-numbers {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 0;
+  text-align: right;
+  user-select: none;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+}
+.dark .ecb-line-numbers {
+  border-color: #313244;
+}
+.ecb-line-numbers span {
+  display: block;
+  padding: 0 10px 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+  opacity: 0.4;
+  font-family: var(--font-mono, monospace);
+}
+.ecb-code {
+  flex: 1;
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  background: transparent;
+  white-space: pre;
+  tab-size: 4;
+}
+.ecb-code code {
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+}
+.ecb-fold {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 6px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--bg-tertiary);
+  border: none;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 150ms;
+}
+.ecb-fold:hover { background: var(--bg-secondary); }
+.ecb-output {
+  border-top: 1px solid var(--border);
+}
+.ecb-output-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border: none;
+  cursor: pointer;
+}
+.ecb-output-chevron {
+  margin-left: auto;
+  transition: transform 200ms;
+}
+.ecb-output-content {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* v29: Dynamic font size */
+.msg-content { font-size: var(--msg-font-size, 14px); }
+
+
+/* ── FileCard v30 ── */
+.file-card {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.file-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.file-card-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--mono);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-card-label {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.file-card-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.file-card-preview {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--mono);
+  color: var(--text-tertiary);
+  max-height: 80px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+.file-card-actions {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px;
+}
+.file-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 150ms;
+}
+.file-card-btn:hover { background: var(--bg-tertiary); }
+.file-card-btn-run { color: #22c55e; }
+.file-card-btn-run:hover { background: rgba(34,197,94,0.1); }
+.file-card-output {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+/* ── Message Edit Button v30 ── */
+.msg-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 150ms;
+}
+.msg-edit-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+/* ── Mobile Responsive v30 ── */
+@media (max-width: 768px) {
+  .sidebar-container {
+    position: fixed !important;
+    left: 0; top: 0; bottom: 0;
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 250ms ease;
+    width: 280px !important;
+  }
+  .sidebar-container.sidebar-open {
+    transform: translateX(0);
+  }
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgba(0,0,0,0.4);
+  }
+  .chat-container {
+    width: 100% !important;
+  }
+  .msg-content { font-size: 14px !important; }
+  .input-bar { padding: 8px !important; }
+  .welcome-grid { grid-template-columns: 1fr !important; }
+}
+
+@media (max-width: 480px) {
+  .msg-bubble { padding: 8px 10px !important; }
+  .ecb-header { flex-wrap: wrap; }
+  .settings-modal { width: 100% !important; max-width: 100% !important; border-radius: 0 !important; }
+  .settings-sidebar { display: none !important; }
+}
+
+/* ── Error Boundary v30 ── */
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 48px 24px;
+  text-align: center;
+}
+.error-boundary-icon {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #fef2f2;
+  color: #ef4444;
+}
+.error-boundary-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.error-boundary-msg {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  max-width: 400px;
+  line-height: 1.6;
+}
+.error-boundary-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.error-boundary-btn {
+  padding: 8px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: opacity 150ms;
+}
+.error-boundary-btn:hover { opacity: 0.85; }
+.error-boundary-btn-primary {
+  background: var(--accent);
+  color: white;
+}
+.error-boundary-btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+/* ── Artifact Renderer v30 ── */
+.artifact-wrap {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.artifact-expanded {
+  position: fixed;
+  inset: 16px;
+  z-index: 50;
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  background: var(--bg-primary);
+}
+.artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.artifact-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+.artifact-btn {
+  padding: 4px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  transition: all 150ms;
+}
+.artifact-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.artifact-svg-content {
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  max-height: 500px;
+}
+.artifact-svg-content svg { max-width: 100%; height: auto; }
+.artifact-iframe {
+  width: 100%;
+  border: none;
+  background: white;
+  min-height: 100px;
+}
+
+/* ── Citation Panel v30 ── */
+.citation-panel {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.citation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+.citation-list { padding: 4px; }
+.citation-item { border-radius: 6px; overflow: hidden; }
+.citation-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 150ms;
+}
+.citation-trigger:hover { background: var(--bg-tertiary); }
+.citation-badge {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 11px;
+  min-width: 20px;
+}
+.citation-source {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.citation-page {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.citation-chevron { color: var(--text-tertiary); flex-shrink: 0; }
+.citation-preview {
+  padding: 8px 12px 8px 32px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+}
+
+/* ── KG Admin Tab ── */
+.admin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 150ms;
+}
+.admin-btn:hover { background: var(--bg-tertiary); }
+.admin-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.admin-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  transition: opacity 150ms;
+}
+.admin-btn-primary:hover { opacity: 0.85; }
+
+/* ── Retrieval Debug Panel v30 ── */
+.retrieval-debug {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.retrieval-debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  transition: background 150ms;
+}
+.retrieval-debug-toggle:hover { background: var(--bg-tertiary); }
+.retrieval-debug-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent);
+  color: white;
+}
+.retrieval-debug-meta { font-size: 10px; font-family: var(--mono); }
+.retrieval-debug-tag {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #059669;
+  color: white;
+  font-weight: 600;
+}
+.retrieval-debug-content {
+  border-top: 1px solid var(--border);
+  padding: 8px 10px;
+}
+.retrieval-debug-section {
+  margin-bottom: 8px;
+}
+.retrieval-debug-section:last-child { margin-bottom: 0; }
+.retrieval-debug-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.retrieval-debug-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.retrieval-debug-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+.retrieval-debug-source-label { font-weight: 500; min-width: 50px; }
+.retrieval-debug-source-file {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.retrieval-debug-source-score {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+/* ── Quality Report Panel v30 ── */
+.quality-report {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.quality-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.quality-filename { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.quality-subtitle { font-size: 10px; color: var(--text-tertiary); }
+.quality-score { font-size: 22px; font-weight: 700; }
+.quality-metrics { padding: 10px 14px; }
+.quality-metric { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.quality-metric-label { font-size: 11px; color: var(--text-secondary); min-width: 70px; }
+.quality-metric-bar {
+  flex: 1; height: 6px; border-radius: 3px; background: var(--bg-tertiary); overflow: hidden;
+}
+.quality-metric-fill { height: 100%; border-radius: 3px; transition: width 300ms; }
+.quality-metric-value { font-size: 10px; font-family: var(--mono); color: var(--text-tertiary); min-width: 28px; text-align: right; }
+.quality-section { padding: 8px 14px; border-top: 1px solid var(--border); }
+.quality-section-title {
+  font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+  display: flex; align-items: center; gap: 4px; margin-bottom: 6px;
+}
+.quality-issue {
+  font-size: 12px; color: #d97706; padding: 2px 0 2px 16px;
+  position: relative;
+}
+.quality-issue::before { content: "•"; position: absolute; left: 4px; }
+.quality-suggestion {
+  font-size: 12px; color: #2563eb; padding: 2px 0 2px 16px;
+  position: relative;
+}
+.quality-suggestion::before { content: "→"; position: absolute; left: 2px; }
+
+/* ═══════════════ V49: 语法高亮配色（Tokyo Night 风格，深色代码面恒定一套色板） ═══════════════ */
+.hl-kw   { color: #bb9af7; }                    /* 关键字 紫 */
+.hl-str  { color: #9ece6a; }                    /* 字符串 绿 */
+.hl-com  { color: #565f89; font-style: italic; } /* 注释 灰斜体 */
+.hl-num  { color: #ff9e64; }                    /* 数字/常量 橙 */
+.hl-fn   { color: #7aa2f7; }                    /* 函数名 蓝 */
+.hl-type { color: #2ac3de; }                    /* 类型/内建 青 */
+.hl-pre  { color: #7dcfff; }                    /* 预处理/装饰器 浅蓝 */
+.hl-var  { color: #e0af68; }                    /* 变量插值 琥珀 */
+.hl-attr { color: #73daca; }                    /* 属性键 青绿 */
+.hl-tag  { color: #f7768e; }                    /* 标签 粉红 */
+
+/* V49: 正文代码块统一深色代码面（对标 Claude artifacts：浅色界面里代码也是深底+语法色） */
+.enhanced-code-block { background: #16161e; border-color: #2a2b3d; }
+.dark .enhanced-code-block { background: #11111b; border-color: #313244; }
+.ecb-header { background: #1c1d2b; border-color: #2a2b3d; }
+.dark .ecb-header { background: #1e1e2e; border-color: #313244; }
+.ecb-lang { background: #2a2b3d; color: #9aa5ce; }
+.ecb-filename { color: #c0caf5; }
+.ecb-linecount { color: #565f89; }
+.ecb-btn { color: #9aa5ce; }
+.ecb-btn:hover { background: #2a2b3d; color: #c0caf5; }
+.ecb-line-numbers { border-color: #2a2b3d; }
+.dark .ecb-line-numbers { border-color: #313244; }
+.ecb-line-numbers span { color: #565f89; opacity: 1; }
+.ecb-code { color: #c0caf5; }
+.ecb-fold { background: #1c1d2b; border-color: #2a2b3d; color: #7aa2f7; }
+.ecb-fold:hover { background: #2a2b3d; }
+.ecb-output-header { background: #1c1d2b; color: #9aa5ce; }
+.ecb-output { border-color: #2a2b3d; }
+.ecb-output-content { background: #16161e; color: #9aa5ce; }
+
+/* ═══════════════ V49: 右侧面板代码视图（行号 + 高亮 + 铺满，无白边） ═══════════════ */
+.cp-root {
+  display: flex; flex-direction: column; height: 100%;
+  background: var(--bg-primary);
+}
+.dark .cp-root { background: #16161e; }
+.cp-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; flex-shrink: 0;
+  background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+}
+.dark .cp-toolbar { background: #1c1d2b; border-color: #2a2b3d; }
+.cp-lang {
+  font-family: var(--font-mono, monospace); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--text-secondary); background: var(--bg-tertiary); padding: 1px 6px; border-radius: 4px;
+}
+.cp-meta { font-size: 10px; color: var(--text-tertiary); }
+.cp-toolbar-btn {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: auto;
+  padding: 3px 8px; border-radius: 5px; border: none; cursor: pointer;
+  font-size: 11px; color: var(--text-secondary); background: transparent; transition: all 150ms;
+}
+.cp-toolbar-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.dark .cp-toolbar-btn:hover { background: #2a2b3d; color: #c0caf5; }
+.cp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px 0 24px; }
+.cp-line { display: flex; align-items: flex-start; }
+.cp-line:hover { background: rgba(99, 102, 241, 0.06); }
+.cp-ln {
+  flex-shrink: 0; width: 44px; padding-right: 12px; text-align: right;
+  user-select: none; color: var(--text-tertiary); opacity: 0.65;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+  font-size: 12px; line-height: 1.65;
+}
+.cp-code {
+  flex: 1; min-width: 0; padding-right: 14px;
+  white-space: pre-wrap; word-break: break-word; tab-size: 4;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+  font-size: 12.5px; line-height: 1.65; color: var(--text-primary);
+}
+
+/* ═══════════════ V49: Claude 式执行时间线（说明=正文段落，工具=紧凑卡片） ═══════════════ */
+.al-narrate {
+  font-size: 13.5px; line-height: 1.8; color: var(--text-primary);
+  white-space: pre-wrap; word-break: break-word;
+  padding: 2px 2px 2px 0; margin: 4px 0;
+}
+.al-tool-card {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; margin: 3px 0; border-radius: 8px;
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  cursor: pointer; transition: all 150ms;
+}
+.al-tool-card:hover { border-color: var(--accent); }
+.al-tool-card.al-error { border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.05); }
+.al-tool-name {
+  font-family: var(--font-mono, monospace); font-size: 11.5px; font-weight: 600;
+  color: var(--text-primary); flex-shrink: 0;
+}
+.al-tool-detail {
+  font-size: 11px; color: var(--text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+}
+.al-tool-ms { font-family: var(--font-mono, monospace); font-size: 10px; color: var(--text-tertiary); flex-shrink: 0; }
+.al-step-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 3px 2px; font-size: 11px; color: var(--text-tertiary);
+}
+.al-result-preview {
+  margin: 2px 0 6px 26px; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; line-height: 1.6; color: var(--text-secondary);
+  background: var(--bg-tertiary); white-space: pre-wrap; word-break: break-word;
+}
+
+/* ═══════════════ V50: 任务清单卡片（对标 Claude Code TodoWrite） ═══════════════ */
+.todo-card {
+  margin: 8px 0; border-radius: 10px; overflow: hidden;
+  background: var(--bg-secondary); border: 1px solid var(--border);
+}
+.todo-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-bottom: 1px solid var(--border);
+}
+.todo-title { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); }
+.todo-progress { font-family: var(--font-mono, monospace); font-size: 10px; color: var(--text-tertiary); }
+.todo-bar {
+  flex: 1; max-width: 120px; height: 3px; margin-left: auto;
+  border-radius: 2px; background: var(--bg-tertiary); overflow: hidden;
+}
+.todo-bar-fill { height: 100%; background: #22c55e; border-radius: 2px; transition: width 300ms ease; }
+.todo-items { padding: 5px 11px 7px; }
+.todo-item { display: flex; align-items: flex-start; gap: 7px; padding: 3px 0; }
+.todo-ico { flex-shrink: 0; margin-top: 1.5px; }
+.todo-text { font-size: 12.5px; line-height: 1.55; color: var(--text-primary); word-break: break-word; }
+.todo-done .todo-text { color: var(--text-tertiary); text-decoration: line-through; }
+.todo-doing .todo-text { font-weight: 600; }
+.todo-pending .todo-text { color: var(--text-secondary); }
+
+/* V52.1: 代码型右栏头部暗色一体化（按钮图标/hover 同步暗色，文件类型徽标不受影响） */
+.ap-head-dark a:hover, .ap-head-dark button:hover { background: #2a2b3d !important; }
+.ap-head-dark a > .lucide, .ap-head-dark button > .lucide { color: #9aa5ce !important; }
+
+/* V54: 真·流式直播段（幽灵预览，权威内容到达即让位） */
+.live-delta { opacity: 0.85; }
+.ld-caret {
+  display: inline-block; width: 2px; height: 1em; margin-left: 2px;
+  vertical-align: text-bottom; background: var(--accent);
+  animation: ld-blink 1s steps(2) infinite;
+}
+@keyframes ld-blink { 50% { opacity: 0; } }
+
+
+/* ═══ V55: 右栏跟随主题（浅色界面=浅色面板；深色模式才走 Tokyo Night） ═══ */
+.dark .cp-lang { color: #9aa5ce; background: #2a2b3d; }
+.dark .cp-meta { color: #565f89; }
+.dark .cp-toolbar-btn { color: #9aa5ce; }
+.dark .cp-ln { color: #3b4261; opacity: 1; }
+.dark .cp-code { color: #c0caf5; }
+.ap-code-root { background: var(--bg-primary); border-left: 1px solid var(--border); }
+.dark .ap-code-root { background: #16161e; border-left-color: #2a2b3d; }
+.ap-code-head { background: var(--bg-secondary); }
+.dark .ap-code-head { background: #1c1d2b; border-bottom-color: #2a2b3d !important; }
+.dark .ap-code-head a:hover, .dark .ap-code-head button:hover { background: #2a2b3d !important; }
+
+/* 面板内浅色语法板（GitHub-Light 风格）；.dark 下回落到全局 .hl-* 的 Tokyo Night */
+.cp-root .hl-kw   { color: #7c3aed; }
+.cp-root .hl-str  { color: #2f9e44; }
+.cp-root .hl-com  { color: #9aa0b5; }
+.cp-root .hl-num  { color: #d9480f; }
+.cp-root .hl-fn   { color: #1971c2; }
+.cp-root .hl-type { color: #0b7285; }
+.cp-root .hl-pre  { color: #3b5bdb; }
+.cp-root .hl-var  { color: #b08800; }
+.cp-root .hl-attr { color: #0ca678; }
+.cp-root .hl-tag  { color: #d6336c; }
+.dark .cp-root .hl-kw   { color: #bb9af7; }
+.dark .cp-root .hl-str  { color: #9ece6a; }
+.dark .cp-root .hl-com  { color: #565f89; }
+.dark .cp-root .hl-num  { color: #ff9e64; }
+.dark .cp-root .hl-fn   { color: #7aa2f7; }
+.dark .cp-root .hl-type { color: #2ac3de; }
+.dark .cp-root .hl-pre  { color: #7dcfff; }
+.dark .cp-root .hl-var  { color: #e0af68; }
+.dark .cp-root .hl-attr { color: #73daca; }
+.dark .cp-root .hl-tag  { color: #f7768e; }
+
+/* V55: 上下文用量表（对标 Claude Code context meter） */
+.ctx-meter {
+  display: flex; align-items: center; gap: 8px;
+  margin: 6px 0 2px; font-size: 10.5px; color: var(--text-tertiary);
+}
+.ctx-bar {
+  display: inline-block; width: 90px; height: 3px;
+  border-radius: 2px; background: var(--bg-tertiary); overflow: hidden;
+}
+.ctx-bar-fill { display: block; height: 100%; border-radius: 2px; transition: width 400ms ease; }
