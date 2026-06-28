@@ -1,0 +1,35 @@
+{
+  "name": "hashmm-desktop",
+  "productName": "HashMM",
+  "version": "1.6.0",
+  "description": "HashMM 桌面端 — 连接 GPU 后端的瘦客户端 + 内嵌终端驾驶舱（直接指挥 Claude Code / Codex）。",
+  "main": "main.js",
+  "author": "HashMM",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "build:webui": "npm --prefix ../frontend-next run build",
+    "prepare:runtime": "python scripts/prepare-runtime.py",
+    "predist:win": "npm run build:webui",
+    "predist:mac": "npm run build:webui",
+    "predist:linux": "npm run build:webui",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "optionalDependencies": {
+    "onnxruntime-node": "^1.19.0",
+    "node-llama-cpp": "^3.0.0"
+  }
+}
