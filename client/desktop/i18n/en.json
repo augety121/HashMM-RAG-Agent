@@ -1,0 +1,22 @@
+{
+  "app": { "name": "HashMM", "tagline": "Local-first AI Workbench" },
+  "menu": { "newChat": "New Chat", "workbench": "Workbench", "files": "Local Files", "terminal": "Terminal", "knowledge": "Knowledge Base", "skills": "Skills & Templates", "usage": "Usage", "backend": "Backend" },
+  "installer": { "install": "Install Now", "agree": "I have read and agree to the Terms & Privacy Policy", "path": "Install to", "space": "Space required", "done": "Installation complete", "start": "Get Started" },
+  "uninstaller": { "title": "Uninstall HashMM", "confirm": "Uninstall", "cancel": "Cancel", "keepData": "Your data is kept by default and restored on reinstall", "done": "HashMM uninstalled" },
+  "ui": {
+    "btnKB": "Knowledge", "btnConfig": "Config", "btnSettings": "⚙ Settings", "btnHistory": "📚 History", "btnBack": "← Connect",
+    "send": "Send", "regenerate": "↻ Regenerate", "clear": "🗑 Clear", "export": "⬇ Export",
+    "settingsTitle": "Appearance & Preferences", "theme": "Theme", "font": "Font size", "density": "Density",
+    "themeDark": "Dark", "themeLight": "Light", "themeAuto": "System",
+    "densityComfortable": "Comfortable", "densityCompact": "Compact",
+    "sendEnter": "Send on Enter (off = newline / Ctrl+Enter)", "markdown": "Render Markdown",
+    "notify": "Desktop notifications (background)", "language": "Language",
+    "ioTitle": "Import / Export Config", "exportFull": "Export (with secrets · backup)", "exportSafe": "Export (redacted · share)", "ioImport": "Import config file",
+    "historyTitle": "Chat History", "historyNew": "＋ New chat", "historyEmpty": "No chat history yet",
+    "searchPlaceholder": "Find in conversation…", "collapse": "Collapse",
+    "chatPlaceholder": "Type a message, Enter to send", "msgCopy": "Copy", "msgQuote": "Quote", "msgShare": "Share",
+    "exportMd": "Markdown (.md)", "exportPdf": "PDF (.pdf)", "exportTxt": "Plain text (.txt)"
+  },
+  "items_one": "{count} item",
+  "items_other": "{count} items"
+}
