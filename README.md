@@ -1,9 +1,9 @@
 <div align="center">
 
-# 🧠 HashMM-RAG Agent
+# HashMM-RAG Agent
 
 **本地优先的检索增强智能体 —— 资料不出内网，一张消费级显卡跑通检索、知识图谱、训练与作答。**<br>
-**A local-first RAG-Agent — your private documents never leave the network, with retrieval, knowledge graph, training and answering all running on a single consumer GPU.**
+**A local-first RAG-Agent — your private documents never leave the network, with retrieval, knowledge graph, training and answering all on a single consumer GPU.**
 
 <img src="docs/architecture.png" alt="HashMM-RAG Agent 整体架构 / Overall architecture" width="100%">
 
@@ -28,28 +28,47 @@ Not a Q&A demo, but a local workbench with an **agent runtime, self-evolution, p
 
 <br>
 
-[亮点 / Highlights](#-亮点--highlights) · [架构 / Architecture](#-架构--architecture) · [深度检索 / Deep Retrieval](#-深度检索--deep-retrieval) · [多端 / Clients](#-多端套件--four-client-suite) · [快速开始 / Quick Start](#-快速开始--quick-start)
+[亮点 / Highlights](#亮点--highlights) · [定位 / Positioning](#定位--positioning) · [架构 / Architecture](#架构--architecture) · [深度检索 / Deep Retrieval](#深度检索--deep-retrieval) · [多端 / Clients](#多端套件--four-client-suite) · [快速开始 / Quick Start](#快速开始--quick-start)
 
 </div>
 
 ---
 
-## ✨ 亮点 · Highlights
+## 亮点 · Highlights
 
-- 🎯 **在你自己的数据上用强化学习训练检索策略 / RL-trained retrieval on your own data** — Search-R1 配方，在一张 RTX 4090 上对 Qwen2.5-7B 做 QLoRA 微调，让模型学会把复杂问题拆成多次检索。<br>Search-R1 recipe, QLoRA fine-tuning of Qwen2.5-7B on a single RTX 4090 — the model learns to decompose hard questions into multiple searches.
-- 🔁 **会自我纠错的三段式深度检索 / Self-correcting three-stage deep retrieval** — 自训 7B 多跳检索 → 强模型作答 → Self-RAG 自评证据是否充分，不足则改写子查询自动再检索。自建多跳题答对率 **26.7% → 83.3% → 90.0%**（真机实测）。<br>7B-driven multi-hop retrieval → strong-model answering → Self-RAG self-evaluation with automatic re-retrieval. Multi-hop accuracy **26.7% → 83.3% → 90.0%** (measured).
-- 🏠 **本地优先 · 三端窄腰 / Local-first, narrow-waist contracts** — 嵌入、检索、知识图谱、本地语义重排全在内网完成；三端只认几条稳定契约，**任一侧缺位另一侧零感知降级**。<br>Embedding, retrieval, KG and local re-ranking all stay in-network; clients share a few stable contracts and **fall back with zero perception when either side is missing**.
-- 🤖 **对标 Claude Code 的三层智能体运行时 / Claude-Code-style three-layer agent runtime** — Harness 受控运行时 → Loop 迭代引擎 → Computer Use GUI 自动化。安全与迭代分离，做成生产级运行时。<br>Harness (controlled runtime) → Loop (iteration engine) → Computer Use (GUI automation). Safety and iteration are separated into a production-grade runtime.
-- 🧬 **越用越强 / Gets better with use** — 技能库 + 经验回放，按接地率、置信度和反馈算奖励持续改进，**不重训模型**；记忆中心跨会话记住长期偏好。<br>Skill library + experience replay, improving from grounding/confidence/feedback rewards **without retraining**; a memory center keeps long-term preferences across sessions.
-- 🛡️ **治理与可观测 / Governance & observability** — deny-first 权限审计（可导出 CSV）、忠实度闸（RAGAS）、不确定性闸、约 283 条金标准的质量评测台、质量看板。<br>Deny-first permission audit (CSV export), faithfulness gate (RAGAS), uncertainty gate, a ~283-item quality bench, and a quality dashboard.
-- 🔌 **企业接入 / Enterprise-ready** — 飞书 / 微信 IM 渠道直接问知识库、多用户与角色（Supabase）、知识库整体导出迁移、标准 MCP 服务。<br>Ask the KB straight from Feishu / WeChat, multi-user roles (Supabase), whole-KB export/migration, and a standard MCP server.
+- **在你自己的数据上用强化学习训练检索策略 / RL-trained retrieval on your own data** — Search-R1 配方，在一张 RTX 4090 上对 Qwen2.5-7B 做 QLoRA 微调，让模型学会把复杂问题拆成多次检索。<br>Search-R1 recipe, QLoRA fine-tuning of Qwen2.5-7B on a single RTX 4090 — the model learns to decompose hard questions into multiple searches.
+- **会自我纠错的三段式深度检索 / Self-correcting three-stage deep retrieval** — 自训 7B 多跳检索 → 强模型作答 → Self-RAG 自评证据是否充分，不足则改写子查询自动再检索。自建多跳题答对率 **26.7% → 83.3% → 90.0%**（真机实测）。<br>7B-driven multi-hop retrieval → strong-model answering → Self-RAG self-evaluation with automatic re-retrieval. Multi-hop accuracy **26.7% → 83.3% → 90.0%** (measured).
+- **本地优先 · 三端窄腰 / Local-first, narrow-waist contracts** — 嵌入、检索、知识图谱、本地语义重排全在内网完成；三端只认几条稳定契约，**任一侧缺位另一侧零感知降级**。<br>Embedding, retrieval, KG and local re-ranking all stay in-network; clients share a few stable contracts and **fall back with zero perception when either side is missing**.
+- **对标 Claude Code 的三层智能体运行时 / Claude-Code-style three-layer agent runtime** — Harness 受控运行时 → Loop 迭代引擎 → Computer Use GUI 自动化，安全与迭代分离，做成生产级运行时。<br>Harness (controlled runtime) → Loop (iteration engine) → Computer Use (GUI automation): safety and iteration separated into a production-grade runtime.
+- **越用越强 / Gets better with use** — 技能库 + 经验回放，按接地率、置信度和反馈算奖励持续改进，**不重训模型**；记忆中心跨会话记住长期偏好。<br>Skill library + experience replay, improving from grounding/confidence/feedback rewards **without retraining**; a memory center keeps long-term preferences.
+- **治理与可观测 / Governance & observability** — deny-first 权限审计（可导出 CSV）、忠实度闸（RAGAS）、不确定性闸、约 283 条金标准的质量评测台、质量看板。<br>Deny-first permission audit (CSV), faithfulness gate (RAGAS), uncertainty gate, a ~283-item quality bench, and a quality dashboard.
+- **企业接入 / Enterprise-ready** — 飞书 / 微信 IM 渠道直接问知识库、多用户与角色（Supabase）、知识库整体导出迁移、标准 MCP 服务。<br>Ask the KB straight from Feishu / WeChat, multi-user roles (Supabase), whole-KB export/migration, and a standard MCP server.
 
 ---
 
-## 🗺️ 架构 · Architecture
+## 定位 · Positioning
+
+HashMM-RAG Agent 的位置在「专做 RAG 的框架」和「专做 Agent 的框架」之间——把两边都做强。<br>
+HashMM-RAG Agent sits between "RAG-focused frameworks" and "agent-focused frameworks" — and does both well.
+
+| 能力 / Capability | RAG 框架<br>(LightRAG / RAGFlow / R2R) | Agent 框架<br>(agent runtimes) | **HashMM-RAG Agent** |
+|:---|:---:|:---:|:---:|
+| 混合检索 + 知识图谱 / Hybrid retrieval + KG | ✅ | — | ✅ |
+| 在自有数据上 RL 训练检索策略 / RL-trained retrieval on your data | — | — | ✅ |
+| 会自我纠错的深度检索 / Self-correcting deep retrieval | 部分 / partial | — | ✅ |
+| 完整智能体运行时 / Full agent runtime | — | ✅ | ✅ |
+| 本地优先、资料不出内网 / Local-first, in-network | 部分 / partial | 部分 / partial | ✅ |
+| 桌面 + 网页 + 手机四端套件 / Desktop + web + mobile suite | — | — | ✅ |
+
+> 专做 RAG 的框架在混合检索和知识图谱上成熟，但没有完整的智能体运行时，也不在用户自有数据上训检索策略；专做智能体的框架有工具循环和编排，但检索多停留在单次调用。**把 RAG 和 Agent 都做强、且本地优先**的组合，目前少见同类。<br>
+> RAG frameworks are strong on hybrid retrieval and KG but lack a full agent runtime and don't train retrieval on your own data; agent frameworks have tool loops but usually do single-shot retrieval. A combination that makes **both RAG and the agent strong, local-first**, is rare.
+
+---
+
+## 架构 · Architecture
 
 整体从上到下分七层，右侧是一条贯穿的**治理与可观测**列。桌面端、网页端和 GPU 后端三端只通过几条稳定契约相连，这种**窄腰设计**让每一端都能独立演进和降级；移动端 App 作为第四端，通过云端同步接入。<br>
-Seven layers top-to-bottom, with a **governance & observability** column running through the right side. Desktop, web and the GPU backend connect through only a handful of stable contracts — a **narrow-waist** design that lets each side evolve and degrade independently; the mobile app is the fourth client, joining via cloud sync.
+Seven layers top-to-bottom, with a **governance & observability** column on the right. Desktop, web and the GPU backend connect through only a handful of stable contracts — a **narrow-waist** design that lets each side evolve and degrade independently; the mobile app is the fourth client, joining via cloud sync.
 
 | 层 / Layer | 内容 / What's there |
 |:---|:---|
@@ -64,17 +83,17 @@ Seven layers top-to-bottom, with a **governance & observability** column running
 | **治理 / Governance** | 权限审计(CSV) · 忠实度闸(RAGAS) · 不确定性闸 · 质量评测台(283 例) · 质量看板 · 验证矩阵(后端 292 · 桌面 20+) |
 
 **契约只有几条 / Only a few contracts.** 前后端之间是 `/api` 和 SSE，桌面壳层同源反代、无跨域；桌面原生能力通过 preload 桥以 `hashmm` 命名空间暴露；本地嵌入走 `/local/embed`。一条**降级铁律**贯穿全局——契约任意一侧缺位，另一侧返回 503 / 空对象 / 原样数据，**绝不抛错进主链**。<br>
-The front/back boundary is `/api` + SSE with same-origin proxying; native powers are exposed through a preload bridge under the `hashmm` namespace; local embedding goes through `/local/embed`. A **degradation rule** runs throughout — if either side of a contract is missing, the other returns 503 / an empty object / pass-through data and **never throws into the main chain**.
+The front/back boundary is `/api` + SSE with same-origin proxying; native powers are exposed through a preload bridge under the `hashmm` namespace; local embedding goes through `/local/embed`. A **degradation rule** runs throughout — if either side is missing, the other returns 503 / an empty object / pass-through data and **never throws into the main chain**.
 
 ---
 
-## 🔍 深度检索 · Deep Retrieval
+## 深度检索 · Deep Retrieval
 
 普通问答走快路径（混合检索 → 强模型作答，秒级返回）。复杂问题走**三段式深度检索**：自训 7B 驱动多跳检索 → 把带编号的证据交给强模型作答 → Self-RAG 自评证据够不够、答案有没有据，不够就改写子查询自动再检索（最多两轮，仍不足则回「资料不足」而不是硬编）。<br>
-Simple questions take the fast path (hybrid retrieval → strong-model answer, sub-second). Hard questions take **three-stage deep retrieval**: 7B-driven multi-hop retrieval → strong model answers over numbered evidence → Self-RAG judges sufficiency and grounding, rewriting sub-queries and re-retrieving when needed (up to two rounds; otherwise it returns "insufficient evidence" rather than hallucinating).
+Simple questions take the fast path (hybrid retrieval → strong-model answer, sub-second). Hard ones take **three-stage deep retrieval**: 7B-driven multi-hop retrieval → strong model answers over numbered evidence → Self-RAG judges sufficiency and grounding, rewriting sub-queries and re-retrieving when needed (up to two rounds; otherwise it returns "insufficient evidence" rather than hallucinating).
 
 > 三十道自建多跳题，强模型判官。三种配置**检索完全相同**（7B 两跳、捞回 97.7% 支持证据），差别只在谁作答。<br>
-> 30 self-built multi-hop questions, strong-model judge. All three configs share **identical retrieval** (7B, ~2 hops, 97.7% supporting-evidence recall); only the answerer differs.
+> 30 self-built multi-hop questions, strong-model judge. All three share **identical retrieval** (7B, ~2 hops, 97.7% supporting-evidence recall); only the answerer differs.
 
 | 配置 / Configuration | 答对率 / Accuracy |
 |:---|:---:|
@@ -90,20 +109,20 @@ The same model hops twice on multi-hop questions and once on single-hop ones. On
 
 ---
 
-## 🤖 Agent 运行时 · Agent Runtime
+## Agent 运行时 · Agent Runtime
 
 智能体运行时按「谁包着谁」分三层，对标 Claude Code 的运行时分层——三层是**包含关系**，不是三个并列模块。<br>
 The agent runtime is three nested layers (modeled on Claude Code's runtime layering) — they **contain** one another rather than sitting side by side.
 
-- **Harness · 受控运行时 / controlled runtime** — 工具注册、上下文装配、权限闸、预算闸、连续去重闸串成一条显式有序的守卫链；守卫只读状态做判定，自身出异常也绝不拦执行；预留 hooks 扩展点；整回合用一套 SSE 事件协议对外推送。**160+ 项回归看守。**<br>Tool registration, context assembly, and an explicit ordered guard chain (permission → budget → retrieval-budget → dedup); guards read-only and never block execution on their own failure; hook extension points; one SSE event protocol per turn. **160+ regression guards.**
-- **Loop · 迭代引擎 / iteration engine** — 把迭代做成可单测的状态机（开始一轮 / 记录工具调用 / 标记完成或失败，停机原因结构化）；子代理并行、失败隔离、按序归并；**无进展熔断**盯住同一工具同一组参数的连续重复，打转就停。环境隔离守卫只写自己的目录，不动 PATH/系统 Python/全局 npm。<br>A unit-testable state machine; parallel sub-agents with isolation and ordered merge; a **no-progress circuit breaker**; environment-isolation that only writes its own directory.
+- **Harness · 受控运行时 / controlled runtime** — 工具注册、上下文装配、权限闸、预算闸、连续去重闸串成一条显式有序的守卫链；守卫只读状态做判定，自身出异常也绝不拦执行；预留 hooks 扩展点；整回合用一套 SSE 事件协议对外推送。**160+ 项回归看守。**<br>Tool registration, context assembly, and an explicit ordered guard chain (permission → budget → retrieval-budget → dedup); guards are read-only and never block execution on their own failure; hook extension points; one SSE event protocol per turn. **160+ regression guards.**
+- **Loop · 迭代引擎 / iteration engine** — 把迭代做成可单测的状态机（开始一轮 / 记录工具调用 / 标记完成或失败，停机原因结构化）；子代理并行、失败隔离、按序归并；**无进展熔断**盯住同一工具同一组参数的连续重复，打转就停。环境隔离守卫只写自己的目录，不动 PATH / 系统 Python / 全局 npm。<br>A unit-testable state machine; parallel sub-agents with isolation and ordered merge; a **no-progress circuit breaker**; environment isolation that only writes its own directory.
 - **Computer Use · GUI 自动化** — 对标 Anthropic Computer Use：归一化 0–1000 坐标（与分辨率无关）、schema 校验、危险组合键闸（Win+R / Alt+F4 强制确认）、策略闸（只读/高安全模式全部需确认）、每步进回放审计；平台层 Windows 用 user32 SendInput（内联 C#、零原生依赖）、mac 用 osascript、Linux 用 xdotool；还做了 OCR 视觉定位，让模型按文字点按钮而非肉眼估坐标。<br>Anthropic-style Computer Use: resolution-independent 0–1000 coordinates, schema validation, a dangerous-key gate, a policy gate, full replay audit, native execution per platform, and OCR visual grounding.
 
 > 真实运行轨迹：成功率 4/4，平均 1.8 轮、约 15 秒。<br>Real run traces: 4/4 success, ~1.8 rounds, ~15s.
 
 ---
 
-## 🖥️📱 多端套件 · Four-Client Suite
+## 多端套件 · Four-Client Suite
 
 桌面、网页、手机加 GPU 后端构成四端跨设备套件，**同账号**，对话历史、记忆和知识库通用。<br>
 Desktop, web, mobile and the GPU backend form a four-client suite — **one account**, with shared history, memory and knowledge base.
@@ -124,7 +143,7 @@ Desktop, web, mobile and the GPU backend form a four-client suite — **one acco
 
 ---
 
-## 🛠️ 工具与治理 · Tools & Governance
+## 工具与治理 · Tools & Governance
 
 - **工具集 25 个 / 25 tools** — 文件读写、格式转换、代码沙箱执行、网页与论文读取，以及直接产出 **PPT / Word / Excel / PDF**（`create_document`、`create_pptx_from_plan`、`create_pdf`、`convert_file`…），可逐个启停。
 - **提示词模板 22 个 / 22 prompt templates** — 通用、代码、分析、文档、写作、研究、客服、数据、智能体；含**论文精读**、竞品对比、单元测试生成等。
@@ -135,7 +154,7 @@ Desktop, web, mobile and the GPU backend form a four-client suite — **one acco
 
 ---
 
-## 🚀 快速开始 · Quick Start
+## 快速开始 · Quick Start
 
 > 需要 Python 3.10+、Node 18+（网页/桌面），以及一个 OpenAI 兼容的 LLM API key。后端跑嵌入/重排建议有 CUDA 显卡。<br>
 > Requires Python 3.10+, Node 18+, and an OpenAI-compatible LLM key. A CUDA GPU is recommended for the backend.
@@ -143,7 +162,7 @@ Desktop, web, mobile and the GPU backend form a four-client suite — **one acco
 ### 后端 / Backend
 
 ```bash
-git clone https://github.com/YOUR_ORG/hashmm-rag.git
+git clone https://github.com/augety121/hashmm-rag.git
 cd hashmm-rag
 
 pip install -r client/requirements.txt
@@ -176,9 +195,12 @@ npm run dist         # 打包安装器 / build installers
 cd client && PYTHONPATH=. python -m hashmm.mcp_server
 ```
 
+预编译安装包（Windows `.exe`、Android `.apk`）见 [**Releases**](https://github.com/augety121/hashmm-rag/releases)。<br>
+Pre-built installers (Windows `.exe`, Android `.apk`) are on the [**Releases**](https://github.com/augety121/hashmm-rag/releases) page.
+
 ---
 
-## 📦 项目结构 · Project Structure
+## 项目结构 · Project Structure
 
 ```
 hashmm-rag/
@@ -197,15 +219,15 @@ hashmm-rag/
 
 ---
 
-## 🙏 致谢 · Acknowledgements
+## 致谢 · Acknowledgements
 
 建在这些开源研究与工具之上 / Built on open research and tooling：
 **Search-R1**（用 RL 训练自主检索）、**Self-RAG**（自我反思的检索-生成-批判）、**RAGAS**（忠实度/上下文相关性评测）、**BGE-M3** 与 **bge-reranker**（BAAI）、**Qwen2.5-7B-Instruct**（阿里巴巴）、**FAISS** 与 **RRF**，以及数据集 **CMRC2018 / DuReader / HotpotQA / 2WikiMultiHopQA / MuSiQue / Natural Questions**。
 
 ---
 
-## 📄 License
+## License
 
-[MIT](LICENSE) © 2026 HashMM-RAG
+[MIT](LICENSE) © 2026 augety121
 
 <div align="center"><sub>本地优先 · 资料不出内网 · 一张显卡跑通 / Local-first · data stays in-network · runs on one GPU</sub></div>
