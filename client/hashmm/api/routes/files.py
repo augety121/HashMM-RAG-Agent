@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from hashmm.api.auth import get_current_user
+from hashmm.api.auth import get_current_user, require_auth
 
 
 def _auth_and_safe_name(request: Request, filename: str) -> str:
@@ -47,8 +47,9 @@ _FILES_DIR = Path("data/files")
 @router.post("/api/upload",
              summary="上传文件并解析为文本",
              description="支持 PDF/DOCX/XLSX/CSV/图片/ZIP/纯文本，返回解析后的文本")
-async def upload_file(file: UploadFile = File(...), request: Request = None,
+async def upload_file(request: Request, file: UploadFile = File(...),
                       analyze: str = Form("1")):
+    user = require_auth(request)
     content = await file.read()
     fname = file.filename or "unknown"
     ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
@@ -69,6 +70,12 @@ async def upload_file(file: UploadFile = File(...), request: Request = None,
         # V86: analyze=0 → 跳过泛图片分析（问答栏截屏即贴即发，定向解读由
         # /stream 的 vision 前置步骤按用户问题做，避免上传时白等一次大模型）。
         text = "" if analyze == "0" else await asyncio.to_thread(_analyze_image, content, fname)
+        # V205 P1-5（图2-④）：登记进图片资源库（sha256 幂等；caption=视觉分析文本）
+        try:
+            from hashmm.retrieval.image_store import add_image as _img_add
+            _img_add(content, fname, caption=text or "", owner=str(user["uid"]))
+        except Exception as _ie:
+            log_suppressed(logger, _ie)
     elif ext == "docx":
         text = await asyncio.to_thread(_extract_docx, content, fname)
     elif ext in ("xlsx", "csv"):
@@ -85,13 +92,22 @@ async def upload_file(file: UploadFile = File(...), request: Request = None,
     try:
         _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         safe_name = re.sub(r'[^\w.\-]', '_', fname)[:80]
-        (_UPLOAD_DIR / safe_name).write_bytes(content)
+        stored_path = _UPLOAD_DIR / safe_name
+        stored_path.write_bytes(content)
+        # A missing OCR dependency must not make upload fail.  Persist a job
+        # whenever the fast upload path cannot provide trustworthy text; the
+        # client can observe/retry it through /api/ocr-jobs.
+        if ext in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "pdf"} and not text.strip():
+            try:
+                from hashmm.pipeline.ocr_queue import enqueue
+                enqueue(user_id=str(user.get("uid") or user.get("sub") or ""),
+                        filename=fname, source_path=str(stored_path))
+            except Exception as _ocr_e:
+                log_suppressed(logger, _ocr_e, "enqueue OCR")
     except Exception as _e:
         log_suppressed(logger, _e)
 
-    user = get_current_user(request) if request else None
-    if user:
-        db.audit(user["uid"], user["sub"], "upload", fname)
+    db.audit(user["uid"], user["sub"], "upload", fname)
 
     return {"filename": fname, "text": text[:15000]}
 
@@ -118,7 +134,10 @@ async def download_file(filename: str, request: Request, conv: str = ""):
     if safe_name != filename:
         raise HTTPException(400, "非法文件名")
 
-    from hashmm.api.tool_registry import CONV_FILES_ROOT
+    # Workspace ownership lives in database.py.  tool_registry only exposes
+    # executable tools and stopped exporting this path in V360; importing it
+    # from there made both download fallback and /api/workspace fail at runtime.
+    from hashmm.api.database import CONV_FILES_ROOT
 
     if conv:
         if not is_admin:
@@ -181,8 +200,7 @@ async def list_workspace(request: Request):
     user = require_auth(request)
     uid = user.get("uid") or user.get("sub")
 
-    from hashmm.api.tool_registry import CONV_FILES_ROOT
-    from hashmm.api import database as db
+    from hashmm.api.database import CONV_FILES_ROOT
 
     def _entry(f, cid):
         st = f.stat(); sz = st.st_size
@@ -385,7 +403,14 @@ def _analyze_image(content: bytes, fname: str) -> str:
         logger.warning(f"Vision module error: {e}")
 
     # Method 1: Vision model
-    model = db.get_default_model()
+    # V308 修真实健壮性 bug：get_default_model() 原本【裸在 try 外】——DB 瞬断/表缺失时
+    # 异常直接炸穿整个 _analyze_image，OCR 与文案兜底全部到不了（与本函数
+    # "vision → OCR → fallback 永不崩"的契约矛盾，test_v86 的失败正是它）。
+    try:
+        model = db.get_default_model()
+    except Exception as e:
+        logger.warning(f"get_default_model failed (fallback continues): {e}")
+        model = None
     if model and model.get("api_key"):
         try:
             from openai import OpenAI

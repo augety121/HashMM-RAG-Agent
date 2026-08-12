@@ -15,6 +15,11 @@ import secrets
 import sys
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        _reconfigure(errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hashmm.api.security import audit_for_deploy  # noqa: E402

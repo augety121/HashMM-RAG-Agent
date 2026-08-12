@@ -1,9 +1,10 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, type MouseEvent } from "react";
 import { parseContentBlocks, Block } from "@/lib/contentParser";
 import { renderMsg } from "@/lib/render";
 import { CodeBlock } from "./CodeBlock";
 import { DiffBlock } from "./DiffBlock";
+import { openBrowserInInspector } from "@/lib/browserInspector";
 
 interface Props {
   content: string;
@@ -25,8 +26,17 @@ export function MessageRenderer({ content, convId: propConvId }: Props) {
     }
   }, [content]);
 
+  const openLinkInWorkspace = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    const anchor = target?.closest?.('a[data-hashmm-browser-link="1"]') as HTMLAnchorElement | null;
+    if (!anchor) return;
+    event.preventDefault();
+    openBrowserInInspector(anchor.href, anchor.textContent || undefined);
+  };
+
   return (
-    <div className="msg-content-v2">
+    <div className="msg-content-v2" onClick={openLinkInWorkspace}>
       {blocks.map((block, i) => (
         <BlockRenderer key={i} block={block} convId={convId} />
       ))}

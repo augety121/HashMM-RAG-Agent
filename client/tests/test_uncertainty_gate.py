@@ -84,6 +84,19 @@ def test_confidence_fn_raises_is_safe():
     assert r["sources"] and r["n_hops"] >= 1
 
 
+def test_search_failure_is_visible_without_fabricating_evidence():
+    """A retrieval outage must be reported to the caller, not look like no evidence."""
+    def broken_search(_q):
+        raise OSError("index unavailable")
+
+    ar = AgenticRetriever(broken_search, lambda _p: '{"action":"finish"}', max_hops=2)
+    result = ar.retrieve("Q")
+    assert result["sources"] == []
+    assert result["errors"]
+    assert result["errors"][0]["type"] == "OSError"
+    assert result["trace"][0]["action"] == "seed_error"
+
+
 def test_thresholds_swapped_fall_back_to_default():
     """high<low 写反 → _gate_thresholds 回退默认 (0.75, 0.45)。"""
     os.environ["HASHMM_UNCERTAINTY_GATE_HIGH"] = "0.2"

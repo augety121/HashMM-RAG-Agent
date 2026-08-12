@@ -26,7 +26,7 @@ interface MetricsData {
 }
 
 function StatCard({ icon: Icon, label, value, sub, color }: {
-  icon: React.ElementType; label: string; value: string | number; sub?: string; color: string;
+  icon: React.ElementType; label: string; value: string | number | null; sub?: string; color: string;
 }) {
   return (
     <div className="p-4 rounded-xl" style={{ border: "1px solid var(--border)" }}>
@@ -37,11 +37,28 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
         <span className="text-[11px] font-medium" style={{ color: "var(--text-tertiary)" }}>{label}</span>
       </div>
       <div className="text-[24px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
-        {typeof value === "number" ? value.toLocaleString() : value}
+        {value == null ? "—" : typeof value === "number" ? value.toLocaleString() : value}
       </div>
       {sub && <div className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{sub}</div>}
     </div>
   );
+}
+
+type SourceResult<T> = { data: T | null; issue: string | null };
+
+async function readSource<T>(url: string, headers: Record<string, string>): Promise<SourceResult<T>> {
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      const reason = response.status === 401 ? "登录已失效"
+        : response.status === 403 ? "当前账号无权限"
+        : `服务返回 ${response.status}`;
+      return { data: null, issue: reason };
+    }
+    return { data: await response.json() as T, issue: null };
+  } catch {
+    return { data: null, issue: "网络连接失败" };
+  }
 }
 
 function BarChart({ data, color }: { data: { label: string; value: number }[]; color: string }) {
@@ -54,7 +71,7 @@ function BarChart({ data, color }: { data: { label: string; value: number }[]; c
           <div className="flex-1 h-5 rounded-md overflow-hidden" style={{ background: "var(--bg-tertiary)" }}>
             <div className="h-full rounded-md transition-all flex items-center pl-2"
                  style={{ width: `${(d.value / max) * 100}%`, background: color, minWidth: d.value > 0 ? "20px" : "0" }}>
-              {(d.value / max) > 0.2 && <span className="text-[9px] text-white font-medium">{d.value}</span>}
+              {(d.value / max) > 0.2 && <span className="text-[10px] text-white font-medium">{d.value}</span>}
             </div>
           </div>
           <span className="w-[35px] text-[11px] font-mono tabular-nums text-right" style={{ color: "var(--text-tertiary)" }}>{d.value}</span>
@@ -71,6 +88,9 @@ export function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [evalRunning, setEvalRunning] = useState(false);
   const [evalResult, setEvalResult] = useState<Record<string, any> | null>(null);
+  const [evalError, setEvalError] = useState("");
+  const [sourceIssues, setSourceIssues] = useState<string[]>([]);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   const headers = useCallback(() => {
     const h: Record<string, string> = {};
@@ -83,18 +103,32 @@ export function AdminDashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     const [d, m, a, au] = await Promise.all([
-      fetch("/api/admin/dashboard", { headers: headers() }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/admin/metrics", { headers: headers() }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/admin/retrieval-analytics?hours=24", { headers: headers() }).then(r => r.ok ? r.json() : null).catch(() => null),
+      readSource<DashboardData>("/api/admin/dashboard", headers()),
+      readSource<MetricsData>("/api/admin/metrics", headers()),
+      readSource<Record<string, any>>("/api/admin/retrieval-analytics?hours=24", headers()),
       // V68: 服务器侧外部 coding agent 用量（V59 端点；未装 agent 时各项为 null）
-      fetch("/api/agent-usage", { headers: headers() }).then(r => r.ok ? r.json() : null).catch(() => null),
+      readSource<any>("/api/agent-usage", headers()),
     ]);
-    setData(d); setMetrics(m); setAnalytics(a); setAgentUsage(au); setLoading(false);
+    if (d.data) setData(d.data);
+    if (m.data) setMetrics(m.data);
+    if (a.data) setAnalytics(a.data);
+    if (au.data) setAgentUsage(au.data);
+    const issues = [
+      d.issue && `业务概览：${d.issue}`,
+      m.issue && `运行指标：${m.issue}`,
+      a.issue && `检索分析：${a.issue}`,
+      au.issue && `Agent 用量：${au.issue}`,
+    ].filter((item): item is string => Boolean(item));
+    setSourceIssues(issues);
+    if (issues.length < 4) setLastUpdatedAt(Date.now());
+    setLoading(false);
   }, [headers]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <div className="p-8 text-center" style={{ color: "var(--text-tertiary)" }}>加载中...</div>;
+  if (loading && !data && !metrics && !analytics && !agentUsage) {
+    return <div className="p-8 text-center" style={{ color: "var(--text-tertiary)" }}>正在核对运行数据…</div>;
+  }
 
   const rt = metrics?.runtime;
   const ret = metrics?.retrieval;
@@ -105,37 +139,57 @@ export function AdminDashboard() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>系统监控</h3>
-        <button onClick={load} className="admin-btn"><RefreshCw size={13} /> 刷新</button>
+        <div>
+          <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>系统监控</h3>
+          <div className="text-[10.5px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+            {sourceIssues.length === 0 ? "4/4 个数据源本次已验证" : `${4 - sourceIssues.length}/4 个数据源本次已验证`}
+            {lastUpdatedAt ? ` · ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+          </div>
+        </div>
+        <button onClick={load} disabled={loading} className="admin-btn">
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> {loading ? "核对中" : "刷新"}
+        </button>
       </div>
 
+      {sourceIssues.length > 0 && (
+        <div className="rounded-xl px-3.5 py-3 flex items-start gap-2.5" style={{ border: "1px solid #d9770633", background: "#d9770608" }}>
+          <AlertTriangle size={15} style={{ color: "#d97706", marginTop: 1, flexShrink: 0 }} />
+          <div className="min-w-0">
+            <div className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>部分数据暂时无法验证</div>
+            <div className="text-[11px] mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
+              {sourceIssues.join("；")}。数值不会用 0 代替读取失败；已有内容为最近一次成功结果。
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top stats */}
-      <div className="grid grid-cols-4 gap-3">
-        <StatCard icon={MessageSquare} label="总对话" value={db?.total_conversations || data?.conversations?.total || 0}
-                  sub={`今日 ${data?.messages?.today || 0} 条消息`} color="#2563eb" />
-        <StatCard icon={Zap} label="LLM 调用" value={rt?.total_llm_calls || 0}
-                  sub={`缓存命中 ${rt?.cache_hit_rate || "0%"}`} color="#7c3aed" />
-        <StatCard icon={Clock} label="平均延迟" value={`${rt?.avg_latency_ms || 0}ms`}
-                  sub={`P95: ${rt?.p95_latency_ms || 0}ms`} color="#d97706" />
-        <StatCard icon={Database} label="知识库" value={ret?.total_vectors || 0}
-                  sub={`${ret?.documents?.length || 0} 文档 · Reranker ${ret?.reranker_available ? "可用" : "不可用"}`} color="#059669" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <StatCard icon={MessageSquare} label="总对话" value={db?.total_conversations ?? data?.conversations?.total ?? null}
+                  sub={data ? `今日 ${data.messages?.today ?? 0} 条消息` : "业务概览未读取"} color="#2563eb" />
+        <StatCard icon={Zap} label="LLM 调用" value={rt?.total_llm_calls ?? null}
+                  sub={rt ? `缓存命中 ${rt.cache_hit_rate}` : "运行指标未读取"} color="#7c3aed" />
+        <StatCard icon={Clock} label="平均延迟" value={rt ? `${rt.avg_latency_ms}ms` : null}
+                  sub={rt ? `P95: ${rt.p95_latency_ms}ms` : "运行指标未读取"} color="#d97706" />
+        <StatCard icon={Database} label="知识库" value={ret?.total_vectors ?? null}
+                  sub={ret ? `${ret.documents?.length ?? 0} 文档 · Reranker ${ret.reranker_available ? "可用" : "不可用"}` : "检索指标未读取"} color="#059669" />
       </div>
 
       {/* Second row */}
-      <div className="grid grid-cols-4 gap-3">
-        <StatCard icon={Users} label="用户" value={db?.total_users || 0}
-                  sub={`${db?.user_memories || 0} 条记忆`} color="#4f46e5" />
-        <StatCard icon={Network} label="知识图谱" value={kg?.entities || 0}
-                  sub={`${kg?.relations || 0} 关系`} color="#0891b2" />
-        <StatCard icon={TrendingUp} label="今日 Token" value={data?.tokens_today?.input ? `${Math.round((data.tokens_today.input + data.tokens_today.output) / 1000)}K` : "0"}
-                  sub={`≈ ¥${data?.tokens_today?.cost_cny?.toFixed(2) || "0"}`} color="#ea580c" />
-        <StatCard icon={Cpu} label="Embedding 缓存" value={metrics?.embedding_cache?.hit_rate || "0%"}
-                  sub={`${metrics?.embedding_cache?.size || 0}/${metrics?.embedding_cache?.max_size || 512} 条目`} color="#16a34a" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <StatCard icon={Users} label="用户" value={db?.total_users ?? null}
+                  sub={db ? `${db.user_memories ?? 0} 条记忆` : "数据库指标未读取"} color="#4f46e5" />
+        <StatCard icon={Network} label="知识图谱" value={kg?.entities ?? null}
+                  sub={kg ? `${kg.relations ?? 0} 关系` : "图谱指标未读取"} color="#0891b2" />
+        <StatCard icon={TrendingUp} label="今日 Token" value={data?.tokens_today ? `${Math.round((data.tokens_today.input + data.tokens_today.output) / 1000)}K` : null}
+                  sub={data?.tokens_today ? `≈ ¥${data.tokens_today.cost_cny.toFixed(2)}` : "业务概览未读取"} color="#ea580c" />
+        <StatCard icon={Cpu} label="Embedding 缓存" value={metrics?.embedding_cache?.hit_rate ?? null}
+                  sub={metrics?.embedding_cache ? `${metrics.embedding_cache.size}/${metrics.embedding_cache.max_size} 条目` : "缓存指标未读取"} color="#16a34a" />
       </div>
 
       {/* V68: 服务器侧 Coding Agent 用量（Claude Code / Codex，读自 ~/.claude ~/.codex） */}
       {agentUsage && (agentUsage.claude_code || agentUsage.codex) && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {agentUsage.claude_code && (<>
             <StatCard icon={Zap} label="Claude Code · 今天"
               value={`${Math.round((agentUsage.claude_code.today?.total || 0) / 1000)}K`}
@@ -158,7 +212,7 @@ export function AdminDashboard() {
       )}
 
       {/* Charts row */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {/* Task distribution */}
         {data?.task_distribution && data.task_distribution.length > 0 && (
           <div className="rounded-xl p-4" style={{ border: "1px solid var(--border)" }}>
@@ -239,7 +293,7 @@ export function AdminDashboard() {
       )}
 
       {/* v10.0: Quality Evaluation + Evolution Stats + Benchmark */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {/* Evolution Engine Stats */}
         <EvolutionStats headers={headers} />
 
@@ -254,16 +308,20 @@ export function AdminDashboard() {
           </h4>
           <button onClick={async () => {
             setEvalRunning(true);
+            setEvalError("");
             try {
               const res = await fetch("/api/admin/eval/run", { method: "POST", headers: headers() });
               if (res.ok) setEvalResult(await res.json());
-            } catch {} finally { setEvalRunning(false); }
+              else setEvalError(res.status === 403 ? "当前账号没有运行评测的权限" : `评测服务返回 ${res.status}`);
+            } catch { setEvalError("评测服务暂时无法连接"); } finally { setEvalRunning(false); }
           }} disabled={evalRunning}
             className="admin-btn" style={{ fontSize: 11 }}>
             {evalRunning ? "运行中..." : "运行测试"}
           </button>
         </div>
-        {evalResult ? (
+        {evalError ? (
+          <div className="text-[12px] text-center py-3" style={{ color: "#dc2626" }}>{evalError}</div>
+        ) : evalResult ? (
           <div>
             <div className="text-[20px] font-bold mb-2" style={{ color: evalResult.pass_rate >= 80 ? "#059669" : "#ef4444" }}>
               {evalResult.summary}
@@ -293,6 +351,7 @@ function EvolutionStats({ headers }: { headers: () => Record<string, string> }) 
     skills: number; profiles: number; active_7d: number;
     prompt_satisfaction: Record<string, { satisfaction: number; total: number }>;
   } | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -300,6 +359,11 @@ function EvolutionStats({ headers }: { headers: () => Record<string, string> }) 
       fetch("/api/evolution/profile/stats", { headers: headers() }).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch("/api/evolution/prompt/analysis", { headers: headers() }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]).then(([sk, pr, pa]) => {
+      if (!sk && !pr && !pa) {
+        setError("进化统计暂时无法读取");
+        return;
+      }
+      setError("");
       setData({
         skills: sk?.skills?.length || 0,
         profiles: pr?.total_profiles || 0,
@@ -309,7 +373,13 @@ function EvolutionStats({ headers }: { headers: () => Record<string, string> }) 
     });
   }, [headers]);
 
-  if (!data) return null;
+  if (error) return (
+    <div className="rounded-xl p-4" style={{ border: "1px solid var(--border)" }}>
+      <h4 className="text-[12px] font-semibold mb-2" style={{ color: "var(--text-tertiary)" }}>自我进化引擎</h4>
+      <div className="text-[11.5px]" style={{ color: "var(--text-secondary)" }}>{error}，不会显示伪造的零值。</div>
+    </div>
+  );
+  if (!data) return <div className="rounded-xl p-4 text-[11.5px]" style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}>正在读取进化统计…</div>;
   return (
     <div className="rounded-xl p-4" style={{ border: "1px solid var(--border)" }}>
       <h4 className="text-[12px] font-semibold mb-3" style={{ color: "var(--text-tertiary)" }}>
@@ -355,16 +425,20 @@ function EvolutionStats({ headers }: { headers: () => Record<string, string> }) 
 function BenchmarkPanel({ headers }: { headers: () => Record<string, string> }) {
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<Record<string, { latency_ms?: number; status: string; meets_target?: boolean }> | null>(null);
+  const [error, setError] = useState("");
 
   async function run() {
     setRunning(true);
+    setError("");
     try {
       const r = await fetch("/api/benchmark", { headers: headers() });
       if (r.ok) {
         const data = await r.json();
         setResults(data.benchmark);
+      } else {
+        setError(r.status === 403 ? "当前账号没有运行基准测试的权限" : `基准服务返回 ${r.status}`);
       }
-    } catch {} finally { setRunning(false); }
+    } catch { setError("基准服务暂时无法连接"); } finally { setRunning(false); }
   }
 
   return (
@@ -375,7 +449,9 @@ function BenchmarkPanel({ headers }: { headers: () => Record<string, string> }) 
           {running ? "测试中..." : "运行基准测试"}
         </button>
       </div>
-      {results ? (
+      {error ? (
+        <div className="text-[12px] text-center py-3" style={{ color: "#dc2626" }}>{error}</div>
+      ) : results ? (
         <div className="space-y-2">
           {Object.entries(results).map(([key, val]) => (
             <div key={key} className="flex items-center gap-2 text-[11px]">

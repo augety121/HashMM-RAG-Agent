@@ -88,8 +88,8 @@ function buildDisplay(data) {
 function metaSummary(meta) {
   meta = meta || {};
   const bits = [];
-  if (meta.grounded === true) bits.push("✓ 已通过自评");
-  else if (meta.grounded === false) bits.push("⚠ 资料可能不足");
+  if (meta.grounded === true) bits.push("已通过自评");
+  else if (meta.grounded === false) bits.push("资料可能不足");
   if (meta.confidence != null) bits.push("置信度 " + meta.confidence + "%");
   if (meta.rounds != null && meta.rounds > 0) bits.push("再检索 " + meta.rounds + " 轮");
   bits.push("命中 " + (meta.sourceCount || 0) + " 来源");

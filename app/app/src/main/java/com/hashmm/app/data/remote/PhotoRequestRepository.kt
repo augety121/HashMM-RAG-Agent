@@ -34,7 +34,7 @@ class PhotoRequestRepository @Inject constructor(
     private val settings: SettingsStore,
     private val auth: AuthRepository,
 ) {
-    private val http = OkHttpClient.Builder()
+    private val http = SharedHttp.base.newBuilder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)

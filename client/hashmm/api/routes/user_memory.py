@@ -97,3 +97,39 @@ async def search_sessions(request: Request, q: str = "", limit: int = 20):
     user = _require_user(request)
     from hashmm.api.session_search import search
     return search(user["uid"], q, limit=min(limit, 50))
+
+
+# ── V249 统一记忆中枢（hashmm/memory/hub.py：四路联邦召回 + 执行回写 + 快照）──
+# 借鉴 cognee（混合召回 / 执行回写）与 codebase-memory-mcp（记忆做成可查层），
+# 全部踩在既有存储上，单路故障降级为空、绝不拖垮召回。
+
+@router.get("/recall")
+async def hub_recall(request: Request, q: str = "", kinds: str = "", limit: int = 20):
+    """联邦召回：长期记忆(MemoryService) + 经验回放(episodic) + 用户画像 + 图谱实体。
+    kinds 逗号分隔（service,episodic,profile,entity），留空＝全部。"""
+    user = _require_user(request)
+    from hashmm.memory import hub
+    kl = [k.strip() for k in kinds.split(",") if k.strip()] or None
+    items = hub.recall(user["uid"], q, kinds=kl, limit=min(max(1, limit), 50))
+    return {"ok": True, "query": q, "items": items, "total": len(items)}
+
+
+@router.get("/hub/stats")
+async def hub_stats(request: Request):
+    """四路记忆条数快照（记忆中心页头用）。"""
+    user = _require_user(request)
+    from hashmm.memory import hub
+    return {"ok": True, **hub.stats(user["uid"])}
+
+
+@router.post("/hub/remember")
+async def hub_remember(request: Request):
+    """手动置顶记忆（「让它记住」）：写入 MemoryService，importance 偏高不易衰减。"""
+    user = _require_user(request)
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if len(text) < 3:
+        raise HTTPException(400, "text 太短")
+    from hashmm.memory import hub
+    mid = hub.remember(user["uid"], text)
+    return {"ok": True, "id": mid}

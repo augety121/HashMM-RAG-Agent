@@ -229,7 +229,7 @@ def assess_uncertainty(query: str, sources: list, answer: str = "", *,
 
 
 # 标注文案（咨询式，附在终答后；与 confidence.HEDGE_NOTE 风格一致）。
-NOTE_INSUFFICIENT = "⚠️ 资料不足/存疑：以下回答缺乏足够的可靠资料支撑，请把它当作初步参考并务必核实关键信息。"
+NOTE_INSUFFICIENT = "资料不足/存疑：以下回答缺乏足够的可靠资料支撑，请把它当作初步参考并务必核实关键信息。"
 NOTE_HEDGE = "（注：本回答置信度中等，部分内容资料有限，请核对关键信息。）"
 
 

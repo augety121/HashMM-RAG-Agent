@@ -485,14 +485,37 @@ class KnowledgeGraph:
             "top_entities": top_entities,
         }
 
-    def to_vis_data(self, max_nodes: int = 200) -> dict:
-        """Export graph data for vis-network frontend visualization."""
+    def to_vis_data(
+        self,
+        max_nodes: int = 200,
+        *,
+        allowed_source_ids: set[str] | None = None,
+    ) -> dict:
+        """Export graph data for visualization.
+
+        ``allowed_source_ids=None`` is the administrator/global view.  An
+        explicit set is a tenant boundary: nodes and edges without evidence in
+        that set are excluded, including legacy graph facts with no provenance.
+        Source identifiers themselves are never returned to the client.
+        """
+        source_graph = self.graph
+        if allowed_source_ids is not None:
+            allowed = {str(item) for item in allowed_source_ids if str(item)}
+            visible_nodes = {
+                key
+                for key, attrs in source_graph.nodes(data=True)
+                if allowed.intersection(
+                    str(item) for item in (attrs.get("source_ids") or [])
+                )
+            }
+            source_graph = source_graph.subgraph(visible_nodes)
+
         # Limit to top nodes by degree
-        if self.num_entities > max_nodes:
-            top_nodes = sorted(self.graph.degree(), key=lambda x: -x[1])[:max_nodes]
-            subgraph = self.graph.subgraph([n for n, _ in top_nodes])
+        if source_graph.number_of_nodes() > max_nodes:
+            top_nodes = sorted(source_graph.degree(), key=lambda x: -x[1])[:max_nodes]
+            subgraph = source_graph.subgraph([n for n, _ in top_nodes])
         else:
-            subgraph = self.graph
+            subgraph = source_graph
 
         type_colors = {
             # Chinese types (from full KG extractor)
@@ -522,6 +545,10 @@ class KnowledgeGraph:
 
         edges = []
         for u, v, attrs in subgraph.edges(data=True):
+            if allowed_source_ids is not None and not set(
+                str(item) for item in (attrs.get("source_ids") or [])
+            ).intersection(allowed_source_ids):
+                continue
             edges.append({
                 "from": u, "to": v,
                 "label": attrs.get("relation", ""),

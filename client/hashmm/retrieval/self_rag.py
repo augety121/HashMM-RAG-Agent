@@ -97,8 +97,108 @@ def critique(question: str, answer: str, sources: list, llm=None) -> Optional[di
     }
 
 
+def _lite_multihop(question: str, sf, llm, *, top_k: int = 5, max_hops: int = 3) -> Optional[dict]:
+    """V254 降级路径（deepsearch 的"lite 模式"）：本地 7B 策略不可用（无 GPU / 权重缺失）时，
+    用**当前活跃 LLM** 拆 1~3 个子查询 → 检索桥逐个取证 → deepseek 合成——
+    深度检索从此不再因为"模型没加载"而整体报废（V253 用户实测：点了深度检索直接
+    "暂不可用"，根因即 answer_multihop 强依赖 SearchR1 LoRA）。
+
+    返回与 answer_multihop 同构的 dict（answer/sources/trace/answer_by）；
+    检索桥或 LLM 全不可用才返回 None（调用方据此给出诚实的 degraded 提示）。
+    """
+    if sf is None:
+        return None
+    subqs: list[str] = []
+    if llm is not None:
+        try:
+            raw = llm(
+                "把下面的问题拆成 1-3 个可独立检索的中文子查询（覆盖回答所需的不同事实点），"
+                "严格输出 JSON 字符串数组，不要任何多余文字。\n问题：" + question)
+            arr = _parse_json_list(raw)
+            subqs = [s for s in arr if isinstance(s, str) and s.strip()][:max(1, min(max_hops, 3))]
+        except Exception as e:  # noqa: BLE001
+            log.warning("[self_rag] lite 拆解异常：%s", e)
+    if not subqs:
+        subqs = [question]
+    sources: list = []
+    seen: set = set()
+    trace: list = []
+    for i, q in enumerate(subqs):
+        try:
+            got = sf(q) or []
+        except Exception as e:  # noqa: BLE001
+            log.warning("[self_rag] lite 检索异常：%s", e)
+            got = []
+        added = 0
+        for m in got[:top_k]:
+            k = (m.get("text") or "")[:80]
+            if k and k not in seen:
+                sources.append(m)
+                seen.add(k)
+                added += 1
+        trace.append({"round": 0, "action": f"lite_hop_{i+1}", "query": q,
+                      "added": added, "n_sources": len(sources)})
+    if not sources:
+        return None
+    from hashmm.retrieval import searchr1_serving as ss
+    ans = ss.synthesize_with_deepseek(question, sources)
+    if not ans and llm is not None:
+        try:   # deepseek 合成不可用 → 退回活跃 LLM 直接合成（仍基于证据）
+            ev = _evidence_text(sources)
+            _gwc = ""
+            try:
+                from hashmm.agent.global_workspace import context_for_llm
+                _gwc = context_for_llm(400)
+            except Exception:
+                pass
+            ans = llm((_gwc + "\n\n" if _gwc else "") +
+                      "只依据下面检索到的资料回答问题，资料不足就直说，不要编造。\n\n"
+                      f"问题：{question}\n\n资料：\n{ev}\n\n最终答案：")
+        except Exception:
+            ans = None
+    if not ans:
+        return None
+    return {"answer": str(ans).strip(), "sources": sources, "trace": trace,
+            "answer_by": "lite", "n_hops": len(subqs)}
+
+
+def _parse_json_list(s) -> list:
+    """稳健解析 JSON 数组（容忍围栏 / 多余文字）。"""
+    if not s:
+        return []
+    s = re.sub(r"```(?:json)?", "", str(s)).replace("```", "").strip()
+    m = re.search(r"\[.*\]", s, flags=re.DOTALL)
+    if not m:
+        return []
+    try:
+        v = json.loads(m.group(0))
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def availability() -> dict:
+    """深度检索能力自检（/api/deepsearch/status 与启动预检用）：
+    full = SearchR1 7B 策略可用（不触发加载，只查前置条件）；
+    lite = 检索桥可构建 + 有活跃 LLM。任何一档可用，深度检索就能工作。"""
+    import os as _os
+    lora = _os.environ.get("HASHMM_SEARCHR1_LORA", "")
+    full_ready = bool(lora and _os.path.isdir(lora))
+    lite_ready = False
+    try:
+        from hashmm.retriever_bridge import kb_search_bridge  # noqa: F401
+        from hashmm.api.model_manager import get_active_llm_fn
+        fn, _m = get_active_llm_fn()
+        lite_ready = fn is not None
+    except Exception:
+        pass
+    return {"full_model_dir": bool(full_ready), "lite": lite_ready,
+            "available": full_ready or lite_ready}
+
+
 def self_rag_answer(question: str, *, top_k: int = 5, max_hops: int = 3, max_rounds: int = 2,
                     policy=None, search_fn=None,
+                    principal: str | None = None,
                     base_model=None, lora_dir=None, max_new=None) -> Optional[dict]:
     """Self-RAG 主流程：选项A 作答 → 自我批判 → 不足则自适应再检索 → 仍不足则忠实度门控。
 
@@ -115,7 +215,11 @@ def self_rag_answer(question: str, *, top_k: int = 5, max_hops: int = 3, max_rou
     from hashmm.retrieval import searchr1_serving as ss
 
     llm = _get_llm()
-    sf = search_fn or ss.build_search_fn(top_k)
+    acl = None
+    if search_fn is None and principal is not None:
+        from hashmm.access_control import resolve_acl_scope
+        acl, _allowed, _fingerprint = resolve_acl_scope(principal)
+    sf = search_fn or ss.build_search_fn(top_k, acl=acl, principal=principal)
     # 第 0 轮：选项A（模型驱动多跳检索 + deepseek 作答）。复用注入的 policy（若有），否则懒加载。
     if policy is not None:
         try:
@@ -131,7 +235,11 @@ def self_rag_answer(question: str, *, top_k: int = 5, max_hops: int = 3, max_rou
             return None
     else:
         res = ss.answer_multihop(question, top_k=top_k, max_hops=max_hops,
+                                 acl=acl, principal=principal,
                                  base_model=base_model, lora_dir=lora_dir, max_new=max_new)
+        if res is None:
+            # V254: 7B 策略不可用（无 GPU / LoRA 目录缺失）→ lite 降级，而不是整体报废
+            res = _lite_multihop(question, sf, llm, top_k=top_k, max_hops=max_hops)
         if res is None:
             return None
         sources = list(res.get("sources") or [])

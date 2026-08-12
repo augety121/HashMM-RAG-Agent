@@ -73,9 +73,18 @@ def citation_overlap_check(answer: str, sources: list[dict],
                     "cite": c,
                     "overlap": overlap,
                 })
-    ratio = round(supported / checked, 3) if checked else 1.0
+    # V308 修 P0（RAG 指标定义错误）：无任何引用可核验时（checked==0），此前直接给
+    # ratio=1.0（满分）——把"无法验证"当成"完美接地"，质量看板求平均会把这些不可验证的
+    # 回答算成高分。改为三态：checked>0 才有真实 ratio；checked==0 时 ratio=None，
+    # 并标 status="not_evaluable"，由看板【排除出通过率分母】、单独统计证据覆盖率。
+    if checked:
+        ratio = round(supported / checked, 3)
+        status = "passed" if ratio >= 0.999 else "failed"
+    else:
+        ratio = None                      # 不可评估：无引用 → 无从判断接地
+        status = "not_evaluable"
     return {"checked": checked, "supported": supported,
-            "suspicious": suspicious, "ratio": ratio}
+            "suspicious": suspicious, "ratio": ratio, "status": status}
 
 
 _SELFCHECK_SYSTEM = (
@@ -127,7 +136,7 @@ def groundedness_caveat(overlap_result: dict, self_check_result: dict | None = N
     unsupported = sc.get("unsupported") or []
     if sc.get("grounded") is False and unsupported:
         items = "；".join(str(u) for u in unsupported[:2])
-        return f"\n\n> ⚠️ 提示：以下内容可能缺乏充分依据，请核实：{items}"
+        return f"\n\n> 提示：以下内容可能缺乏充分依据，请核实：{items}"
     if ratio < 0.5 and overlap_result.get("checked", 0) >= 2:
-        return "\n\n> ⚠️ 提示：部分引用与来源的关联较弱，建议核对原文。"
+        return "\n\n> 提示：部分引用与来源的关联较弱，建议核对原文。"
     return ""

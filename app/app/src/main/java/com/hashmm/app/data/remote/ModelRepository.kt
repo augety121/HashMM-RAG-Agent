@@ -5,6 +5,12 @@ import com.hashmm.app.data.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,7 +27,75 @@ data class ModelInfo(
     val provider: String,
     val modelName: String,
     val isDefault: Boolean,
+    val wireApi: String = "chat_completions",
 )
+
+data class ModelProviderInfo(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val wireApis: List<String>,
+    val defaultWireApi: String,
+    val authOptional: Boolean,
+    val local: Boolean,
+    val endpointNote: String,
+    val modelHints: List<String>,
+)
+
+internal fun parseModelProviders(payload: String): List<ModelProviderInfo> {
+    val root = runCatching { Json.parseToJsonElement(payload.ifBlank { "{}" }).jsonObject }
+        .getOrElse { return emptyList() }
+    val array = root["providers"]?.let { runCatching { it.jsonArray }.getOrNull() }.orEmpty()
+    return array.mapNotNull { element ->
+        val item = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
+        fun text(key: String): String = item[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+        fun texts(key: String): List<String> = item[key]
+            ?.let { runCatching { it.jsonArray }.getOrNull() }
+            .orEmpty()
+            .mapNotNull { it.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank) }
+        val id = text("id")
+        if (id.isBlank()) return@mapNotNull null
+        ModelProviderInfo(
+            id = id,
+            name = text("name").ifBlank { id },
+            baseUrl = text("base_url"),
+            wireApis = texts("wire_apis"),
+            defaultWireApi = text("default_wire_api").ifBlank { "chat_completions" },
+            authOptional = text("auth") == "optional",
+            local = item["local"]?.jsonPrimitive?.booleanOrNull ?: false,
+            endpointNote = text("endpoint_note"),
+            modelHints = texts("model_hints"),
+        )
+    }
+}
+
+internal fun parseMyModels(payload: String): List<ModelInfo> {
+    val root = runCatching { Json.parseToJsonElement(payload.ifBlank { "{}" }) }
+        .getOrElse { return emptyList() }
+    val arr = when (root) {
+        is kotlinx.serialization.json.JsonArray -> root
+        is kotlinx.serialization.json.JsonObject -> root["models"]
+            ?.let { runCatching { it.jsonArray }.getOrNull() }.orEmpty()
+        else -> emptyList()
+    }
+    return arr.mapNotNull { element ->
+        val o = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
+        fun text(key: String): String = o[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val configWire = runCatching {
+            Json.parseToJsonElement(text("config_json").ifBlank { "{}" })
+                .jsonObject["wire_api"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }.getOrDefault("")
+        ModelInfo(
+            id = text("id"),
+            name = text("name").ifBlank { text("model_name").ifBlank { "模型" } },
+            provider = text("provider"),
+            modelName = text("model_name"),
+            isDefault = o["is_preferred"]?.jsonPrimitive?.booleanOrNull
+                ?: (text("is_default") == "1"),
+            wireApi = text("wire_api").ifBlank { configWire.ifBlank { "chat_completions" } },
+        )
+    }
+}
 
 /** 新增/测试模型用的配置体。 */
 data class ModelCreate(
@@ -32,6 +106,7 @@ data class ModelCreate(
     val modelName: String,
     val temperature: Double = 0.1,
     val maxTokens: Int = 4096,
+    val wireApi: String = "chat_completions",
 )
 
 /** 测试连接结果。 */
@@ -46,9 +121,9 @@ class ModelRepository @Inject constructor(
     private val settings: SettingsStore,
     private val auth: AuthRepository,
 ) {
-    private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
+    private val http = SharedHttp.base.newBuilder().callTimeout(12, TimeUnit.SECONDS).build()
     // 测试连接会真的发一次 LLM 请求，给足超时
-    private val testHttp = OkHttpClient.Builder()
+    private val testHttp = SharedHttp.base.newBuilder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
@@ -61,6 +136,7 @@ class ModelRepository @Inject constructor(
         put("model_name", modelName)
         put("temperature", temperature)
         put("max_tokens", maxTokens)
+        put("wire_api", wireApi)
     }
 
     private suspend fun base(): String {
@@ -76,31 +152,57 @@ class ModelRepository @Inject constructor(
         }
     }
 
-    /** 返回 (模型列表, 错误信息)；列表为空 + 错误非空表示失败。 */
+    /** 返回 (模型列表, 错误信息)；列表为空 + 错误非空表示失败。
+     *  V306：GET 幂等 → 用 RetryPolicy 对 5xx/超时自动重试；错误文案统一走 HttpError。 */
     suspend fun listModels(): Pair<List<ModelInfo>, String?> = withContext(Dispatchers.IO) {
         val base = base(); val token = auth.currentToken()
         if (base.isBlank() || token.isNullOrBlank()) return@withContext emptyList<ModelInfo>() to "未连客户端后端或未登录"
-        try {
-            val req = Request.Builder().url("$base/api/admin/models").header("Authorization", "Bearer $token").get().build()
-            http.newCall(req).execute().use { resp ->
-                if (resp.code == 403) return@withContext emptyList<ModelInfo>() to "需要管理员权限"
-                if (!resp.isSuccessful) return@withContext emptyList<ModelInfo>() to "加载失败（${resp.code}）"
-                val s = resp.body?.string() ?: return@withContext emptyList<ModelInfo>() to "空响应"
-                val arr = JSONArray(s)
-                val out = (0 until arr.length()).mapNotNull { i ->
-                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                    ModelInfo(
-                        id = o.optString("id"),
-                        name = o.optString("name", o.optString("model_name", "模型")),
-                        provider = o.optString("provider", ""),
-                        modelName = o.optString("model_name", ""),
-                        isDefault = o.optInt("is_default", 0) == 1,
-                    )
+        val result = RetryPolicy.withRetry { _ ->
+            try {
+                val req = Request.Builder().url("$base/api/models/mine").header("Authorization", "Bearer $token").get().build()
+                http.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        // 非 2xx → 交给 RetryableHttp，是否重试由 HttpError 分类决定（5xx/429 重试，4xx 立即止）
+                        Result.failure(RetryPolicy.RetryableHttp(resp.code))
+                    } else {
+                        val s = resp.body?.string() ?: ""
+                        Result.success(parseMyModels(s))
+                    }
                 }
-                out to null
+            } catch (e: Exception) {
+                Result.failure(e)
             }
-        } catch (e: Exception) {
-            emptyList<ModelInfo>() to "网络错误"
+        }
+        result.fold(
+            onSuccess = { it to null },
+            onFailure = { e ->
+                val msg = when (e) {
+                    is RetryPolicy.RetryableHttp -> if (e.code == 403) "需要管理员权限" else HttpError.fromCode(e.code).message
+                    else -> HttpError.fromException(e).message
+                }
+                emptyList<ModelInfo>() to msg
+            },
+        )
+    }
+
+    /**
+     * 厂商能力由后端运行时注册表提供。App 不维护第二套过期模型清单，
+     * 只展示协议、端点规则和账号控制台里的精确模型 ID。
+     */
+    suspend fun listProviders(): Pair<List<ModelProviderInfo>, String?> = withContext(Dispatchers.IO) {
+        val base = base(); val token = auth.currentToken()
+        if (base.isBlank() || token.isNullOrBlank()) return@withContext emptyList<ModelProviderInfo>() to "未连客户端后端或未登录"
+        try {
+            val request = Request.Builder().url("$base/api/models/providers")
+                .header("Authorization", "Bearer $token").get().build()
+            http.newCall(request).execute().use { response ->
+                if (response.code == 403) return@withContext emptyList<ModelProviderInfo>() to "需要管理员权限"
+                if (!response.isSuccessful) return@withContext emptyList<ModelProviderInfo>() to "厂商策略加载失败（${response.code}）"
+                val result = parseModelProviders(response.body?.string().orEmpty())
+                result to null
+            }
+        } catch (_: Exception) {
+            emptyList<ModelProviderInfo>() to "厂商策略加载失败：网络错误"
         }
     }
 
@@ -108,11 +210,12 @@ class ModelRepository @Inject constructor(
         val base = base(); val token = auth.currentToken()
         if (base.isBlank() || token.isNullOrBlank()) return@withContext false
         try {
-            val empty = "".toRequestBody("application/json".toMediaTypeOrNull())
+            val body = JSONObject().put("model_id", id).toString()
+                .toRequestBody("application/json".toMediaTypeOrNull())
             val req = Request.Builder()
-                .url("$base/api/admin/models/$id/default")
+                .url("$base/api/models/mine/prefer")
                 .header("Authorization", "Bearer $token")
-                .post(empty)
+                .post(body)
                 .build()
             http.newCall(req).execute().use { it.isSuccessful }
         } catch (e: Exception) { false }
@@ -124,7 +227,7 @@ class ModelRepository @Inject constructor(
         if (base.isBlank() || token.isNullOrBlank()) return@withContext TestResult(false, "未连客户端后端或未登录", 0)
         try {
             val body = c.toJson().toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val req = Request.Builder().url("$base/api/admin/models/test").header("Authorization", "Bearer $token").post(body).build()
+            val req = Request.Builder().url("$base/api/models/test").header("Authorization", "Bearer $token").post(body).build()
             testHttp.newCall(req).execute().use { resp ->
                 val txt = resp.body?.string().orEmpty()
                 if (resp.code == 403) return@withContext TestResult(false, "需要管理员权限", 0)
@@ -143,7 +246,7 @@ class ModelRepository @Inject constructor(
         if (base.isBlank() || token.isNullOrBlank()) return@withContext false to "未连客户端后端或未登录"
         try {
             val body = c.toJson().toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val req = Request.Builder().url("$base/api/admin/models").header("Authorization", "Bearer $token").post(body).build()
+            val req = Request.Builder().url("$base/api/models/mine").header("Authorization", "Bearer $token").post(body).build()
             http.newCall(req).execute().use { resp ->
                 if (resp.code == 403) return@withContext false to "需要管理员权限"
                 if (!resp.isSuccessful) return@withContext false to "新增失败（${resp.code}）"
@@ -159,7 +262,7 @@ class ModelRepository @Inject constructor(
         val base = base(); val token = auth.currentToken()
         if (base.isBlank() || token.isNullOrBlank()) return@withContext false
         try {
-            val req = Request.Builder().url("$base/api/admin/models/$id").header("Authorization", "Bearer $token").delete().build()
+            val req = Request.Builder().url("$base/api/models/mine/$id").header("Authorization", "Bearer $token").delete().build()
             http.newCall(req).execute().use { it.isSuccessful }
         } catch (e: Exception) { false }
     }

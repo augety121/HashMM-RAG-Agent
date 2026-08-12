@@ -1,8 +1,7 @@
 /** desktop/services/capability-pack.js — 可选能力包的「按需下载」管理器（V102）。
  *
- * 背景：V102 把内置 Python 运行时和 onnxruntime 的跨平台二进制从安装包里拿掉了
- * （见 electron-builder.yml），安装包因此大幅瘦身。代价是这些「重」能力首次启用时
- * 需要现拉。本模块就是那个拉取器，对标 Marvis「本地 LLM（可选）」的按需下发。
+ * 背景：V334 的 installer-native 重新内置已校验 Python，保证干净电脑可离线启动；
+ * 本模块保留给运行时修复/升级和 OCR 等真正可选的大包，不再是首次启动前置条件。
  *
  * 设计哲学与 backendmgr.js 一致：纯 Node、零 electron 依赖；fetch / fs / 解压 / sha256
  * 全部可注入 —— 所以能在沙箱里用假实现完整冒烟（见 test_capability-pack.js，已实测通过）。
@@ -51,6 +50,24 @@ function verifySha256(buf, expected) {
   const got = sha256Hex(buf);
   if (got === String(expected).toLowerCase()) return { ok: true, got };
   return { ok: false, got, expected: String(expected).toLowerCase() };
+}
+
+/** Remote capability packs must be HTTPS and pinned by SHA-256.  The only
+ * exception is loopback development, where the same user controls both ends. */
+function validatePackSource(entry) {
+  let u;
+  try { u = new URL(String((entry && entry.url) || "")); }
+  catch (_e) { return { ok: false, error: "能力包 URL 无效" }; }
+  const host = String(u.hostname || "").toLowerCase();
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  if (!loopback && u.protocol !== "https:") {
+    return { ok: false, error: "远程能力包必须使用 HTTPS" };
+  }
+  const sha = String((entry && entry.sha256) || "").toLowerCase();
+  if (!loopback && !/^[0-9a-f]{64}$/.test(sha)) {
+    return { ok: false, error: "远程能力包缺少有效 SHA-256，已拒绝下载" };
+  }
+  return { ok: true, loopback, checksumSkipped: !sha };
 }
 
 /** 解析/合并清单：外部 json 覆盖默认，缺字段回退默认。纯函数。 */
@@ -122,6 +139,9 @@ class CapabilityPackManager {
       return { ok: true, cached: true, dir: this.packDir(id) };
     }
     const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : () => {};
+
+    const policy = validatePackSource(entry);
+    if (!policy.ok) return { ok: false, error: policy.error };
 
     try {
       // 1) 下载
@@ -208,5 +228,6 @@ module.exports = {
   sha256Hex,
   verifySha256,
   parseManifest,
+  validatePackSource,
   DEFAULT_MANIFEST,
 };

@@ -21,9 +21,11 @@ from typing import Sequence
 
 
 def _args_match(a: dict, b: dict) -> bool:
-    """b (expected) is satisfied if every key it specifies matches a (actual)."""
+    """Strict BFCL-style argument match, including invented-key rejection."""
     if not b:
-        return True
+        return not a
+    if set(a) != set(b):
+        return False
     return all(str(a.get(k, "")).strip() == str(v).strip() for k, v in b.items())
 
 

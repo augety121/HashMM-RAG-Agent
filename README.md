@@ -1,247 +1,214 @@
 <div align="center">
+  <img src="client/desktop/assets/brand/png/hashmm-128.png" width="96" alt="HashMM Observer v4" />
+  <h1>HashMM RAG-Agent</h1>
+  <p><strong>证据驱动、可恢复、跨设备的本地优先 Agent 工作空间</strong></p>
+  <p>Evidence-first · Local-first · Durable · Cross-device</p>
 
-# HashMM-RAG Agent
-
-**本地优先的检索增强智能体 —— 资料不出内网，一张消费级显卡跑通检索、知识图谱、训练与作答。**<br>
-**A local-first RAG-Agent — your private documents never leave the network, with retrieval, knowledge graph, training and answering all on a single consumer GPU.**
-
-<img src="docs/architecture.png" alt="HashMM-RAG Agent 整体架构 / Overall architecture" width="100%">
-
-<br>
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
-[![Backend](https://img.shields.io/badge/Backend-FastAPI%20·%2058k%20LOC-3776ab?logo=python&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-backend%20292%20·%20desktop%2020%2B-22c55e?logo=pytest)](#)
-[![Desktop](https://img.shields.io/badge/Desktop-Electron-47848f?logo=electron&logoColor=white)](#)
-[![Mobile](https://img.shields.io/badge/Android-Jetpack%20Compose-3ddc84?logo=android&logoColor=white)](#)
-[![Training](https://img.shields.io/badge/RL-Search--R1%20QLoRA%204090-7c3aed)](#)
-
-<br>
-
-> *"私有合同、研报、论文不能上公有云；能本地部署的，又很难在一张显卡上把检索、知识图谱和作答都跑起来。HashMM-RAG Agent 冲着这个缺口做。"*<br>
-> *"Private contracts, reports and papers can't go to the public cloud — and the few local options can't run retrieval, a knowledge graph and answering on a single GPU. HashMM-RAG Agent is built for exactly that gap."*
-
-<br>
-
-它不是一个只能问答的演示，而是一套带**智能体运行时、自我进化、主动服务和治理**的本地工作台。检索增强负责从私有文档里找证据，智能体负责自己决定查什么、调哪个工具、要不要在桌面上动手，并对答案做自我纠错。<br>
-Not a Q&A demo, but a local workbench with an **agent runtime, self-evolution, proactive service and governance**. Retrieval finds evidence in your private documents; the agent decides what to search, which tool to call, whether to act on the desktop, and self-corrects its answers.
-
-<br>
-
-[亮点 / Highlights](#亮点--highlights) · [定位 / Positioning](#定位--positioning) · [架构 / Architecture](#架构--architecture) · [深度检索 / Deep Retrieval](#深度检索--deep-retrieval) · [多端 / Clients](#多端套件--four-client-suite) · [快速开始 / Quick Start](#快速开始--quick-start)
-
+  ![Product](https://img.shields.io/badge/Product-28.0.2-2563eb)
+  ![Backend](https://img.shields.io/badge/Backend-V2802%20%2F%202.8.2-3776ab)
+  ![Desktop](https://img.shields.io/badge/Desktop-17.0.2-47848f)
+  ![Android](https://img.shields.io/badge/Android-12.0.0%20(280)-3ddc84)
+  ![Remote](https://img.shields.io/badge/Remote-hashmm.remote.v4-7c3aed)
 </div>
 
----
+> 本仓库是 HashMM 当前桌面端、Android App、服务端、文档、测试和品牌资源的统一代码快照。安装包不进入 Git 历史，统一通过 GitHub Releases 分发。
 
-## 亮点 · Highlights
+## 项目定位
 
-- **在你自己的数据上用强化学习训练检索策略 / RL-trained retrieval on your own data** — Search-R1 配方，在一张 RTX 4090 上对 Qwen2.5-7B 做 QLoRA 微调，让模型学会把复杂问题拆成多次检索。<br>Search-R1 recipe, QLoRA fine-tuning of Qwen2.5-7B on a single RTX 4090 — the model learns to decompose hard questions into multiple searches.
-- **会自我纠错的三段式深度检索 / Self-correcting three-stage deep retrieval** — 自训 7B 多跳检索 → 强模型作答 → Self-RAG 自评证据是否充分，不足则改写子查询自动再检索。自建多跳题答对率 **26.7% → 83.3% → 90.0%**（真机实测）。<br>7B-driven multi-hop retrieval → strong-model answering → Self-RAG self-evaluation with automatic re-retrieval. Multi-hop accuracy **26.7% → 83.3% → 90.0%** (measured).
-- **本地优先 · 三端窄腰 / Local-first, narrow-waist contracts** — 嵌入、检索、知识图谱、本地语义重排全在内网完成；三端只认几条稳定契约，**任一侧缺位另一侧零感知降级**。<br>Embedding, retrieval, KG and local re-ranking all stay in-network; clients share a few stable contracts and **fall back with zero perception when either side is missing**.
-- **对标 Claude Code 的三层智能体运行时 / Claude-Code-style three-layer agent runtime** — Harness 受控运行时 → Loop 迭代引擎 → Computer Use GUI 自动化，安全与迭代分离，做成生产级运行时。<br>Harness (controlled runtime) → Loop (iteration engine) → Computer Use (GUI automation): safety and iteration separated into a production-grade runtime.
-- **越用越强 / Gets better with use** — 技能库 + 经验回放，按接地率、置信度和反馈算奖励持续改进，**不重训模型**；记忆中心跨会话记住长期偏好。<br>Skill library + experience replay, improving from grounding/confidence/feedback rewards **without retraining**; a memory center keeps long-term preferences.
-- **治理与可观测 / Governance & observability** — deny-first 权限审计（可导出 CSV）、忠实度闸（RAGAS）、不确定性闸、约 283 条金标准的质量评测台、质量看板。<br>Deny-first permission audit (CSV), faithfulness gate (RAGAS), uncertainty gate, a ~283-item quality bench, and a quality dashboard.
-- **企业接入 / Enterprise-ready** — 飞书 / 微信 IM 渠道直接问知识库、多用户与角色（Supabase）、知识库整体导出迁移、标准 MCP 服务。<br>Ask the KB straight from Feishu / WeChat, multi-user roles (Supabase), whole-KB export/migration, and a standard MCP server.
+HashMM 不是单一聊天页面。它把 RAG、证据引用、长任务执行、ProjectVault、插件、多 Agent、画布、自动任务和设备接力收敛到同一套可审计工作流中。
 
----
+核心原则：
 
-## 定位 · Positioning
+- **证据先于结论**：检索、引用、来源新鲜度和任务回执都有结构化记录。
+- **状态可以恢复**：会话、项目、任务、审批、OCR 和运行检查点具有明确归属。
+- **本地优先**：桌面端保存用户工作空间，服务端负责统一身份、同步、RAG 与 Agent 服务。
+- **跨设备一致**：桌面端和 App 使用同一账号、同一事实源和 Remote v4 协议。
+- **权限默认收紧**：对象属主校验、工具审批、插件摘要信任和敏感操作确认均在执行链路中生效。
 
-HashMM-RAG Agent 的位置在「专做 RAG 的框架」和「专做 Agent 的框架」之间——把两边都做强。<br>
-HashMM-RAG Agent sits between "RAG-focused frameworks" and "agent-focused frameworks" — and does both well.
+## 当前版本
 
-| 能力 / Capability | RAG 框架<br>(LightRAG / RAGFlow / R2R) | Agent 框架<br>(agent runtimes) | **HashMM-RAG Agent** |
-|:---|:---:|:---:|:---:|
-| 混合检索 + 知识图谱 / Hybrid retrieval + KG | ✅ | — | ✅ |
-| 在自有数据上 RL 训练检索策略 / RL-trained retrieval on your data | — | — | ✅ |
-| 会自我纠错的深度检索 / Self-correcting deep retrieval | 部分 / partial | — | ✅ |
-| 完整智能体运行时 / Full agent runtime | — | ✅ | ✅ |
-| 本地优先、资料不出内网 / Local-first, in-network | 部分 / partial | 部分 / partial | ✅ |
-| 桌面 + 网页 + 手机四端套件 / Desktop + web + mobile suite | — | — | ✅ |
+| 组件 | 版本 | 说明 |
+|---|---:|---|
+| Product / API | `28.0.2` | HashMM V2802 |
+| Python Backend | `2.8.2` | FastAPI、RAG、Agent Runtime、同步与 Remote Hub |
+| Desktop / Installer | `17.0.2` | Electron 工作空间 + Qt 原生安装器 |
+| Android App | `12.0.0 (280)` | Jetpack Compose |
+| Remote Protocol | `hashmm.remote.v4` | 同账号自动授权、设备信任、首帧恢复 |
+| Database Schema | `28` | 多用户、项目和工作状态边界 |
 
-> 专做 RAG 的框架在混合检索和知识图谱上成熟，但没有完整的智能体运行时，也不在用户自有数据上训检索策略；专做智能体的框架有工具循环和编排，但检索多停留在单次调用。**把 RAG 和 Agent 都做强、且本地优先**的组合，目前少见同类。<br>
-> RAG frameworks are strong on hybrid retrieval and KG but lack a full agent runtime and don't train retrieval on your own data; agent frameworks have tool loops but usually do single-shot retrieval. A combination that makes **both RAG and the agent strong, local-first**, is rare.
+统一版本事实源：[`client/hashmm/release-manifest.json`](client/hashmm/release-manifest.json)。
 
----
+## 核心能力
 
-## 架构 · Architecture
+### RAG 与证据链
 
-整体从上到下分七层，右侧是一条贯穿的**治理与可观测**列。桌面端、网页端和 GPU 后端三端只通过几条稳定契约相连，这种**窄腰设计**让每一端都能独立演进和降级；移动端 App 作为第四端，通过云端同步接入。<br>
-Seven layers top-to-bottom, with a **governance & observability** column on the right. Desktop, web and the GPU backend connect through only a handful of stable contracts — a **narrow-waist** design that lets each side evolve and degrade independently; the mobile app is the fourth client, joining via cloud sync.
+- BGE-M3 向量编码、FAISS 与 BM25 混合检索。
+- 文档范围、对象属主和引用边界在服务端再次校验。
+- 支持来源、时间、新鲜度、内容摘要和证据锚点。
+- OCR 队列、失败状态和重试路径可持久化。
+- 检索结果可以进入知识演化与评测闭环，但不会把模型文字当作执行证据。
 
-| 层 / Layer | 内容 / What's there |
-|:---|:---|
-| **接入层 / Entry** | 桌面端 Electron · 网页端 Next.js · 移动端 Android · MCP 客户端 · 远程桌面 WebRTC · API (HTTP/SDK) |
-| **窄腰契约 / Contracts** | `/api` + SSE · preload 桥 `hashmm.*` · `/local/embed` · `config.json` · **降级铁律**：任一侧缺位另一侧零感知回退 |
-| **Agent 运行时 / Runtime** | Harness 受控运行时 · Loop 迭代引擎 · Computer Use GUI 自动化 · 工具集 25 · 模型路由 9 角色 · 提示词模板 22 |
-| **检索与知识 / Retrieval** | 检索主链 BM25 + 向量(BGE-M3) + RRF + 重排 · 知识图谱 533 实体/546 关系/33 社区 · 三段式深度检索(自评 90%) |
-| **自我进化 / Evolution** | 技能库 · 经验回放 · 记忆中心(短期/长期/语义) · 主动服务 |
-| **训练 / Training** | 模型训练 Qwen2.5-7B + Search-R1 + QLoRA(4090) · 训练数据 CMRC2018 / DuReader / HotpotQA / 企业金标准 |
-| **模型层 / Model** | 本地 Qwen(离线省成本) · 云端 DeepSeek(复杂推理) · 按角色路由(本地/云/自动) |
-| **企业接入 / Enterprise** | 飞书 / 微信 IM 渠道 · 多用户与角色 · 知识库整体导出迁移 |
-| **治理 / Governance** | 权限审计(CSV) · 忠实度闸(RAGAS) · 不确定性闸 · 质量评测台(283 例) · 质量看板 · 验证矩阵(后端 292 · 桌面 20+) |
+### Agent 工作内核
 
-**契约只有几条 / Only a few contracts.** 前后端之间是 `/api` 和 SSE，桌面壳层同源反代、无跨域；桌面原生能力通过 preload 桥以 `hashmm` 命名空间暴露；本地嵌入走 `/local/embed`。一条**降级铁律**贯穿全局——契约任意一侧缺位，另一侧返回 503 / 空对象 / 原样数据，**绝不抛错进主链**。<br>
-The front/back boundary is `/api` + SSE with same-origin proxying; native powers are exposed through a preload bridge under the `hashmm` namespace; local embedding goes through `/local/embed`. A **degradation rule** runs throughout — if either side is missing, the other returns 503 / an empty object / pass-through data and **never throws into the main chain**.
+- ProjectVault 管理项目、会话、附件、任务和本地工作状态。
+- AgentLoop、工具审批、任务检查点和运行回执形成可恢复执行链。
+- 多 Agent 角色、插件、技能、自动任务和画布共享统一权限边界。
+- 长任务支持状态同步、失败终态和跨 Chat 接力摘要。
 
-<p align="center"><img src="docs/kg.png" alt="知识图谱 / Knowledge graph" width="100%"></p>
-<p align="center"><sub>知识图谱：一批公司财报抽出 533 实体 · 546 关系 · 33 社区，实体类型分布与高连接度实体排名一目了然。<br>Knowledge graph: 533 entities · 546 relations · 33 communities extracted from a batch of financial reports.</sub></p>
+### 桌面端
 
----
+- 项目与最近会话、Chat、附件拖放、知识库和检索结果展示。
+- 管理后台、设置、插件、智能体、自动任务、画布与设备接力。
+- Electron 主进程只通过窄 IPC 暴露文件、终端、Git 和 Computer Use 能力。
+- Qt 原生安装器负责正式 Windows 发布，不手工拼装载荷。
 
-## 深度检索 · Deep Retrieval
+### Android App
 
-普通问答走快路径（混合检索 → 强模型作答，秒级返回）。复杂问题走**三段式深度检索**：自训 7B 驱动多跳检索 → 把带编号的证据交给强模型作答 → Self-RAG 自评证据够不够、答案有没有据，不够就改写子查询自动再检索（最多两轮，仍不足则回「资料不足」而不是硬编）。<br>
-Simple questions take the fast path (hybrid retrieval → strong-model answer, sub-second). Hard ones take **three-stage deep retrieval**: 7B-driven multi-hop retrieval → strong model answers over numbered evidence → Self-RAG judges sufficiency and grounding, rewriting sub-queries and re-retrieving when needed (up to two rounds; otherwise it returns "insufficient evidence" rather than hallucinating).
+- 今天、工作、对话和我的四个主要工作面。
+- 同账号会话、任务、模型配置和设备状态同步。
+- Remote v4 设备发现、配对、远程控制和兼容预览。
+- 本地安全缓存降低重复请求；鉴权失效时回到明确登录状态。
 
-> 三十道自建多跳题，强模型判官。三种配置**检索完全相同**（7B 两跳、捞回 97.7% 支持证据），差别只在谁作答。<br>
-> 30 self-built multi-hop questions, strong-model judge. All three share **identical retrieval** (7B, ~2 hops, 97.7% supporting-evidence recall); only the answerer differs.
+### 远程与设备信任
 
-| 配置 / Configuration | 答对率 / Accuracy |
-|:---|:---:|
-| 7B 自训模型单独作答 / 7B answering alone | 26.7% |
-| 强模型基于同样证据作答 / Strong model over the same evidence | 83.3% |
-| **+ Self-RAG 自评 + 自动再检索 / + Self-RAG self-eval + re-retrieval** | **90.0%** |
+- 同一 Supabase 账号的 Remote v4 双端票据验证通过后自动授权。
+- 验证码设备首次校验后建立可撤销信任，后续无需重复输入验证码。
+- 主机只保存信任令牌摘要；关机、重启等危险动作仍需独立确认。
+- WebRTC 优先，必要时使用 TURN/HTTPS 兼容链路。
+- V2802 为媒体启动消息增加 ACK、重试与 Electron 主进程原生首帧兜底。
 
-**自适应 / Adaptive.** 同一个模型，多跳题平均跳两次、单跳题平均跳一次。五十道单跳 held-out 题上，多跳版相对单跳版不退化反而更好（65.3% → 68.0%），忠实度 95.6%，几乎不脑补。<br>
-The same model hops twice on multi-hop questions and once on single-hop ones. On 50 held-out single-hop questions, the multi-hop checkpoint doesn't regress (65.3% → 68.0%), with 95.6% faithfulness.
+## 系统结构
 
-> 训练沿用 Search-R1 协议（`think` / `search` / `information` / `answer` 标签，纯结果奖励，检索内容在算损失时屏蔽）。基座 Qwen2.5-7B-Instruct，QLoRA + 4bit，权重压到 5–6GB，只训 LoRA 适配器，单/多跳两版验证集 token 准确率约九成。<br>
-> Training follows the Search-R1 protocol (`think`/`search`/`information`/`answer` tags, outcome-only reward, retrieved tokens masked in the loss). Base Qwen2.5-7B-Instruct, QLoRA + 4-bit (~5–6GB), LoRA adapters only; ~90% validation token accuracy.
+```mermaid
+flowchart LR
+    A["Android App"] -->|HTTPS / WSS| C["Secure Public Endpoint"]
+    D["Desktop Workspace"] -->|HTTPS / WSS| C
+    C --> B["HashMM Backend"]
+    B --> I["Supabase Identity"]
+    B --> R["RAG + Evidence"]
+    B --> W["Agent / Work Runtime"]
+    B --> P["ProjectVault + Persistence"]
+    D <-->|"Remote v4 / WebRTC / TURN"| A
+    R --> V["FAISS + BM25 + KG"]
+    W --> T["Tools + Plugins + Skills"]
+```
 
----
+更完整的架构与版本说明位于 [`client/docs/`](client/docs/) 和当前发布说明 [`client/本轮说明-V2802.md`](client/本轮说明-V2802.md)。
 
-## Agent 运行时 · Agent Runtime
+## 仓库结构
 
-智能体运行时按「谁包着谁」分三层，对标 Claude Code 的运行时分层——三层是**包含关系**，不是三个并列模块。<br>
-The agent runtime is three nested layers (modeled on Claude Code's runtime layering) — they **contain** one another rather than sitting side by side.
+```text
+.
+├─ app/                         Android App 源码、测试与资源
+├─ client/
+│  ├─ hashmm/                  Python 后端、RAG 与 Agent Runtime
+│  ├─ frontend-next/           Next.js 桌面/网页 UI
+│  ├─ desktop/                 Electron 主进程、preload 与本地能力
+│  ├─ installer-native/        Qt 原生 Windows 安装器
+│  ├─ contracts/               协议与事件契约
+│  ├─ integrations/            外部运行时与 Provider 集成
+│  ├─ plugins/                 插件包与清单
+│  ├─ skills/                  技能包
+│  ├─ tests/                   Python 回归测试
+│  └─ docs/                    架构、规范与发布文档
+├─ docs/                       README 使用的项目图片
+├─ server/                     服务器部署与升级入口
+├─ .gitignore                  密钥、用户数据和构建产物边界
+└─ README.md
+```
 
-- **Harness · 受控运行时 / controlled runtime** — 工具注册、上下文装配、权限闸、预算闸、连续去重闸串成一条显式有序的守卫链；守卫只读状态做判定，自身出异常也绝不拦执行；预留 hooks 扩展点；整回合用一套 SSE 事件协议对外推送。**160+ 项回归看守。**<br>Tool registration, context assembly, and an explicit ordered guard chain (permission → budget → retrieval-budget → dedup); guards are read-only and never block execution on their own failure; hook extension points; one SSE event protocol per turn. **160+ regression guards.**
-- **Loop · 迭代引擎 / iteration engine** — 把迭代做成可单测的状态机（开始一轮 / 记录工具调用 / 标记完成或失败，停机原因结构化）；子代理并行、失败隔离、按序归并；**无进展熔断**盯住同一工具同一组参数的连续重复，打转就停。环境隔离守卫只写自己的目录，不动 PATH / 系统 Python / 全局 npm。<br>A unit-testable state machine; parallel sub-agents with isolation and ordered merge; a **no-progress circuit breaker**; environment isolation that only writes its own directory.
-- **Computer Use · GUI 自动化** — 对标 Anthropic Computer Use：归一化 0–1000 坐标（与分辨率无关）、schema 校验、危险组合键闸（Win+R / Alt+F4 强制确认）、策略闸（只读/高安全模式全部需确认）、每步进回放审计；平台层 Windows 用 user32 SendInput（内联 C#、零原生依赖）、mac 用 osascript、Linux 用 xdotool；还做了 OCR 视觉定位，让模型按文字点按钮而非肉眼估坐标。<br>Anthropic-style Computer Use: resolution-independent 0–1000 coordinates, schema validation, a dangerous-key gate, a policy gate, full replay audit, native execution per platform, and OCR visual grounding.
+## 下载与发布
 
-> 真实运行轨迹：成功率 4/4，平均 1.8 轮、约 15 秒。<br>Real run traces: 4/4 success, ~1.8 rounds, ~15s.
+预编译安装包统一放在 [GitHub Releases](https://github.com/augety121/HashMM-RAG-Agent/releases)：
 
----
+| 产物 | 当前目标版本 | 分发位置 |
+|---|---:|---|
+| Windows Desktop | `17.0.2` | Release 附件 |
+| Android App | `12.0.0 (280)` | Release 附件；正式包必须完成 release 签名 |
+| Server Upgrade | `V2802 / 2.8.2` | Release 附件 |
 
-## 多端套件 · Four-Client Suite
+每个正式产物都应同时提供 SHA-256。SHA-256 证明文件完整性，但不能替代 Windows Authenticode 或 Android 发布签名。
 
-桌面、网页、手机加 GPU 后端构成四端跨设备套件，**同账号**，对话历史、记忆和知识库通用。<br>
-Desktop, web, mobile and the GPU backend form a four-client suite — **one account**, with shared history, memory and knowledge base.
+## 开发与验证
 
-| 端 / Client | 栈 / Stack | 关键能力 / Highlights |
-|:---|:---|:---|
-| **桌面 / Desktop** | Electron (~80MB 瘦客户端) | 壳层网关 · 本机 PTY 终端(可拉起 Claude Code / Codex) · 文件/截屏 · 本地 OCR(ONNX) · 独立进程 MCP · C++/Qt6 原生安装器 |
-| **网页 / Web** | Next.js | 对话 · 智能体轨迹 · 来源标注 · 文件/产物面板 |
-| **移动 / Mobile** | Android (Kotlin · Jetpack Compose) | 助手「小哈」· 离线优先 · **AES-256-GCM** 加密本地缓存(Keystore) · 增量同步 · Realtime |
-| **远程桌面 / Remote** | WebRTC | 点对点低延迟(DTLS 加密、实测 <10ms) · MJPEG 回退 · TURN/ICE 兜底 · 双向(被控/反控自己的设备) |
-
-- **跨端接力 / Session relay** — 手机上聊到一半一键交给桌面继续，合盖不中断，反之亦然。<br>Hand a conversation from phone to desktop mid-way (and back).
-- **互传文件 / File transfer** — 桌面生成的 Word 推到手机查看/下载；也能在手机上让桌面把电脑里的某个文件发过来。<br>Push desktop-generated docs to the phone, or ask the desktop to send a file from the PC.
-- **手机远控电脑 / Phone-controls-PC** — 把桌面画面投到手机并接管键鼠，校园网/公司网穿不透时走中继。<br>Cast the desktop to the phone and take over keyboard/mouse, with a relay mode for restrictive networks.
-
-<table>
-<tr>
-<td width="64%"><img src="docs/desktop.png" alt="桌面端主界面 / Desktop main UI"></td>
-<td width="36%"><img src="docs/mobile.png" alt="手机端「小哈」/ Mobile app (Xiaoha)"></td>
-</tr>
-<tr>
-<td align="center"><sub>桌面端主界面 · 对话 / 工作台 / 终端，输入区含深度检索 · 电脑操作 · 文档过滤<br>Desktop main UI — chat / workbench / terminal, with deep retrieval · computer use · doc filter</sub></td>
-<td align="center"><sub>手机端助手「小哈」对话主界面<br>Mobile assistant "Xiaoha"</sub></td>
-</tr>
-</table>
-
----
-
-## 工具与治理 · Tools & Governance
-
-- **工具集 25 个 / 25 tools** — 文件读写、格式转换、代码沙箱执行、网页与论文读取，以及直接产出 **PPT / Word / Excel / PDF**（`create_document`、`create_pptx_from_plan`、`create_pdf`、`convert_file`…），可逐个启停。
-- **提示词模板 22 个 / 22 prompt templates** — 通用、代码、分析、文档、写作、研究、客服、数据、智能体；含**论文精读**、竞品对比、单元测试生成等。
-- **模型路由 9 角色 / 9-role routing** — 关键词抽取、查询改写、指代消解、意图分类、标题生成、会话摘要、多查询变体、复杂推理、最终作答，各自可配本地 Qwen / 云端 DeepSeek / 自动。
-- **deny-first 权限审计 / deny-first audit** — 默认拒绝、按策略放行，谁调了什么、是否高危、是否成功都可追溯，导出 CSV。
-- **质量评测台 / quality bench** — 约 283 条金标准全面体检，画趋势、做两次运行对比，防止改 prompt 或换配置后偷偷退步。
-- **知识时效治理 / knowledge freshness** — 给文档设生效/到期日期，过期自动归档、不再进入检索。
-
-<p align="center"><img src="docs/eval.png" alt="质量评测台 / Quality bench" width="100%"></p>
-<p align="center"><sub>质量评测台：对约 283 条金标准跑全面体检，画质量趋势、对比两次运行检测回归——改 prompt 或换配置后是变好还是变差，一眼可见。<br>Quality bench: full check over ~283 gold items, trend lines and run-to-run regression comparison.</sub></p>
-
----
-
-## 快速开始 · Quick Start
-
-> 需要 Python 3.10+、Node 18+（网页/桌面），以及一个 OpenAI 兼容的 LLM API key。后端跑嵌入/重排建议有 CUDA 显卡。<br>
-> Requires Python 3.10+, Node 18+, and an OpenAI-compatible LLM key. A CUDA GPU is recommended for the backend.
-
-### 后端 / Backend
+### 服务端
 
 ```bash
-git clone https://github.com/augety121/hashmm-rag.git
-cd hashmm-rag
-
-pip install -r client/requirements.txt
-cp .env.example .env          # 填入你自己的 LLM_API_KEY / 可选 HASHMM_SUPABASE_*
-
 cd client
-PYTHONPATH=. uvicorn hashmm.api.server:app --host 0.0.0.0 --port 8000
+python -m pytest -q tests
 ```
 
-打开 `http://localhost:8000` 即是网页端（对话、智能体轨迹、来源标注）。<br>Open `http://localhost:8000` for the web UI.
+服务器配置从 `.env.example` 开始创建，真实 `.env`、密钥、数据、模型和索引禁止提交。
 
-### 桌面端 / Desktop
+### 桌面端与前端
 
 ```bash
-cd client/desktop
-npm install
-npm start            # 运行 / run
-npm run dist         # 打包安装器 / build installers
+cd client/frontend-next
+npm ci
+npm test
+npm run typecheck
+npm run build
+
+cd ../desktop
+npm ci
 ```
 
-桌面端**本地优先**：可代理远程后端，也可拉起本地后端 sidecar；后端地址与账号在 App 内「设置」里配，**无任何硬编码**。<br>Local-first: proxy a remote backend or spawn a local sidecar; backend URL and account are set in-app — **nothing is hard-coded**.
+正式 Windows 安装包：
 
-### 手机端 / Android
+```bat
+cd client\installer-native
+set HASHMM_NO_PAUSE=1
+build-all.bat
+```
 
-在 Android Studio 打开 `app/`，复制 `app/local.properties.example` 为 `local.properties` 填好 SDK 与 Supabase，再 `./gradlew :app:assembleRelease`。
+构建脚本会重新生成 WebUI、Electron 载荷、Qt 安装器、版本资源、SHA-256 和发布清单。
 
-### MCP 服务 / MCP server
+### Android App
 
 ```bash
-cd client && PYTHONPATH=. python -m hashmm.mcp_server
+cd app
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
 ```
 
-预编译安装包（Windows `.exe`、Android `.apk`）见 [**Releases**](https://github.com/augety121/hashmm-rag/releases)。<br>
-Pre-built installers (Windows `.exe`, Android `.apk`) are on the [**Releases**](https://github.com/augety121/hashmm-rag/releases) page.
+正式 release APK 需要在本机构建环境提供签名参数；keystore 和密码绝不能进入仓库。
 
----
+## V2802 验证基线
 
-## 项目结构 · Project Structure
+本次代码快照对应的发布验证：
 
-```
-hashmm-rag/
-├── client/                 # 后端 + 网页 + 桌面 / Backend + web + desktop
-│   ├── hashmm/             #   FastAPI：api/ retrieval/ agent/ memory/ channels/ …
-│   ├── frontend-next/      #   Next.js 网页端 / web UI
-│   ├── desktop/            #   Electron 桌面端 / desktop client
-│   ├── scripts/            #   训练检索策略、建索引、评测流水线 / training, indexing, eval
-│   └── sql/                #   Supabase schema / RLS / 同步 SQL
-├── app/                    # 安卓 App（Jetpack Compose）/ Android app
-├── docs/architecture.png   # 整体架构图 / Architecture diagram
-├── .env.example            # 后端配置模板 / backend config template
-├── LICENSE                 # MIT
-└── README.md
-```
+- Python：`1741 passed, 8 skipped`
+- Desktop Node：`80` 个测试文件通过
+- Frontend：`64` 个测试文件、`234` 项测试通过
+- Next.js 生产构建通过
+- Windows 原生发布源门禁、打包载荷门禁和 SHA-256 一致性通过
+- Server ZIP 升级验证通过，并验证旧数据保留
 
----
+自动化结果不能替代部署后的真实 Windows ↔ Android、TURN、抓屏权限和长时间稳定性验收。
 
-## 致谢 · Acknowledgements
+## 安全边界
 
-建在这些开源研究与工具之上 / Built on open research and tooling：
-**Search-R1**（用 RL 训练自主检索）、**Self-RAG**（自我反思的检索-生成-批判）、**RAGAS**（忠实度/上下文相关性评测）、**BGE-M3** 与 **bge-reranker**（BAAI）、**Qwen2.5-7B-Instruct**（阿里巴巴）、**FAISS** 与 **RRF**，以及数据集 **CMRC2018 / DuReader / HotpotQA / 2WikiMultiHopQA / MuSiQue / Natural Questions**。
+仓库不得包含：
 
----
+- `.env`、service-role key、JWT secret、API Key 和数据库凭据
+- Android keystore、PFX、PEM 或签名密码
+- ProjectVault、聊天记录、附件、数据库、日志和用户缓存
+- 模型权重、向量索引和知识库原始数据
+- 安装包、APK、服务器 ZIP、Electron/Python runtime 和依赖缓存
+
+外部网页、上传文件、命令输出和仓库差异都视为不可信输入。插件信任绑定精确摘要；未知工具不能默认视为只读。
+
+## 服务器部署
+
+从 [`server/README.md`](server/README.md) 开始。正式环境必须使用 HTTPS/WSS、Supabase 身份验证和受控代理来源；公网地址不应直接暴露未经认证的 Uvicorn 端口。
+
+## 已知发布限制
+
+- Windows 安装包在没有发布者证书时会显示“未知发布者”。
+- Android 未签名 release APK 不能作为正式安装包发布。
+- WebRTC 直连受 NAT、运营商和系统权限影响，生产环境仍需要 TURN/HTTPS 兜底。
+- OCR Provider 显示“已安装”不等于已完成真实 canary 验证。
 
 ## License
 
-[MIT](LICENSE) © 2026 augety121
-
-<div align="center"><sub>本地优先 · 资料不出内网 · 一张显卡跑通 / Local-first · data stays in-network · runs on one GPU</sub></div>
+当前仓库继续保留 [`LICENSE`](LICENSE) 中的许可声明。若未来调整代码开放范围或商业授权，应单独进行法律与依赖许可证审查。

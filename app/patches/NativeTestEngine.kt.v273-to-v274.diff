@@ -1,0 +1,141 @@
+--- app_pr/a/app/src/main/java/com/hashmm/app/ui/workbench/NativeTestEngine.kt	2026-07-11 02:16:51.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/workbench/NativeTestEngine.kt	2026-07-11 02:26:07.233410971 +0000
+@@ -61,6 +61,14 @@
+         Suite("stress_dedupe", "压力·5万条消息去重", G_STRESS, true, ::caseStressDedupe),
+         Suite("stress_sort", "压力·2万会话排序", G_STRESS, true, ::caseStressSort),
+         Suite("stress_time", "压力·10万次时间格式化", G_STRESS, true, ::caseStressTime),
++        // ── V273 扩充：覆盖更多 App 功能的压力测试 ──
++        Suite("stress_reconcile", "压力·5万条消息覆盖+保尾", G_STRESS, true, ::caseStressReconcile),
++        Suite("stress_stream_build", "压力·20万 token 流式累积", G_STRESS, true, ::caseStressStreamBuild),
++        Suite("stress_md_nested", "压力·深层嵌套+超宽表 Markdown", G_STRESS, true, ::caseStressMdNested),
++        Suite("stress_hasstreaming", "压力·10万条 streaming 判据扫描", G_STRESS, true, ::caseStressHasStreaming),
++        Suite("stress_sortkey_mixed", "压力·2万混合格式(ISO/epoch/空)排序", G_STRESS, true, ::caseStressSortKeyMixed),
++        Suite("stress_dedupe_unique", "压力·5万条全唯一去重(最坏)", G_STRESS, true, ::caseStressDedupeAllUnique),
++        Suite("stress_time_year", "压力·全年每日时间格式化", G_STRESS, true, ::caseStressTimeFullYear),
+     )
+ 
+     fun suiteList(): List<SelfTestSuite> = suites.map { SelfTestSuite(it.id, it.name, it.group, it.heavy) }
+@@ -310,6 +318,123 @@
+         return CaseResult(ok, logs, if (ok) "10 万次格式化稳过（${ms}ms）" else "格式化过慢（${ms}ms）")
+     }
+ 
++    // ── V273 扩充：更多 App 功能压力测试 ──
++    private fun caseStressReconcile(): CaseResult {
++        val logs = ArrayList<String>()
++        val n = 50000
++        val server = ArrayList<ChatMessage>(n)
++        for (i in 0 until n) server.add(m("s$i", if (i % 2 == 0) "user" else "assistant", "消息$i"))
++        // 本地 = 服务端 + 一条还在生成的流式尾巴（服务端没有）
++        val local = ArrayList(server); local.add(m("tail", "assistant", "生成中…", "streaming"))
++        val t0 = System.nanoTime()
++        val out = ChatMessageOps.reconcile(local, server)
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        val tailKept = out.lastOrNull()?.status == "streaming"
++        logs.add("服务端 $n 条 + 本地流式尾巴 → 覆盖后 ${out.size} 条，耗时 ${ms}ms，尾巴保留=$tailKept")
++        val ok = tailKept && ms < 3000
++        return CaseResult(ok, logs, if (ok) "5 万条消息覆盖+保尾稳过（${ms}ms）" else "覆盖过慢或丢尾（${ms}ms）")
++    }
++
++    private fun caseStressStreamBuild(): CaseResult {
++        val logs = ArrayList<String>()
++        // 模拟流式：逐 token 追加 20 万字符，验证是线性而非二次（StringBuilder 正确用法）
++        val tokens = 200000
++        val sb = StringBuilder()
++        val t0 = System.nanoTime()
++        for (i in 0 until tokens) sb.append(if (i % 7 == 0) "词" else "x")
++        val built = sb.length
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        logs.add("逐 token 追加 $tokens 次 → 长度 $built，耗时 ${ms}ms（线性应 <300ms）")
++        val ok = built == tokens && ms < 1500
++        return CaseResult(ok, logs, if (ok) "20 万 token 流式累积稳过（${ms}ms）" else "累积异常或二次退化（${ms}ms）")
++    }
++
++    private fun caseStressMdNested(): CaseResult {
++        val logs = ArrayList<String>()
++        val sb = StringBuilder()
++        // 深层嵌套项目符号 + 大量代码块 + 超宽表格
++        for (i in 0 until 5000) sb.append("  ".repeat(i % 6)).append("- 嵌套项 $i\n")
++        for (i in 0 until 2000) sb.append("```lang$i\ncode $i\n```\n")
++        sb.append("| ").append((0 until 300).joinToString(" | ") { "列$it" }).append(" |\n")
++        sb.append("| ").append((0 until 300).joinToString(" | ") { "---" }).append(" |\n")
++        sb.append("| ").append((0 until 300).joinToString(" | ") { "值$it" }).append(" |\n")
++        val t0 = System.nanoTime()
++        val blocks = parseMarkdown(sb.toString())
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        val hasTable = blocks.any { it is MdBlock.Table }
++        val codeCount = blocks.count { it is MdBlock.Code }
++        logs.add("5000 嵌套项 + 2000 代码块 + 300 列宽表 → ${blocks.size} 块（代码块 $codeCount，含表=$hasTable），耗时 ${ms}ms")
++        val ok = blocks.isNotEmpty() && hasTable && codeCount >= 1900 && ms < 4000
++        return CaseResult(ok, logs, if (ok) "深层嵌套+超宽表 Markdown 稳过（${ms}ms）" else "嵌套解析异常或过慢（${ms}ms）")
++    }
++
++    private fun caseStressHasStreaming(): CaseResult {
++        val logs = ArrayList<String>()
++        val n = 100000
++        val list = ArrayList<ChatMessage>(n)
++        for (i in 0 until n) list.add(m("h$i", "assistant", "内容$i", if (i == n - 1) "streaming" else "complete"))
++        val t0 = System.nanoTime()
++        var hit = false
++        repeat(50) { hit = ChatMessageOps.hasStreaming(list) }   // 反复扫，模拟轮询判据
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        logs.add("10 万条消息扫描 streaming 判据 50 次，耗时 ${ms}ms，命中=$hit")
++        val ok = hit && ms < 2000
++        return CaseResult(ok, logs, if (ok) "10 万条 streaming 判据稳过（${ms}ms）" else "判据过慢（${ms}ms）")
++    }
++
++    private fun caseStressSortKeyMixed(): CaseResult {
++        val logs = ArrayList<String>()
++        val n = 20000
++        val base = OffsetDateTime.parse("2021-01-01T00:00:00Z")
++        // 混合格式：ISO、epoch 秒、epoch 毫秒、空——排序键必须都能比
++        val mixed = (0 until n).map {
++            when (it % 4) {
++                0 -> base.plusHours(it.toLong()).toString()
++                1 -> (base.plusHours(it.toLong()).toEpochSecond()).toString()
++                2 -> (base.plusHours(it.toLong()).toInstant().toEpochMilli()).toString()
++                else -> ""
++            }
++        }.shuffled()
++        val t0 = System.nanoTime()
++        val sorted = ChatMessageOps.sortByRecencyDesc(mixed, { it })
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        val keyed = sorted.map { ChatMessageOps.convSortKey(it) }
++        var desc = true
++        for (i in 1 until keyed.size) if (keyed[i - 1] < keyed[i]) { desc = false; break }
++        logs.add("$n 个混合格式(ISO/epoch秒/epoch毫秒/空)排序，耗时 ${ms}ms，严格降序=$desc")
++        val ok = desc && ms < 5000
++        return CaseResult(ok, logs, if (ok) "2 万混合格式排序稳过（${ms}ms）" else "混合排序错误或过慢（${ms}ms）")
++    }
++
++    private fun caseStressDedupeAllUnique(): CaseResult {
++        val logs = ArrayList<String>()
++        val n = 50000
++        // 最坏情况：全不重复（去重无法跳过任何一条，全程比较）
++        val list = (0 until n).map { m("u$it", if (it % 2 == 0) "user" else "assistant", "唯一内容$it") }
++        val t0 = System.nanoTime()
++        val out = ChatMessageOps.dedupeAdjacent(list)
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        logs.add("$n 条全唯一（最坏情况）去重，耗时 ${ms}ms，结果 ${out.size} 条（应=$n 不误删）")
++        val ok = out.size == n && ms < 2000
++        return CaseResult(ok, logs, if (ok) "5 万条全唯一去重稳过不误删（${ms}ms）" else "去重误删或过慢（${ms}ms）")
++    }
++
++    private fun caseStressTimeFullYear(): CaseResult {
++        val logs = ArrayList<String>()
++        // 一整年每天都格式化，验证在各种日期下都不抛异常、都归入某个桶（正确性 under 多样性）
++        val start = OffsetDateTime.parse("2025-01-01T12:00:00Z")
++        var bad = 0
++        val t0 = System.nanoTime()
++        for (d in 0 until 400) {
++            val s = formatChatTime(start.plusDays(d.toLong()).toString())
++            if (s.isBlank()) bad++
++        }
++        val ms = (System.nanoTime() - t0) / 1_000_000
++        logs.add("连续 400 天格式化，耗时 ${ms}ms，空结果 $bad 个（应=0）")
++        val ok = bad == 0
++        return CaseResult(ok, logs, if (ok) "全年日期格式化无异常（${ms}ms）" else "$bad 天格式化异常")
++    }
++
+     private fun m(id: String, role: String, content: String, status: String = "complete") =
+         ChatMessage(id = id, convId = "c", role = role, content = content, thinking = "", status = status, createdAt = "")
+ 

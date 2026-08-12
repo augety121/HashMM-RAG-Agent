@@ -20,7 +20,7 @@ const os = require("os");
 const { spawn } = require("child_process");
 const E = require("./install-engine");
 
-// ★ original-fs：Electron 默认的 fs 被打了 asar 补丁——会把 app.asar 当"目录"遍历，
+// original-fs：Electron 默认的 fs 被打了 asar 补丁——会把 app.asar 当"目录"遍历，
 // 导致拷贝时 mkdir 'resources\app.asar' 撞 EEXIST/EISDIR（用户实测报错）。original-fs
 // 是未打补丁的原生 fs，把 app.asar 当**普通文件**正常拷。沙箱无 electron 时回退 fs。
 let rfs;

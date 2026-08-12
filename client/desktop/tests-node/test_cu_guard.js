@@ -1,7 +1,7 @@
 /** test_cu_guard.js — 桌面 Harness 工具守卫链冒烟（纯逻辑，沙箱可跑）。
  *  覆盖：安全命令放行、危险 shell 确认、文件写确认、GUI 危险动作确认、
  *  只读模式拒绝写工具（含 computer 只读动作豁免）、守卫顺序（deny 先于 confirm）、
- *  守卫异常即放行（harness 故障不拦正常操作）。
+ *  守卫异常 fail-closed（写类拒绝 / 只读放行，V306 修 DESK-P0-01）。
  *  注入真实 cu-actions 的校验/策略函数，端到端验证链路。 */
 "use strict";
 const assert = require("assert");
@@ -118,15 +118,32 @@ const plan = (action) => A.validateAction(action, SCREEN).plan;
   ok("守卫顺序：deny 优先于 confirm");
 }
 
-// 12. 守卫异常即放行（注入会抛的 assessCommand）
+// 12. 守卫异常 fail-closed：写类工具拒绝，只读工具不受影响（V306，修 DESK-P0-01）
 {
   const badChain = createGuardChain({
     assessCommand: () => { throw new Error("boom"); },
     validateAction: A.validateAction, applyPolicy: A.applyPolicy, describeAction: A.describeAction,
   });
-  const v = badChain.decide({ name: "run_shell", args: { command: "anything" } });
-  assert.strictEqual(v.decision, "allow", "守卫抛异常应视为放行，不拦正常操作");
-  ok("守卫异常 → 放行（harness 故障不放大为拒绝）");
+  // 写类：shell 在守卫异常时必须拒绝（策略层故障 ≠ 放行）
+  const vShell = badChain.decide({ name: "run_shell", args: { command: "anything" } });
+  assert.strictEqual(vShell.decision, "deny", "守卫异常时 run_shell 必须 fail-closed 拒绝");
+  assert.ok(vShell.failClosed === true, "拒绝裁决应带 failClosed 标记（可观测）");
+  assert.ok(String(vShell.reason).includes("fail-closed"), "拒绝原因应说明是守卫异常兜底");
+  // 写类：GUI 策略闸异常 → computer 写动作同样拒绝
+  const badGui = createGuardChain({
+    assessCommand, validateAction: A.validateAction,
+    applyPolicy: () => { throw new Error("policy down"); }, describeAction: A.describeAction,
+  });
+  const clickP = plan({ type: "left_click", x: 500, y: 500 });
+  assert.strictEqual(badGui.decide({ name: "computer", args: {}, plan: clickP }).decision, "deny",
+    "GUI 策略闸异常时写动作必须拒绝");
+  // 只读：守卫异常不拦读操作（read_file 放行、computer 只读动作放行）
+  assert.strictEqual(badChain.decide({ name: "read_file", args: {} }).decision, "allow",
+    "守卫异常不应拦只读工具");
+  const moveP = plan({ type: "mouse_move", x: 10, y: 10 });
+  assert.strictEqual(badGui.decide({ name: "computer", args: {}, plan: moveP }).decision, "allow",
+    "守卫异常不应拦 computer 只读动作（mouse_move）");
+  ok("守卫异常 → 写类 fail-closed 拒绝 · 只读不受影响（策略故障不再放行）");
 }
 
 console.log(`\ntest_cu_guard: ${pass} 项全部通过`);

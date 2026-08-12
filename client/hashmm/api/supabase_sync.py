@@ -17,12 +17,38 @@ import json
 import os
 import threading
 import urllib.request
+import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from hashmm.utils import get_logger, log_suppressed
 from hashmm.api.supabase_auth import supabase_url
 
 logger = get_logger("hashmm.api.supabase_sync")
+
+_WRITE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hashmm-supabase")
+_WRITE_SLOTS = threading.BoundedSemaphore(512)
+_PENDING_LOCK = threading.Lock()
+_PENDING_KEYS: set[str] = set()
+
+
+def _job_key(fn, args) -> str:
+    first = args[0] if args else ""
+    if isinstance(first, dict):
+        entity = first.get("id") or first.get("key") or first.get("user_id") or "batch"
+    elif isinstance(first, list):
+        entity = ",".join(
+            str(row.get("id") or "") for row in first[:8] if isinstance(row, dict)
+        )
+    else:
+        entity = str(first)
+    return f"{getattr(fn, '__name__', 'sync')}:{entity}"[:512]
+
+
+def queue_stats() -> dict:
+    with _PENDING_LOCK:
+        pending = len(_PENDING_KEYS)
+    return {"pending": pending, "capacity": 512, "workers": 2}
 
 
 def _service_key() -> str:
@@ -37,6 +63,12 @@ def _service_key() -> str:
 
 
 def enabled() -> bool:
+    try:                                  # 本地隐私模式开启 → 不向云端同步任何对话/消息
+        from hashmm.api import privacy_mode
+        if privacy_mode.is_on():
+            return False
+    except Exception:
+        pass
     return bool(supabase_url() and _service_key())
 
 
@@ -68,7 +100,7 @@ def _jsonify(v):
 
 
 def _req(method: str, path: str, body=None):
-    """对 PostgREST 发请求。永不抛错。"""
+    """Send one PostgREST request without leaking credentials or response bodies."""
     try:
         key = _service_key()
         data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
@@ -79,17 +111,48 @@ def _req(method: str, path: str, body=None):
         req.add_header("Prefer", "resolution=merge-duplicates")  # upsert（按主键合并）
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
+        return True
+    except urllib.error.HTTPError as e:
+        logger.warning(
+            "[SupabaseMirror] %s %s -> %s request_id=%s",
+            method, path.split("?", 1)[0], e.code,
+            e.headers.get("x-request-id", "") if e.headers else "",
+        )
+        return False
     except Exception as e:
         log_suppressed(logger, e)
+        return False
 
 
 def _bg(fn, *args):
     """后台守护线程执行；未启用则直接返回。"""
     if not enabled():
         return
+    key = _job_key(fn, args)
+    with _PENDING_LOCK:
+        if key in _PENDING_KEYS:
+            return
+        if not _WRITE_SLOTS.acquire(blocking=False):
+            logger.warning("Supabase mirror queue full; coalescing %s", key)
+            return
+        _PENDING_KEYS.add(key)
+
+    def run():
+        try:
+            fn(*args)
+        except Exception as exc:
+            log_suppressed(logger, exc)
+        finally:
+            with _PENDING_LOCK:
+                _PENDING_KEYS.discard(key)
+            _WRITE_SLOTS.release()
+
     try:
-        threading.Thread(target=fn, args=args, daemon=True).start()
+        _WRITE_POOL.submit(run)
     except Exception as e:
+        with _PENDING_LOCK:
+            _PENDING_KEYS.discard(key)
+        _WRITE_SLOTS.release()
         log_suppressed(logger, e)
 
 
@@ -117,13 +180,61 @@ def pull_conversations(user_id, since: str | None = None):
     uid = _uid(user_id)
     if not uid:
         return []
-    q = (f"/rest/v1/chat_conversations?user_id=eq.{uid}"
-         f"&select=id,title,pinned,created_at,updated_at&order=updated_at.desc&limit=200")
-    if since:
-        from urllib.parse import quote
-        q += f"&updated_at=gt.{quote(str(since), safe='')}"
-    rows = _get_json(q)
-    return rows if isinstance(rows, list) else []
+    from urllib.parse import quote
+    all_rows: list[dict] = []
+    page_size = 1000
+    modern = True
+    for offset in range(0, 10000, page_size):
+        select = (
+            "id,title,pinned,archived,project_id,revision,sync_state,created_at,updated_at"
+            if modern else "id,title,pinned,archived,created_at,updated_at"
+        )
+        q = (
+            f"/rest/v1/chat_conversations?user_id=eq.{uid}&select={select}"
+            f"&order=updated_at.desc,id.desc&limit={page_size}&offset={offset}"
+        )
+        if since:
+            q += f"&updated_at=gt.{quote(str(since), safe='')}"
+        rows = _get_json(q)
+        if rows is None and modern and offset == 0:
+            # A pre-migration cloud table remains readable, but its rows do
+            # not pretend to know project ownership or revision metadata.
+            modern = False
+            select = "id,title,pinned,archived,created_at,updated_at"
+            q = (
+                f"/rest/v1/chat_conversations?user_id=eq.{uid}&select={select}"
+                f"&order=updated_at.desc,id.desc&limit={page_size}&offset=0"
+            )
+            if since:
+                q += f"&updated_at=gt.{quote(str(since), safe='')}"
+            rows = _get_json(q)
+        if not isinstance(rows, list):
+            break
+        all_rows.extend(row for row in rows if isinstance(row, dict))
+        if len(rows) < page_size:
+            break
+    return all_rows
+
+
+def pull_conversation(conv_id: str, user_id) -> dict | None:
+    """Recover one conversation through an owner-scoped cloud query."""
+    uid = _uid(user_id)
+    cid = str(conv_id or "").strip()
+    if not uid or not cid:
+        return None
+    from urllib.parse import quote
+    base = (
+        "/rest/v1/chat_conversations"
+        f"?id=eq.{quote(cid, safe='')}&user_id=eq.{quote(uid, safe='')}"
+    )
+    rows = _get_json(
+        base + "&select=id,title,pinned,archived,project_id,created_at,updated_at&limit=1"
+    )
+    if rows is None:
+        rows = _get_json(
+            base + "&select=id,title,pinned,archived,created_at,updated_at&limit=1"
+        )
+    return rows[0] if isinstance(rows, list) and rows else None
 
 
 def pull_messages(conv_id, user_id, since: str | None = None):
@@ -132,13 +243,40 @@ def pull_messages(conv_id, user_id, since: str | None = None):
     uid = _uid(user_id)
     if not uid:
         return []
-    q = (f"/rest/v1/chat_messages?conv_id=eq.{conv_id}"
-         f"&select=id,conv_id,role,content,thinking,tool_calls,files,sources,suggestions,status,created_at"
-         f"&order=created_at.asc&limit=500")
+    base = f"/rest/v1/chat_messages?conv_id=eq.{conv_id}"
+    q = (base
+         + "&select=id,conv_id,role,content,thinking,tool_calls,files,sources,groundings,run_manifest,suggestions,status,created_at"
+         + "&order=created_at.asc&limit=500")
     if since:
         from urllib.parse import quote
         q += f"&created_at=gt.{quote(str(since), safe='')}"
     rows = _get_json(q)
+    if rows is None:
+        # Existing Supabase projects may not have run the additive grounding
+        # migration yet. Keep message sync alive and return ledgers once the
+        # column exists; never let one new JSON field break the whole history.
+        q = (base
+             + "&select=id,conv_id,role,content,thinking,tool_calls,files,sources,suggestions,status,created_at"
+             + "&order=created_at.asc&limit=500")
+        if since:
+            from urllib.parse import quote
+            q += f"&created_at=gt.{quote(str(since), safe='')}"
+        rows = _get_json(q)
+    return rows if isinstance(rows, list) else []
+
+
+def list_profiles() -> list[dict]:
+    """Server-authoritative Supabase profile list for the unified admin UI.
+
+    Uses the service role on the backend; clients never receive that credential.
+    An unavailable/unmigrated Supabase degrades to an empty list so local users
+    remain manageable.
+    """
+    if not enabled():
+        return []
+    rows = _get_json(
+        "/rest/v1/profiles?select=id,username,is_admin,created_at&order=created_at.desc&limit=500"
+    )
     return rows if isinstance(rows, list) else []
 
 
@@ -158,6 +296,15 @@ def _do_push_conversation(conv: dict):
         "pinned": bool(conv.get("pinned", 0)),
         "metadata": _jsonify(conv.get("metadata")) or {},
     }
+    # V243: 若云端表有 archived 列则一并同步（无该列时 Supabase 会忽略未知字段，不影响）
+    if "archived" in conv:
+        row["archived"] = bool(conv.get("archived", 0))
+    if "project_id" in conv:
+        row["project_id"] = str(conv.get("project_id") or "").strip() or None
+    if "revision" in conv:
+        row["revision"] = max(1, int(conv.get("revision") or 1))
+    if "sync_state" in conv:
+        row["sync_state"] = str(conv.get("sync_state") or "synced")[:32]
     for k in ("created_at", "updated_at"):
         iso = _iso(conv.get(k))
         if iso:
@@ -193,6 +340,8 @@ def _do_push_message(msg: dict, user_id):
         "tool_calls": _jsonify(msg.get("tool_calls")) or [],
         "files": _jsonify(msg.get("files")) or [],
         "sources": _jsonify(msg.get("sources")) or [],
+        "groundings": _jsonify(msg.get("groundings")) or {},
+        "run_manifest": _jsonify(msg.get("run_manifest")) or {},
         "suggestions": _jsonify(msg.get("suggestions")) or [],
         "status": msg.get("status", "complete"),
         "tokens_in": msg.get("tokens_in", 0),
@@ -208,6 +357,10 @@ def push_file_request(user_id, conv_id: str, query: str, target: str = "desktop"
     """写一条"文件投送"请求到 Supabase file_requests（消费方按 target 决定）。
     target='desktop'（默认）→ 桌面客户端常驻轮询消费；target='phone' → 手机 App 消费。
     同步阻塞写（要尽快让消费方轮询到），失败静默。"""
+    _bg(_do_push_file_request, user_id, conv_id, query, target)
+
+
+def _do_push_file_request(user_id, conv_id: str, query: str, target: str = "desktop"):
     uid = _uid(user_id)
     if not uid or not conv_id:
         return
@@ -257,13 +410,17 @@ def _conv_row(cv: dict):
     uid = _uid(cv.get("user_id"))
     if not uid or not cv.get("id"):
         return None
-    return {
+    row = {
         "id": cv.get("id"),
         "user_id": uid,
         "title": cv.get("title", "新对话"),
         "pinned": bool(cv.get("pinned", 0)),
         "metadata": _jsonify(cv.get("metadata")) or {},
     }
+    # V248: backfill 也带 archived——否则反向补推会把云端归档状态覆盖回未归档（归档残留隐患）
+    if "archived" in cv:
+        row["archived"] = bool(cv.get("archived", 0))
+    return row
 
 
 def _msg_row(msg: dict, uid: str):
@@ -276,6 +433,8 @@ def _msg_row(msg: dict, uid: str):
         "tool_calls": _jsonify(msg.get("tool_calls")) or [],
         "files": _jsonify(msg.get("files")) or [],
         "sources": _jsonify(msg.get("sources")) or [],
+        "groundings": _jsonify(msg.get("groundings")) or {},
+        "run_manifest": _jsonify(msg.get("run_manifest")) or {},
         "suggestions": _jsonify(msg.get("suggestions")) or [],
         "status": msg.get("status", "complete"),
         "tokens_in": msg.get("tokens_in", 0), "tokens_out": msg.get("tokens_out", 0),
@@ -363,6 +522,16 @@ def push_backend_url(url: str):
 
 def _do_push_backend_url(url: str):
     _req("POST", "/rest/v1/app_config", [{"key": "backend_url", "value": url}])
+
+
+def push_direct_llm(cfg: dict):
+    """Retired compatibility hook; provider credentials never leave V1200.
+
+    Keeping this as a no-op avoids breaking old callers while guaranteeing that
+    decrypted model credentials cannot enter a client-readable configuration
+    table.
+    """
+    return None
 
 
 # ─────────────────────── 实时任务活动（Realtime）───────────────────────

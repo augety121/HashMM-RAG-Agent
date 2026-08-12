@@ -90,6 +90,56 @@ _DATA_UNITS = (
 # 原版正是用了 \w，故在中文正文里基本抓不到句中引用——这里予以修正，正确支持中文）。
 _CITE_RE = re.compile(r"(?<![A-Za-z0-9_\]])\[(\d{1,3})\](?!\()")
 
+# ── V306 strict 硬事实抽取（默认路径不用，仅 audit_faithfulness(strict_numbers=True) 用）──
+# 目的：把"引用了来源、却断言一个证据里根本没有的具体硬事实"的句子抓出来——这是最典型的
+# 幻觉签名（数字对不上 / 凭空造年份 / Big-O 复杂度写反）。刻意只认**高辨识度硬 token**，
+# 避免误伤（裸单数字、枚举、口径改写已由 _data_numbers 的保守规则挡掉）。
+_BIGO_RE = re.compile(r"O\(\s*(?:1|n(?:\s*log\s*n)?|log\s*n|n\^?2|n²|n\s*\*\s*m|m\s*\+\s*n)\s*\)", re.I)
+_YEAR_RE = re.compile(r"(?<!\d)(1[89]\d{2}|20\d{2})(?!\d)")          # 1800–2099 的年份
+_PERCENT_RE = re.compile(r"\d+(?:\.\d+)?\s*[%‰％]")                   # 百分比/千分比
+
+
+def _norm_token(t: str) -> str:
+    """归一化硬 token 便于子串匹配：去空白、小写、Big-O 去内部空格。"""
+    return re.sub(r"\s+", "", str(t or "")).lower()
+
+
+def hard_facts(sentence: str) -> list[str]:
+    """抽取句中"高辨识度硬事实"token：Big-O 复杂度 / 年份 / 百分比 / 多位数据数字。
+    比 _data_numbers 多认 Big-O（O(1)/O(log n) 等），供 strict 数字接地判定用。
+    """
+    s = _CITE_RE.sub(" ", str(sentence or ""))
+    out: list[str] = []
+    out += [m.group(0) for m in _BIGO_RE.finditer(s)]
+    out += [m.group(0) for m in _YEAR_RE.finditer(s)]
+    out += [m.group(0) for m in _PERCENT_RE.finditer(s)]
+    out += _data_numbers(s)          # 复用既有保守数据数字（≥2 位 / 带单位）
+    # 去重（按归一化形态）
+    seen, uniq = set(), []
+    for t in out:
+        k = _norm_token(t)
+        if k and k not in seen:
+            seen.add(k); uniq.append(t)
+    return uniq
+
+
+def _hard_fact_absent(sentence: str, evidence_texts: list[str]) -> list[str]:
+    """返回句中"在证据里找不到"的硬事实 token 列表（空=全部有据）。
+    匹配做归一化：证据去空白小写、Big-O 去内部空格、百分比可退化到纯数字比对。
+    """
+    facts = hard_facts(sentence)
+    if not facts:
+        return []
+    norm_ev = [_norm_token(c) for c in evidence_texts]
+    missing: list[str] = []
+    for f in facts:
+        k = _norm_token(f)
+        digits = re.match(r"[\d.]+", k)
+        k2 = digits.group(0) if digits else ""
+        if not any((k in c) or (k2 and k2 in c) for c in norm_ev):
+            missing.append(f)
+    return missing
+
 
 # ─────────────────────────── 切句 / 分词（与 loop._lex_overlap 同口径）───────────────────────────
 def strip_noise(text: str) -> str:
@@ -291,22 +341,40 @@ class FaithfulnessReport:
     supported: int = 0
     uncited: list = field(default_factory=list)        # [{"idx","sentence"}]
     unsupported: list = field(default_factory=list)    # [{"idx","sentence","cited","overlap"}]
+    number_unsupported: list = field(default_factory=list)  # V306 strict：[{"idx","sentence","missing"}]
     judge_calls: int = 0
 
     @property
-    def ratio(self) -> float:
-        """已接地事实句占比（无事实句时 1.0）。"""
-        return 1.0 if self.total_factual == 0 else self.supported / self.total_factual
+    def ratio(self):
+        """已接地事实句占比。V308：无事实句 / 未审计 → None（不可评估），
+        不再返回 1.0。看板据 status 决定是否计入平均，避免"无从判断"被当满分。"""
+        if not self.checked or self.total_factual == 0:
+            return None
+        return self.supported / self.total_factual
+
+    @property
+    def status(self) -> str:
+        """三态结论：passed / failed / not_evaluable。
+        · not_evaluable：没跑审计（无证据）或没有事实句可判 —— 排除出通过率分母。
+        · passed：所有事实句都已接地且无未引用。
+        · failed：存在未引用或未接地的事实句。
+        """
+        if not self.checked or self.total_factual == 0:
+            return "not_evaluable"
+        return "passed" if self.ok else "failed"
 
     def to_dict(self) -> dict:
+        r = self.ratio
         return {
             "checked": self.checked,
             "ok": self.ok,
+            "status": self.status,                      # V308 三态
             "total_factual": self.total_factual,
             "supported": self.supported,
-            "ratio": round(self.ratio, 4),
+            "ratio": round(r, 4) if r is not None else None,
             "uncited": self.uncited,
             "unsupported": self.unsupported,
+            "number_unsupported": self.number_unsupported,
             "judge_calls": self.judge_calls,
         }
 
@@ -319,6 +387,7 @@ def audit_faithfulness(
     support_threshold: float = SUPPORT_THRESHOLD,
     judge_fn: Optional[Callable[[str, str], Optional[bool]]] = None,
     max_judge_calls: int = MAX_JUDGE_CALLS,
+    strict_numbers: bool = False,
 ) -> FaithfulnessReport:
     """对终答做忠实度审计。
 
@@ -345,13 +414,28 @@ def audit_faithfulness(
     ev_join = "\n\n".join(evidence)[:4000]      # judge 时给的证据上下文（控长度）
 
     for idx, sent in enumerate(split_sentences(answer)):
-        if not is_factual_claim(sent):
+        cites = extract_citations(sent)
+        # V306：硬事实缺据检测独立于 is_factual_claim —— 只含 Big-O 复杂度这类句子，
+        # 启发式不判其为"事实句"，但若它引用了来源却断言证据里没有的复杂度，同样是幻觉。
+        missing_hard = _hard_fact_absent(sent, evidence) if cites else []
+        if not is_factual_claim(sent) and not missing_hard:
             continue
         rep.total_factual += 1
-        cites = extract_citations(sent)
         if not cites:
             rep.uncited.append({"idx": idx, "sentence": sent[:160]})
             continue
+
+        # ── 硬事实接地：引用了来源却断言证据里没有的硬事实（数字对不上 / 造年份 / Big-O
+        # 写反）→ 记入 number_unsupported。默认 strict_numbers=False 时只记录不定罪
+        # （不改变既有 supported/ok 语义与历史测试）；strict_numbers=True 时按未接地处理。
+        if missing_hard:
+            rep.number_unsupported.append({"idx": idx, "sentence": sent[:160],
+                                           "cited": cites, "missing": missing_hard[:6]})
+            if strict_numbers:
+                rep.unsupported.append({"idx": idx, "sentence": sent[:160],
+                                        "cited": cites, "overlap": None,
+                                        "reason": "hard_fact_absent", "missing": missing_hard[:6]})
+                continue
 
         overlap = lexical_support(sent, evidence)
         nums_ok = _numbers_present_in_evidence(sent, evidence)
@@ -436,10 +520,12 @@ def summarize_for_ui(rep: FaithfulnessReport) -> dict:
         items.append({"idx": it["idx"], "text": it["sentence"], "kind": "unsupported"})
     for it in rep.uncited:
         items.append({"idx": it["idx"], "text": it["sentence"], "kind": "uncited"})
+    _r = rep.ratio
     return {
         "checked": True,
         "ok": rep.ok,
-        "grounded_ratio": round(rep.ratio, 3),
+        "status": rep.status,                                  # V308 三态
+        "grounded_ratio": round(_r, 3) if _r is not None else None,
         "total_factual": rep.total_factual,
         "flagged": items,
     }

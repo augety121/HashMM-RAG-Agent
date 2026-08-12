@@ -165,9 +165,9 @@ ok("卸载目标清单（安装目录 + 注册表键 + 开始菜单/桌面快捷
   // 多个保留数据夹（工作区 + 后端数据）：链式 if 两个都跳过
   const bat3 = E.selfDeleteScript({
     installDir: "C:\\Apps\\HashMM", registryKey: "HKCU\\...\\HashMM",
-    shortcuts: [], preserveDirs: ["HashMM Files", "local-backend"],
+    shortcuts: [], preserveDirs: ["HashMM Files", "HashMM Data", "local-backend"],
   });
-  assert.ok(bat3.includes('if /i not "%%~nxD"=="HashMM Files" if /i not "%%~nxD"=="local-backend" rd /s /q'),
+  assert.ok(bat3.includes('if /i not "%%~nxD"=="HashMM Files" if /i not "%%~nxD"=="HashMM Data" if /i not "%%~nxD"=="local-backend" rd /s /q'),
     "两个保留夹链式 if 都跳过");
   assert.ok(!/rd \/s \/q "C:\\Apps\\HashMM"\s/.test(bat3), "多保留模式不整目录 rd");
 }

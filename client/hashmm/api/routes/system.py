@@ -2,14 +2,91 @@
 from __future__ import annotations
 from hashmm.utils import get_logger as _get_logger, log_suppressed
 _obs_logger = _get_logger(__name__)
+import hashlib
+import os
 import subprocess
+import time
+from urllib.parse import urlparse
 from fastapi import APIRouter, Request, HTTPException, Response
 
 from hashmm.api import database as db
 from hashmm.api import app_state
-from hashmm.api.auth import get_current_user
+from hashmm.api.auth import get_current_user, require_auth
+from hashmm.release import API_VERSION, PROTOCOLS, public_release_info
 
 router = APIRouter(prefix="/api", tags=["system"])
+
+
+def _identity_project_ref() -> str:
+    """Return only the public Supabase project reference, never credentials."""
+    try:
+        from hashmm.api.supabase_auth import supabase_url
+        host = (urlparse(supabase_url()).hostname or "").strip().lower()
+        suffix = ".supabase.co"
+        return host[:-len(suffix)] if host.endswith(suffix) else host
+    except Exception:
+        return ""
+
+
+def _identity_fingerprint(user: dict) -> str:
+    """Stable diagnostic proof without exposing the account UUID."""
+    owner = str(user.get("uid") or "").removeprefix("sb_")
+    return hashlib.sha256(owner.encode("utf-8")).hexdigest()[:12] if owner else ""
+
+
+@router.get("/client/bootstrap", summary="跨端客户端启动契约")
+async def client_bootstrap(request: Request, response: Response):
+    """Authenticated, secret-free contract used before cross-device sync.
+
+    A successful response proves transport reachability *and* that the access
+    token belongs to this HashMM deployment.  Clients must not infer this from
+    an e-mail address or from the anonymous health endpoint.
+    """
+    user = require_auth(request)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    public_origin = os.environ.get("HASHMM_PUBLIC_URL", "").strip().rstrip("/")
+    request_id = str(getattr(request.state, "request_id", "") or "")
+    return {
+        "server_version": API_VERSION,
+        "release": public_release_info()["release"],
+        "sync_protocol": PROTOCOLS["sync"],
+        "release_manifest": public_release_info(),
+        "authenticated": True,
+        "user_sub_fingerprint": _identity_fingerprint(user),
+        "supabase_project_ref": _identity_project_ref(),
+        "canonical_origin": public_origin,
+        "server_time": int(time.time()),
+        "request_id": request_id,
+        "features": {
+            "projects": True,
+            "conversation_sync": True,
+            "realtime_wakeup": True,
+            "direct_llm": True,
+            "account_scoped_cache": True,
+            "remote_fabric": "hashmm.remote.v4",
+        },
+    }
+
+
+@router.get("/livez", include_in_schema=False)
+async def liveness_check(response: Response):
+    """Process liveness only; never touches models, indexes or Supabase."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "alive"}
+
+
+@router.get("/readyz", include_in_schema=False)
+async def fast_readiness_check(response: Response):
+    """Fast admission readiness used by clients and reverse proxies."""
+    from hashmm.api.core.services import ServiceRegistry
+    ready = ServiceRegistry.status == "ready"
+    response.status_code = 200 if ready else 503
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ready" if ready else str(ServiceRegistry.status or "starting"),
+        "ready": ready,
+    }
 
 
 def _metrics_authorized(request: Request) -> bool:
@@ -38,8 +115,11 @@ def _metrics_authorized(request: Request) -> bool:
 
 
 @router.get("/health")
-async def health_check(response: Response):
-    """v12: Health check with loading status for frontend progress bar."""
+async def health_check(request: Request, response: Response):
+    """v12: Health check with loading status for frontend progress bar.
+
+    V306 修 BACK-P0-01：只对【已鉴权】调用返回详细组件计数/模型名/GPU/缓存/特性开关等
+    可用于系统画像的信息；匿名调用只返回最小状态（status/ready/version），避免公网探测。"""
     response.headers["Cache-Control"] = "no-cache"
 
     from hashmm.api.core.services import ServiceRegistry
@@ -150,10 +230,31 @@ async def health_check(response: Response):
     except Exception:
         feature_info = {}
 
+    from hashmm import RELEASE as _rel
+    # V306：匿名调用只给最小状态；鉴权后才返回可用于系统画像的详细信息。
+    _authed = False
+    try:
+        _authed = get_current_user(request) is not None
+    except Exception:
+        _authed = False
+    if not _authed:
+        # 组件只给粗粒度状态词（去掉"(42 vectors)/(BGE-M3)"等数字与模型名），不泄露规模/型号。
+        coarse = {k: str(v).split("(")[0].strip() for k, v in components.items()}
+        return {
+            "status": "ok" if all_ok else "degraded",
+            "ready": True,
+            "version": API_VERSION,
+            "release": _rel,
+            "sync_protocol": PROTOCOLS["sync"],
+            "components": coarse,
+        }
     return {
         "status": "ok" if all_ok else "degraded",
         "ready": True,
-        "version": "13.0.0",
+        "version": API_VERSION,
+        "release": _rel,   # V218: 客户端据此判断远端后端是否旧代码（dispatch 404 排障）
+        "sync_protocol": PROTOCOLS["sync"],
+        "release_manifest": public_release_info(),
         "components": components,
         "gpu": gpu_info if gpu_info else None,
         "cache": cache_stats,
@@ -392,24 +493,173 @@ async def set_default_model(request: Request):
 # ── Plugins ──
 
 @router.get("/plugins")
-async def list_plugins():
+@router.get("/system/plugins", include_in_schema=False)
+async def list_plugins(request: Request):
+    from hashmm.api.auth import require_auth
+    user = require_auth(request)
     from hashmm.api.plugins import get_plugin_manager
     pm = get_plugin_manager()
-    return {"plugins": pm.list_plugins()}
+    return {"plugins": pm.list_plugins(), "can_manage": user.get("role") == "admin"}
 
 
 @router.post("/plugins/{name}/load")
-async def load_plugin(name: str):
+@router.post("/system/plugins/{name}/load", include_in_schema=False)
+async def load_plugin(name: str, request: Request):
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
     from hashmm.api.plugins import get_plugin_manager
     import asyncio
     pm = get_plugin_manager()
-    # V103.3: 插件加载（可能含导入/初始化重活）放线程，不冻结事件循环。
     ok = await asyncio.to_thread(pm.load, name)
-    return {"ok": ok}
+    item = next((p for p in pm.list_plugins() if p.get("name") == name), None)
+    from hashmm.api import database as db
+    db.audit(str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.load", f"name={name}; ok={ok}")
+    if not ok:
+        raise HTTPException(status_code=409, detail=(item or {}).get("error") or "插件未满足加载条件")
+    return {"ok": ok, "plugin": item}
+
+
+@router.post("/plugins/{name}/activate")
+async def activate_manifest_plugin(name: str, request: Request):
+    """Activate a declarative manifest; no executable-code trust is granted."""
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
+    body = await request.json()
+    from hashmm.api.plugins import PluginValidationError, get_plugin_manager
+    try:
+        info = get_plugin_manager().set_manifest_active(
+            name,
+            str(body.get("expected_sha256") or ""),
+            active=True,
+            actor=str(user.get("uid") or user.get("id") or "admin"),
+        )
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.audit(str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.manifest.activate", f"name={name}; sha256={info.sha256}")
+    return {"ok": True, "plugin": next(item for item in get_plugin_manager().list_plugins() if item.get("name") == name)}
+
+
+@router.post("/plugins/{name}/deactivate")
+async def deactivate_manifest_plugin(name: str, request: Request):
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
+    body = await request.json()
+    from hashmm.api.plugins import PluginValidationError, get_plugin_manager
+    try:
+        info = get_plugin_manager().set_manifest_active(
+            name,
+            str(body.get("expected_sha256") or ""),
+            active=False,
+            actor=str(user.get("uid") or user.get("id") or "admin"),
+        )
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.audit(str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.manifest.deactivate", f"name={name}; sha256={info.sha256}")
+    return {"ok": True, "plugin": next(item for item in get_plugin_manager().list_plugins() if item.get("name") == name)}
+
+
+@router.post("/plugins/{name}/quarantine")
+async def quarantine_plugin(name: str, request: Request):
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
+    from hashmm.api.plugins import PluginValidationError, get_plugin_manager
+    try:
+        result = get_plugin_manager().quarantine(
+            name, actor=str(user.get("uid") or user.get("id") or "admin"),
+        )
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.audit(str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.quarantine", f"name={name}; quarantine_id={result.get('quarantine_id','')}")
+    return result
+
+
+@router.post("/plugins/{name}/trust")
+@router.post("/system/plugins/{name}/trust", include_in_schema=False)
+async def trust_plugin(name: str, request: Request):
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
+    from hashmm.api.plugins import PluginValidationError, get_plugin_manager
+    body = await request.json()
+    try:
+        info = get_plugin_manager().trust(
+            name,
+            str(body.get("expected_sha256") or ""),
+            trusted_by=str(user.get("uid") or user.get("id") or "admin"),
+        )
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from hashmm.api import database as db
+    db.audit(str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.trust", f"name={name}; sha256={info.sha256}")
+    return {
+        "ok": True,
+        "status": "trusted_pending_load",
+        "plugin": next(
+            item for item in get_plugin_manager().list_plugins()
+            if item.get("name") == info.name
+        ),
+    }
+
+
+@router.post("/plugins/{name}/revoke")
+@router.post("/system/plugins/{name}/revoke", include_in_schema=False)
+async def revoke_plugin(name: str, request: Request):
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
+    from hashmm.api.plugins import get_plugin_manager
+    ok = get_plugin_manager().revoke(name)
+    from hashmm.api import database as db
+    db.audit(str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.revoke", f"name={name}; ok={ok}")
+    if not ok:
+        raise HTTPException(status_code=404, detail="插件没有可撤销的信任收据")
+    return {"ok": True}
+
+
+@router.post("/plugins/install")
+async def install_plugin(request: Request, replace: bool = False):
+    """Stage an administrator-uploaded ZIP; never trust or execute it."""
+    from hashmm.api.auth import require_admin
+    user = require_admin(request)
+    content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type not in {"application/zip", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="请上传 application/zip 文件")
+    package = await request.body()
+    from hashmm.api.plugins import PluginValidationError, get_plugin_manager
+    import asyncio
+    try:
+        result = await asyncio.to_thread(
+            get_plugin_manager().install_zip,
+            package,
+            expected_archive_sha256=request.headers.get("x-plugin-sha256", ""),
+            replace=bool(replace),
+            installed_by=str(user.get("uid") or ""),
+        )
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    from hashmm.api import database as db
+    plugin = result.get("plugin") or {}
+    db.audit(
+        str(user.get("uid") or ""), str(user.get("sub") or ""), "plugin.install",
+        f"name={plugin.get('name','')}; action={result.get('action','')}; sha256={result.get('package_sha256','')}",
+    )
+    return result
+
+
+@router.get("/plugins/{name}/diagnostics")
+async def plugin_diagnostics(name: str, request: Request):
+    from hashmm.api.auth import require_admin
+    require_admin(request)
+    from hashmm.api.plugins import PluginValidationError, get_plugin_manager
+    try:
+        return get_plugin_manager().diagnostics(name)
+    except PluginValidationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/plugins/tools")
-async def list_plugin_tools():
+@router.get("/system/plugins/tools", include_in_schema=False)
+async def list_plugin_tools(request: Request):
+    from hashmm.api.auth import require_auth
+    require_auth(request)
     from hashmm.api.plugins import get_plugin_manager
     pm = get_plugin_manager()
     return {"tools": pm.get_tool_definitions()}
@@ -508,3 +758,38 @@ async def performance_benchmark(request: Request):
             results[key]["meets_target"] = actual <= target
 
     return {"benchmark": results, "timestamp": time.time()}
+
+
+# ── 路线图阶段 A：能力模块状态与开关 ──
+
+@router.get("/modules", summary="能力模块状态（RAG/本机/联网/记忆/派活/图片）")
+async def list_modules(request: Request):
+    """任何登录用户可查看；开关需管理员。返回每个模块的启用/健康/工具集。"""
+    from hashmm.agent import modules as _mod
+    return {"modules": _mod.status(),
+            "note": "模块可整体启停（RAG 等）；关闭后其工具从 Agent 工具列表消失，主循环不受影响"}
+
+
+@router.post("/modules/{key}/toggle", summary="启停一个能力模块（管理员，进程级）")
+async def toggle_module(key: str, request: Request):
+    """通过设置进程环境变量 HASHMM_MODULE_<KEY> 实现即时启停（下一轮对话生效）。
+    core 模块不可关。持久化请写进 start-hashmm.sh。"""
+    from hashmm.api.auth import require_admin
+    admin = require_admin(request)
+    from hashmm.agent import modules as _mod
+    import os as _os
+    m = _mod.get_module(key)
+    if not m:
+        raise HTTPException(404, f"未知模块: {key}")
+    if m.core:
+        raise HTTPException(400, "核心模块不可关闭")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    enable = bool(body.get("enable", not m.enabled()))
+    _os.environ[f"HASHMM_MODULE_{key.upper()}"] = "1" if enable else "0"
+    db.audit(admin["uid"], admin["sub"], "module_toggle", f"{key}={'on' if enable else 'off'}")
+    return {"ok": True, "key": key, "enabled": enable,
+            "hint": "进程级生效（下一轮对话）；永久生效请写入 start-hashmm.sh"}

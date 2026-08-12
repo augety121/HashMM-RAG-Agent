@@ -1,7 +1,7 @@
 // UninstallWindow.cpp — 微信风卸载器实现（V102）。
 // 卸载动作复用 install_engine 已有的 uninstallSelfDeleteScript（与原 main.cpp 的
 // runUninstall 同款逻辑）：写自删 .bat 到临时目录 → 后台启动 → .bat 等本进程退出后
-// 删安装目录（保留用户数据夹）与自身。默认保留 HashMM Files / local-backend。
+// 删安装目录（保留用户数据夹）与自身。默认保留 HashMM Files / HashMM Data / local-backend。
 // ⚠️ Qt 代码无法在本沙箱编译；请在 Windows + Qt6 构建确认。用的是稳定 Widgets API。
 #include "UninstallWindow.h"
 #include "wechat_style.h"
@@ -156,7 +156,7 @@ void UninstallWindow::onConfirm() {
 
     // 写自删 .bat 到临时目录（不能写安装目录——一会要删它），后台启动它，然后本进程退出。
     // 默认保留用户数据夹（与"卸载保留数据"承诺一致）。
-    QStringList preserve = { QStringLiteral("HashMM Files"), QStringLiteral("local-backend") };
+    QStringList preserve = { QStringLiteral("HashMM Files"), QStringLiteral("HashMM Data"), QStringLiteral("local-backend") };
     QString bat = InstallEngine::uninstallSelfDeleteScript(
         installDir_, InstallEngine::installedExeName(), preserve);
 

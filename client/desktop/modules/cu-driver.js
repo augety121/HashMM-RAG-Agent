@@ -114,6 +114,7 @@ function _compileWin(plan) {
       break;
     }
     case "wait": return { shell: "powershell.exe", args: ["-NoProfile", "-Command", `Start-Sleep -Milliseconds ${plan.ms}`] };
+    case "open_url": return { shell: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", "Start-Process " + _psStr(plan.url)] };
     default: return null;
   }
   return { shell: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", PS_WIN32 + "\n" + body] };
@@ -145,6 +146,7 @@ function _compileMac(plan) {
       return osa(`tell application "System Events" to keystroke ${_osaStr(keyName)}${using}`);
     }
     case "wait": return { shell: "sleep", args: [String((plan.ms || 0) / 1000)] };
+    case "open_url": return { shell: "open", args: [plan.url] };
     default: return null;
   }
 }
@@ -167,6 +169,7 @@ function _compileLinux(plan) {
       return xd(["mousemove", String(plan.px), String(plan.py), "click", "--repeat", String(plan.scrollAmt), btn]);
     }
     case "wait": return { shell: "sleep", args: [String((plan.ms || 0) / 1000)] };
+    case "open_url": return { shell: "xdg-open", args: [plan.url] };
     default: return null;
   }
 }

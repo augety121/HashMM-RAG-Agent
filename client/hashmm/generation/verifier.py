@@ -14,8 +14,8 @@ Everything is **injectable** (so it's testable without models) and **never block
   judge, but the default path needs no model.
 - ``reflect_and_retry`` calls an injected ``generate_fn(query, sources, critique)``,
   verifies, and on failure feeds a critique back for one or more retries, capped by
-  ``max_attempts``. Verification or generation errors degrade to "pass" rather than
-  break the request.
+  ``max_attempts``. Verification or generation errors remain visible as an
+  unverified result; infrastructure failure must never be converted into proof.
 """
 from __future__ import annotations
 
@@ -107,7 +107,8 @@ def reflect_and_retry(query: str, generate_fn: Callable[[str, list, str | None],
     ``generate_fn(query, sources, critique)`` returns an answer string; ``critique``
     is None on the first attempt and the Reflector's note on retries. Returns
     {answer, attempts, passed, issues, history}. Never raises — generation/verify
-    errors return the best answer so far with passed=True (fail-open, don't block).
+    errors return the best answer so far with ``passed=False``.  The caller may
+    still show that draft, but cannot label it verified or completed.
     """
     verify_fn = verify_fn or (lambda q, a, s: verify_answer(q, a, s))
     build_critique = build_critique or _default_critique
@@ -123,13 +124,15 @@ def reflect_and_retry(query: str, generate_fn: Callable[[str, list, str | None],
             log_suppressed(logger, e)
             if best is not None:
                 break
-            return {"answer": "", "attempts": attempt, "passed": True,
+            return {"answer": "", "attempts": attempt, "passed": False,
                     "issues": ["generate_fn raised"], "history": history}
         try:
             vr = verify_fn(query, answer, sources)
         except Exception as e:
             log_suppressed(logger, e)
-            vr = VerifyResult(True, [], {})  # fail-open: never block on verifier error
+            vr = VerifyResult(
+                False, ["verify_fn raised"], {"verification_available": False},
+            )
 
         history.append({"attempt": attempt, "passed": vr.passed, "issues": list(vr.issues)})
         best = {"answer": answer, "passed": vr.passed, "issues": list(vr.issues), "attempt": attempt}

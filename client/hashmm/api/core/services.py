@@ -94,7 +94,7 @@ class ServiceRegistry:
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(f"[Services] GPU: {gpu_name} (CUDA_VISIBLE_DEVICES={cuda_env})")
             else:
-                logger.warning(f"[Services] ⚠️ GPU not available (CUDA_VISIBLE_DEVICES={cuda_env})")
+                logger.warning(f"[Services] GPU not available (CUDA_VISIBLE_DEVICES={cuda_env})")
         except ImportError:
             pass
 
@@ -121,59 +121,78 @@ class ServiceRegistry:
 
     @classmethod
     def init_heavy(cls) -> None:
-        """Phase 2: Heavy init (5-10s) — Encoder, FAISS, BM25, LLM. Runs in background."""
+        """Phase 2: Heavy init (5-10s) — Encoder, FAISS, BM25, LLM. Runs in background.
+
+        ★ V313 异常免疫：此前 Step 3 的 reload_llm() 没有 try 包裹——启动时 LLM 连接
+        抖一下，本函数中途炸掉，status 永远卡在 "loading_llm"，之后所有流式请求都在
+        等 15 秒后报"系统尚未完全启动"（用户现场 ready=False 常驻、两个深评套件
+        "后端未连接"假失败的根因）。现：每步各自降级 + finally 保证终态必达 ready
+        （失败组件写进 status_detail 的降级清单；encoder/检索/LLM 各有运行期兜底）。
+        """
         if cls._heavy_initialized:
             return
-
-        # Step 1: Encoder (BGE-M3) — ~3s
-        cls.status = "loading_models"
-        cls.status_detail = "加载 BGE-M3 嵌入模型..."
+        _degraded: list[str] = []
         try:
-            from hashmm.encoder_pool import EncoderPool
-            encoder = EncoderPool.get_encoder()
-            import torch
+            # Step 1: Encoder (BGE-M3) — ~3s
+            cls.status = "loading_models"
+            cls.status_detail = "加载 BGE-M3 嵌入模型..."
+            try:
+                from hashmm.encoder_pool import EncoderPool
+                encoder = EncoderPool.get_encoder()
+                import torch
 
-            def _text_enc_wrapper(texts: list[str]):
-                with torch.no_grad():
-                    return encoder(texts)
+                def _text_enc_wrapper(texts: list[str]):
+                    with torch.no_grad():
+                        return encoder(texts)
 
-            cls.state["text_enc"] = _text_enc_wrapper
-            logger.info(f"[Services] Encoder: BGE-M3, dim={EncoderPool.dim()}, device={EncoderPool._device}")
-        except Exception as e:
-            logger.warning(f"[Services] Encoder init failed: {e}")
-            cls.state["text_enc"] = None
+                cls.state["text_enc"] = _text_enc_wrapper
+                logger.info(f"[Services] Encoder: BGE-M3, dim={EncoderPool.dim()}, device={EncoderPool._device}")
+            except Exception as e:
+                logger.warning(f"[Services] Encoder init failed: {e}")
+                cls.state["text_enc"] = None
+                _degraded.append("encoder")
 
-        # Step 2: Retrieval pipeline (FAISS + BM25) — ~3s
-        cls.status = "loading_index"
-        cls.status_detail = "加载检索索引..."
-        try:
-            from hashmm.retriever_bridge import init_retriever
-            init_retriever()
-            logger.info("[Services] Retrieval pipeline ready")
-        except Exception as e:
-            logger.warning(f"[Services] Retrieval pipeline init failed: {e}")
+            # Step 2: Retrieval pipeline (FAISS + BM25) — ~3s
+            cls.status = "loading_index"
+            cls.status_detail = "加载检索索引..."
+            try:
+                from hashmm.retriever_bridge import init_retriever
+                init_retriever()
+                logger.info("[Services] Retrieval pipeline ready")
+            except Exception as e:
+                logger.warning(f"[Services] Retrieval pipeline init failed: {e}")
+                _degraded.append("retrieval")
 
-        # Step 3: LLM — ~1s
-        cls.status = "loading_llm"
-        cls.status_detail = "连接 LLM 服务..."
-        cls.reload_llm()
+            # Step 3: LLM — ~1s（V313：必须 try——它抛错不能拖死整个就绪状态）
+            cls.status = "loading_llm"
+            cls.status_detail = "连接 LLM 服务..."
+            try:
+                cls.reload_llm()
+            except Exception as e:
+                logger.warning(f"[Services] LLM init failed (可运行期重连): {e}")
+                _degraded.append("llm")
 
-        # Step 4: Tool registry
-        try:
-            from hashmm.tools.registry import ToolRegistry
-            ToolRegistry.sync_from_legacy()
-        except Exception as e:
-            logger.warning(f"[Services] ToolRegistry sync failed: {e}")
+            # Step 4: Tool registry
+            try:
+                from hashmm.tools.registry import ToolRegistry
+                ToolRegistry.sync_from_legacy()
+            except Exception as e:
+                logger.warning(f"[Services] ToolRegistry sync failed: {e}")
+                _degraded.append("tools")
 
-        # Sync with legacy app_state
-        cls._sync_app_state()
-
-        cls.state["loaded"] = True
-        cls._heavy_initialized = True
-        cls.status = "ready"
-        cls.status_detail = ""
-        elapsed = round((time.time() - cls.init_start_time) * 1000)
-        logger.info(f"[Services] All services initialized ({elapsed}ms)")
+            try:
+                cls._sync_app_state()
+            except Exception as e:
+                logger.warning(f"[Services] app_state sync failed: {e}")
+        finally:
+            cls.state["loaded"] = True
+            cls._heavy_initialized = True
+            cls.status = "ready"
+            cls.status_detail = ("" if not _degraded
+                                 else f"降级运行（{', '.join(_degraded)} 初始化失败，已用兜底）")
+            elapsed = round((time.time() - cls.init_start_time) * 1000)
+            logger.info(f"[Services] All services initialized ({elapsed}ms)"
+                        + (f"，降级组件: {_degraded}" if _degraded else ""))
 
     @classmethod
     def init(cls) -> None:

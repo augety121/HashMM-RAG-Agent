@@ -221,6 +221,17 @@ class Task:
     requires: set = field(default_factory=lambda: {"llm"})
     history_seed: list = field(default_factory=list)  # 首轮注入的历史（长对话任务用）
     max_seconds: int = 180
+    # ★ V310：单轮内的【工具调用步数预算】。None = 沿用 AgentLoop 默认（10 步）。
+    # 为什么必须有它：AgentLoop 的 MAX_ITERATIONS=10 是为【聊天场景】定的，但外部基准
+    # （Terminal-bench / SWE-bench）的一道题需要「读数据→写脚本→跑→报错→改→再跑→验证」，
+    # 大厂 harness 给的是 50~200 步。10 步会让 agent 在半路被强制截停 —— 产物是半成品，
+    # 官方测试跑得起来但断言失败。这正是 Terminal-bench 恒 0（且失败信息是 AssertionError
+    # 而非「文件不存在」）的真正原因：不是模型不会做，是没做完就被掐了。
+    max_iterations: int | None = None
+    # 同理：MAX_TOOL_CALLS=24 / MAX_EXEC_CALLS=5 也是聊天护栏。基准任务的"改-跑-验证"
+    # 循环光 exec 就不止 5 次 → 一并可覆盖。None = 沿用默认。
+    max_tool_calls: int | None = None
+    max_exec_calls: int | None = None
 
 
 def _long_memory_seed() -> list[dict]:
@@ -393,8 +404,11 @@ def _detect_capabilities(llm_fn) -> set:
 
 
 async def _run_turn(llm_fn, conv_id: str, query: str, history: list, *,
-                    mem=None, user: str = "bench", inject_hints: bool = False) -> TurnResult:
-    from hashmm.agent.loop import AgentLoop
+                    mem=None, user: str = "bench", inject_hints: bool = False,
+                    max_iterations: int | None = None,
+                    max_tool_calls: int | None = None,
+                    max_exec_calls: int | None = None) -> TurnResult:
+    from hashmm.agent.loop import AgentLoop, MAX_ITERATIONS
     # V103.90: --stream 模式下，从隔离记忆库召回策略提示注入系统提示（第二遍带记忆）。
     sys_prompt = ""
     if mem is not None and inject_hints:
@@ -402,7 +416,11 @@ async def _run_turn(llm_fn, conv_id: str, query: str, history: list, *,
             sys_prompt = mem.get_strategy_hint(user, query) or ""
         except Exception:
             sys_prompt = ""
-    loop = AgentLoop(llm_fn=llm_fn, system_prompt=sys_prompt, user_id=user, conv_id=conv_id)
+    # V310：步数预算。默认沿用 AgentLoop 的 10（聊天场景够用）；外部基准显式加大。
+    _iters = int(max_iterations) if max_iterations else MAX_ITERATIONS
+    loop = AgentLoop(llm_fn=llm_fn, system_prompt=sys_prompt, user_id=user, conv_id=conv_id,
+                     max_iterations=_iters, max_tool_calls=max_tool_calls,
+                     max_exec_calls=max_exec_calls)
     loop.plan_confirmed = True
     events = []
     async for et, ed in loop.run(query=query, history=history, user_id=user):
@@ -413,19 +431,75 @@ async def _run_turn(llm_fn, conv_id: str, query: str, history: list, *,
 
 
 def run_task(task: Task, llm_fn, *, mem=None, user: str = "bench",
-             inject_hints: bool = False, record: bool = False) -> dict:
+             inject_hints: bool = False, record: bool = False,
+             conv_id: str | None = None, preserve_workspace: bool = False,
+             permission_mode: str | None = None) -> dict:
+    """跑一个基准任务。V309 新增三个可选参数（默认行为与旧版完全一致）：
+
+    conv_id：显式指定会话 id（=工作区目录名）。★ 修外部基准 0 分的元凶之一：
+        terminal/swebench 驱动把任务初始文件铺进 `CONV_FILES_ROOT/<x>` 并在那里判分，
+        而旧 run_task 硬编码 `bench-{task.id}` → agent 实际在 `bench-<x>`（另一个空目录）
+        干活 → 判分目录永远拿不到 agent 的产出 → 恒 0。传入 conv_id 即可两边对齐。
+    preserve_workspace：True 时不清空工作区（调用方已预铺任务文件/克隆好仓库时必须开，
+        否则 rmtree 会把铺好的现场删光）。
+    permission_mode：为本次评测的 user 授予【作用域】权限模式（如 "bypass"），跑完自动
+        撤销。修外部基准 0 分的元凶之二：run_shell 是 SYSTEM 级，standard 模式下无人点
+        批准 → 评测里 agent 拿不到 shell。作用域提权只影响该 user，不动全局模式。
+    """
+    # ★ V327 消融基线（HASHMM_BENCH_BASELINE=1）：绕过整条 AgentLoop，裸模型一次直答。
+    #   放在这里（而非 adapter）是因为 GAIA/SWE-bench/Terminal 都直接调本函数——
+    #   拦截在此才覆盖所有走 agent 的基准路径。同一批题：基线分 vs 正常分，差值即
+    #   你的 agent 脚手架的贡献（2026 消融口径）。返回结构与正常路径完全同构。
+    try:
+        from hashmm.evaluation.benchmarks.adapter import baseline_mode as _blm
+        _baseline = _blm()
+    except Exception:  # noqa: BLE001
+        _baseline = False
+    if _baseline:
+        _t0 = time.time()
+        _q = "\n\n".join(str(t) for t in (task.turns or []))
+        try:
+            _fn = llm_fn
+            _qc = getattr(_fn, "quick_call", None)
+            _txt = str(_qc("你是严谨的助手。", _q, max_tok=4096) if callable(_qc)
+                       else _fn(_q) or "").strip()
+            return {"id": task.id, "category": task.category, "status": "OK", "steps": 1,
+                    "answer": _txt, "tools_used": [], "failures": [],
+                    "elapsed_s": round(time.time() - _t0, 1)}
+        except Exception as e:  # noqa: BLE001
+            return {"id": task.id, "category": task.category, "status": "ERROR", "steps": None,
+                    "answer": "", "tools_used": [],
+                    "failures": [f"{type(e).__name__}: {str(e)[:120]}"],
+                    "elapsed_s": round(time.time() - _t0, 1)}
     from hashmm.api.database import CONV_FILES_ROOT
-    conv_id = f"bench-{task.id}"
+    conv_id = (conv_id or "").strip() or f"bench-{task.id}"
     ws = CONV_FILES_ROOT / conv_id
-    shutil.rmtree(ws, ignore_errors=True)
+    if not preserve_workspace:
+        shutil.rmtree(ws, ignore_errors=True)
     ctx = BenchContext(conv_id=conv_id, workspace=ws)
+    _perm_granted = False
+    _prev_shell_cap = None
+    if permission_mode:
+        try:
+            from hashmm.agent.permissions import get_permissions
+            _perm_granted = get_permissions().grant_session_mode(
+                user, permission_mode, ttl=float(task.max_seconds) + 300.0)
+        except Exception:  # noqa: BLE001  提权失败不阻断评测，只是分数会如实反映权限受限
+            _perm_granted = False
+        # V310：评测里放开 run_shell 超时上限（跑测试套件常需几分钟，默认 60s 会误杀）。
+        _prev_shell_cap = os.environ.get("HASHMM_SHELL_TIMEOUT_CAP")
+        if _prev_shell_cap is None:
+            os.environ["HASHMM_SHELL_TIMEOUT_CAP"] = "600"
     t0 = time.time()
     try:
         history = list(task.history_seed)
         for q in task.turns:
             tr = asyncio.run(asyncio.wait_for(
                 _run_turn(llm_fn, conv_id, q, history, mem=mem, user=user,
-                          inject_hints=inject_hints), timeout=task.max_seconds))
+                          inject_hints=inject_hints,
+                          max_iterations=task.max_iterations,
+                          max_tool_calls=task.max_tool_calls,
+                          max_exec_calls=task.max_exec_calls), timeout=task.max_seconds))
             ctx.turns.append(tr)
             history = history + [{"role": "user", "content": q},
                                  {"role": "assistant", "content": tr.answer}]
@@ -463,8 +537,27 @@ def run_task(task: Task, llm_fn, *, mem=None, user: str = "bench",
                                   answer=ctx.final_answer).to_dict()
         except Exception:
             _steps = None
+        # V306：把最终答案与工具调用轨迹一并返回 —— 外部基准（GAIA/WebVoyager/AgentBench）需要拿
+        # agent 的**答案文本**来判分。此前只返回 status/failures，取 r["answer"] 永远是空 → 恒为 0 分。
+        # 纯增量字段，不影响任何既有调用方。
+        _tools_used = []
+        try:
+            # ★ 修 bug：AgentLoop 产生的是 ("tool_start",{...}) / ("tool_done",{...})，
+            # 从不产生 ("tool",...)。旧代码找 et=="tool" → tools_used 恒为空 →
+            # GAIA/WebVoyager/AgentBench 会误判「agent 没调任何工具」，甚至报「🔴致命：没联网搜索」。
+            _seen = set()
+            for et, ed in ctx.all_events:
+                if et in ("tool_start", "tool_done") and isinstance(ed, dict) and ed.get("name"):
+                    n = ed["name"]
+                    if n not in _seen:
+                        _seen.add(n)
+                        _tools_used.append(n)
+        except Exception:  # noqa: BLE001
+            _tools_used = []
         return {"id": task.id, "category": task.category,
                 "status": status, "steps": _steps,
+                "answer": ctx.final_answer,
+                "tools_used": _tools_used,
                 "failures": failures, "elapsed_s": round(time.time() - t0, 1)}
     except Exception as e:
         return {"id": task.id, "category": task.category, "status": "ERROR",
@@ -472,7 +565,19 @@ def run_task(task: Task, llm_fn, *, mem=None, user: str = "bench",
                 "failures": [f"{type(e).__name__}: {str(e)[:120]}"],
                 "elapsed_s": round(time.time() - t0, 1)}
     finally:
-        shutil.rmtree(ws, ignore_errors=True)
+        # V309：preserve_workspace 时不清场——外部基准（terminal/swebench）要在这个目录里
+        # 跑官方判分脚本；旧版无条件 rmtree = 判分前把 agent 产出删光 = 恒 0 分（第三处元凶）。
+        if not preserve_workspace:
+            shutil.rmtree(ws, ignore_errors=True)
+        if _perm_granted:
+            try:
+                from hashmm.agent.permissions import get_permissions
+                get_permissions().revoke_session_mode(user)
+            except Exception:  # noqa: BLE001
+                pass
+        # V310：还原 shell 超时上限（只在本次评测放开的情况下才恢复）
+        if permission_mode and _prev_shell_cap is None:
+            os.environ.pop("HASHMM_SHELL_TIMEOUT_CAP", None)
 
 
 def run_bench(llm_fn, only: set | None = None, tasks: list | None = None, *,

@@ -5,26 +5,50 @@
 被控端把最新一帧 JPEG POST 到后端，查看端从后端 GET 最新帧或走 MJPEG 流。后端有公网 IP，
 手机与电脑都连得到它，因此任何网络都能通（代价是画质/帧率比 WebRTC 低一档）。
 
-信令与输入仍走原有 WebSocket（/api/remote/ws）或 Supabase；只有「视频」这一路改走本中继。
+信令与输入走统一 WebSocket（/api/remote/ws）；只有「视频」这一路改走本中继。
 
-room 约定：被控端的设备 id（host/viewer 双方都知道，且每台被控机互不相同）。
-鉴权：所有端点都要求有效登录令牌（Authorization: Bearer 或 ?token=，与其它 API 同一套）。
+room 约定：已批准的远程 session id。鉴权使用会话签发的短时 Remote ticket，
+不再把账号 access token 放进图片 URL。ticket 绑定 owner/session/role/device/scopes/generation。
 内存保存最新帧，最多 _MAX_ROOMS 个房间，超过 _FRAME_TTL 秒无更新即视为离线并回收。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from hashmm.api.auth import require_auth
+from hashmm.api.remote_sessions import remote_session_registry
+from hashmm.api.remote_transport import request_is_secure, secure_remote_required
 
 router = APIRouter(prefix="/api/remote/relay", tags=["remote-relay"])
 
 _diag_logger = logging.getLogger("hashmm.remote.host")
+
+
+def _allow_legacy_auth() -> bool:
+    return os.environ.get("HASHMM_REMOTE_LEGACY_RELAY_AUTH", "").lower() in ("1", "true", "yes", "on")
+
+
+def _remote_ticket(request: Request, room: str, role: str, scope: str) -> dict:
+    if secure_remote_required() and not request_is_secure(request):
+        raise HTTPException(status_code=403, detail="远程控制必须使用 HTTPS/WSS")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Remote ") else request.query_params.get("ticket", "")
+    payload = remote_session_registry.verify_ticket(token, required_scope=scope, role=role, session_id=room)
+    if payload:
+        return payload
+    # Explicit migration switch only.  Even in compatibility mode, bind a
+    # legacy room to the authenticated owner instead of accepting arbitrary IDs.
+    if _allow_legacy_auth():
+        user = require_auth(request)
+        if str(room) == str(user.get("uid", "")):
+            return {"uid": user["uid"], "sid": room, "role": role, "legacy": True}
+    raise HTTPException(status_code=401, detail="远程授权已失效")
 
 
 @router.post("/hostlog")
@@ -38,6 +62,7 @@ async def host_diag_log(request: Request):
         body = {}
     msg = str(body.get("msg") or "")[:300]
     room = str(body.get("room") or "")[:64]
+    _remote_ticket(request, room, "host", "view")
     _diag_logger.warning(f"[被控端诊断] room={room} {msg}")
     return {"ok": True}
 
@@ -91,7 +116,7 @@ def _get_frame(room: str, now: float | None = None):
 @router.post("/{room}/push")
 async def push_frame(room: str, request: Request):
     """被控端推送最新一帧（请求体为 raw JPEG 字节）。"""
-    require_auth(request)
+    _remote_ticket(request, room, "host", "view")
     body = await request.body()
     if not body:
         raise HTTPException(status_code=400, detail="空帧")
@@ -105,7 +130,7 @@ async def push_frame(room: str, request: Request):
 @router.get("/{room}/meta")
 async def frame_meta(room: str, request: Request):
     """查看端用：该房间是否有活跃画面、最新序号/时间。"""
-    require_auth(request)
+    _remote_ticket(request, room, "viewer", "view")
     rec = _get_frame(room)
     if not rec:
         return {"online": False, "seq": 0}
@@ -115,7 +140,7 @@ async def frame_meta(room: str, request: Request):
 @router.get("/{room}/frame")
 async def get_frame(room: str, request: Request):
     """查看端轮询用：返回该房间最新一帧 JPEG。"""
-    require_auth(request)
+    _remote_ticket(request, room, "viewer", "view")
     _mark_pull(room)                 # 登记"有人在看"（即使暂时 404 也算，好让被控端开始推）
     rec = _get_frame(room)
     if not rec:
@@ -130,8 +155,8 @@ async def get_frame(room: str, request: Request):
 @router.get("/{room}/mjpeg")
 async def mjpeg_stream(room: str, request: Request):
     """查看端流式用：multipart/x-mixed-replace，浏览器 <img src> 可直接显示。
-    通过 ?token= 携带令牌（<img> 无法设置 Authorization 头）。"""
-    require_auth(request)
+    通过 ?ticket= 携带仅能读取该会话画面的短时能力票据。"""
+    _remote_ticket(request, room, "viewer", "view")
     boundary = "hashmmframe"
 
     async def gen():

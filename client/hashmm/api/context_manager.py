@@ -113,15 +113,6 @@ class ContextWindowManager:
             compressed.append({"role": m["role"], "content": content + "..."})
 
         return system_msgs + compressed + recent
-        for m in messages:
-            content = m.get("content", "")
-            if isinstance(content, str):
-                total += self.count_tokens(content)
-            elif isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        total += self.count_tokens(part.get("text", ""))
-        return total
 
     def fit(self, *,
             system: str,

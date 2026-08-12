@@ -2,7 +2,7 @@ package com.hashmm.app.ui.models
 import com.hashmm.app.ui.components.ScreenHeader
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -15,12 +15,13 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,9 +33,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hashmm.app.data.remote.ModelInfo
+import com.hashmm.app.data.remote.ModelProviderInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,7 +51,7 @@ fun ModelConfigScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            ScreenHeader(title = "模型 / 后端配置", onBack = onBack) {
+            ScreenHeader(title = "我的 API 与模型", subtitle = "仅当前账号可用；密钥不会展示给其他用户", onBack = onBack) {
                 TextButton(onClick = { viewModel.openAdd() }) { Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(2.dp)); Text("新增") }
             }
         },
@@ -60,15 +62,16 @@ fun ModelConfigScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { Text("客户端后端地址", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text("客户端后端地址", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)), modifier = Modifier.fillMaxWidth()) {
+                // V244：去描边（无边白卡）
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         OutlinedTextField(
                             value = ui.backendUrl,
                             onValueChange = viewModel::onBackendChange,
                             modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("") },
+                            placeholder = { Text("https://hashmm.hashlens.org") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { viewModel.saveBackend() }),
@@ -85,7 +88,7 @@ fun ModelConfigScreen(
             item { Spacer(Modifier.height(4.dp)) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("可用模型", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text("可用模型", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     if (ui.loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     else TextButton(onClick = { viewModel.load() }) { Text("刷新", fontSize = 13.sp) }
                 }
@@ -93,13 +96,12 @@ fun ModelConfigScreen(
 
             if (!ui.loading && ui.models.isEmpty()) {
                 item {
-                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)), modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(34.dp))
-                            Spacer(Modifier.height(10.dp))
-                            Text(ui.error ?: "暂无模型，点右上角「新增」", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+                    com.hashmm.app.ui.components.HmmStateView(
+                        kind = com.hashmm.app.ui.components.HmmStateKind.Empty,
+                        icon = Icons.Outlined.Memory,
+                        title = "暂无模型",
+                        message = ui.error ?: "点右上角「新增」添加一个模型配置",
+                    )
                 }
             }
 
@@ -118,35 +120,104 @@ fun ModelConfigScreen(
     // 新增模型底部表单
     if (ui.addForm.show) {
         ModalBottomSheet(onDismissRequest = { viewModel.closeAdd() }) {
-            AddModelSheet(ui.addForm, viewModel)
+            AddModelSheet(ui.addForm, ui.providers, ui.providerError, viewModel)
             Spacer(Modifier.height(24.dp))
         }
     }
 }
 
 @Composable
-private fun AddModelSheet(form: AddForm, vm: ModelConfigViewModel) {
+private fun AddModelSheet(
+    form: AddForm,
+    providers: List<ModelProviderInfo>,
+    providerError: String?,
+    vm: ModelConfigViewModel,
+) {
+    var providerMenu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
         Text("新增模型", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        Text("连接策略与桌面端共用；模型 ID 以你的服务商账号为准", fontSize = 11.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
 
-        Text("厂商", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(6.dp))
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PROVIDER_PRESETS.forEach { (p, _, _) ->
-                FilterChip(selected = form.provider == p, onClick = { vm.onProvider(p) }, label = { Text(p) })
+        Box(Modifier.fillMaxWidth()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                    .clickable { providerMenu = true },
+            ) {
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("服务商", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(form.providerName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "选择服务商")
+                }
             }
+            DropdownMenu(expanded = providerMenu, onDismissRequest = { providerMenu = false }) {
+                providers.forEach { provider ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(provider.name, fontSize = 13.sp)
+                                Text(provider.id, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        onClick = { vm.onProvider(provider.id); providerMenu = false },
+                    )
+                }
+            }
+        }
+        if (!providerError.isNullOrBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text("正在使用内置兼容清单；连接服务器后会同步完整厂商策略。", fontSize = 10.5.sp,
+                color = MaterialTheme.colorScheme.tertiary)
         }
         Spacer(Modifier.height(12.dp))
 
+        if (form.wireApis.size > 1) {
+            Text("接口协议", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                form.wireApis.forEach { wire ->
+                    FilterChip(
+                        selected = form.wireApi == wire,
+                        onClick = { vm.onWireApi(wire) },
+                        label = { Text(when (wire) {
+                            "responses" -> "Responses"
+                            "anthropic_messages" -> "Anthropic Messages"
+                            else -> "Chat Completions"
+                        }) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        if (form.endpointNote.isNotBlank()) {
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(form.endpointNote, fontSize = 11.5.sp, lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
         OutlinedTextField(form.name, vm::onName, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(form.modelName, vm::onModelName, label = { Text("模型名 model_name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(form.modelName, vm::onModelName, label = { Text("模型或部署 ID") },
+            placeholder = { Text("从服务商控制台复制") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (form.modelHints.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                form.modelHints.forEach { hint -> AssistChip(onClick = { vm.onModelName(hint) }, label = { Text(hint) }) }
+            }
+        }
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(form.baseUrl, vm::onBaseUrl, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
-            form.apiKey, vm::onApiKey, label = { Text("API Key（本地模型可留空）") },
+            form.apiKey, vm::onApiKey, label = { Text(if (form.apiKeyOptional) "API Key（可选）" else "API Key") },
             singleLine = true, visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth(),
         )
@@ -181,21 +252,18 @@ private fun AddModelSheet(form: AddForm, vm: ModelConfigViewModel) {
 
 @Composable
 private fun ModelCard(m: ModelInfo, switching: Boolean, deleting: Boolean, onPick: () -> Unit, onDelete: () -> Unit) {
+    // V244：去描边（无边白卡）；图标裸放墨黑（去淡染图标盒）；未选中改细圆环（不再是灰实心）
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth().clickable(enabled = !m.isDefault && !switching && !deleting, onClick = onPick),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(enabled = !m.isDefault && !switching && !deleting, onClick = onPick),
     ) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Outlined.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 13.dp, bottom = 13.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(21.dp))
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(m.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                val sub = listOf(m.provider, m.modelName).filter { it.isNotBlank() }.joinToString(" · ")
+                val sub = listOf(m.provider, m.modelName, m.wireApi).filter { it.isNotBlank() }.joinToString(" · ")
                 if (sub.isNotBlank()) Text(sub, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             when {
@@ -205,7 +273,8 @@ private fun ModelCard(m: ModelInfo, switching: Boolean, deleting: Boolean, onPic
                     Spacer(Modifier.width(4.dp))
                     Text("默认", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF34C759))
                 }
-                else -> Box(Modifier.size(20.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant))
+                else -> Box(Modifier.size(19.dp).clip(CircleShape)
+                    .border(1.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
             }
             if (deleting) CircularProgressIndicator(Modifier.size(18.dp).padding(start = 4.dp), strokeWidth = 2.dp)
             else IconButton(onClick = onDelete, enabled = !m.isDefault) {

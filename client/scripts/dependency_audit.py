@@ -19,6 +19,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        _reconfigure(errors="replace")
+
 
 def _have_pip_audit() -> bool:
     try:

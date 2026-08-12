@@ -3,11 +3,19 @@ from __future__ import annotations
 import json, re
 from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
+from starlette.concurrency import run_in_threadpool
 
 from hashmm.api import database as db
 from hashmm.api import model_manager
 from hashmm.api import app_state
-from hashmm.api.auth import require_admin
+from hashmm.api.admin_contract import admin_user_wire
+from hashmm.api.auth import require_admin, require_auth, require_conv_access
+from hashmm.model_providers import (
+    ProviderConfigError,
+    list_provider_specs,
+    normalize_model_config,
+    parse_model_options,
+)
 from hashmm.utils import get_logger, log_suppressed
 
 logger = get_logger("hashmm.admin")
@@ -25,22 +33,56 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.get("/overview")
 async def admin_overview(request: Request):
-    """Single request for all admin panel data. Eliminates tab-switching lag."""
+    """Truthful control-plane summary with source-level availability.
+
+    A failed source is represented as ``None`` plus an issue. It is never
+    converted to a convincing zero or empty collection.
+    """
     require_admin(request)
-    result: dict = {}
-    try: result["models"] = db.list_models()
-    except Exception: result["models"] = []
-    try: result["users"] = db.list_users()
-    except Exception: result["users"] = []
+    import time
+    result: dict = {"schema": "hashmm.admin-overview.v2", "generated_at": time.time(), "sources": {}}
+
+    def read_source(name: str, fn):
+        started = time.perf_counter()
+        try:
+            value = fn()
+            result["sources"][name] = {
+                "status": "ok", "latency_ms": max(0, int((time.perf_counter() - started) * 1000)),
+            }
+            return value
+        except Exception as exc:
+            log_suppressed(logger, exc)
+            result["sources"][name] = {
+                "status": "unavailable", "latency_ms": max(0, int((time.perf_counter() - started) * 1000)),
+                "issue": "数据源暂时无法验证",
+            }
+            return None
+
+    result["models"] = read_source("models", db.list_models)
+    result["users"] = read_source("users", db.list_users)
+    result["knowledge_bases"] = read_source("knowledge_bases", db.list_kbs)
     try:
         from hashmm.evolution.skill_manager import get_skill_manager
-        result["evolution_skills"] = len(get_skill_manager().list_skills())
-    except Exception: result["evolution_skills"] = 0
+        result["evolution_skills"] = read_source(
+            "evolution_skills", lambda: len(get_skill_manager().list_skills(include_all=True)),
+        )
+    except Exception as exc:
+        log_suppressed(logger, exc)
+        result["evolution_skills"] = None
+        result["sources"]["evolution_skills"] = {"status": "unavailable", "issue": "数据源暂时无法验证"}
     from hashmm.api.core.services import ServiceRegistry
-    result["status"] = ServiceRegistry.status
-    result["status_detail"] = ServiceRegistry.status_detail
-    try: result["recent_logs"] = db.get_audit_count()
-    except Exception: result["recent_logs"] = 0
+    result["services"] = read_source("services", lambda: {
+        "status": ServiceRegistry.status,
+        "detail": ServiceRegistry.status_detail,
+    })
+    result["recent_logs"] = read_source("audit", db.get_audit_count)
+    try:
+        from hashmm.api import jobs as _jobs
+        result["jobs"] = read_source("jobs", _jobs.status_counts)
+    except Exception as exc:
+        log_suppressed(logger, exc)
+        result["jobs"] = None
+        result["sources"]["jobs"] = {"status": "unavailable", "issue": "任务数据源暂时无法验证"}
     return result
 
 
@@ -58,7 +100,8 @@ async def admin_audit_tools(request: Request, limit: int = 50):
         limit = max(1, min(int(limit or 50), 500))
         return {"enabled": audit_enabled(), "entries": read_recent(limit)}
     except Exception as _e:
-        log_suppressed(_obs_logger, _e) if "_obs_logger" in globals() else None
+        log_suppressed(logger, _e)   # V308：原写法引用了根本不存在的 _obs_logger，
+                                     # 靠 `in globals()` 守卫兜住 → 异常从未被记录。用真 logger。
         return {"enabled": False, "entries": []}
 
 
@@ -85,6 +128,11 @@ async def admin_governance(request: Request):
         out["job_queue"] = _jq.current_stats()
     except Exception:
         out["job_queue"] = None
+    try:
+        from hashmm.api import supabase_sync as _supabase_sync
+        out["sync_mirror_queue"] = _supabase_sync.queue_stats()
+    except Exception:
+        out["sync_mirror_queue"] = None
     return out
 
 
@@ -93,7 +141,39 @@ async def admin_governance(request: Request):
 @router.get("/users")
 async def list_users(request: Request):
     require_admin(request)
-    return db.list_users()
+    local = db.list_users()
+    merged: dict[str, dict] = {str(u.get("id")): dict(u) for u in local}
+    try:
+        from hashmm.api import supabase_auth, supabase_sync
+        authorization = request.headers.get("authorization", "")
+        caller_token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+        # Match the desktop user directory first: the caller-scoped RPC exposes
+        # auth email/last-login fields without requiring a service-role secret
+        # on this backend.  Older deployments fall back to service-role profiles.
+        profiles = await run_in_threadpool(supabase_auth.list_all_profiles, caller_token)
+        if profiles is None:
+            profiles = await run_in_threadpool(supabase_sync.list_profiles)
+        for profile in profiles or []:
+            raw_id = str(profile.get("id") or "")
+            if not raw_id:
+                continue
+            uid = f"sb_{raw_id}"
+            current = merged.get(uid, {})
+            merged[uid] = {
+                **current,
+                "id": uid,
+                "username": profile.get("username") or current.get("username") or raw_id,
+                "display_name": profile.get("display_name") or current.get("display_name") or "",
+                "email": profile.get("email") or current.get("email") or "",
+                "role": "admin" if profile.get("is_admin") else current.get("role", "user"),
+                "created_at": profile.get("created_at") or current.get("created_at") or "",
+                "last_sign_in_at": profile.get("last_sign_in_at") or current.get("last_sign_in_at") or "",
+                "identity_source": "supabase",
+            }
+    except Exception as e:
+        log_suppressed(logger, e)
+    rows = [admin_user_wire(u) for u in merged.values()]
+    return sorted(rows, key=lambda u: u["created_at"], reverse=True)
 
 
 @router.post("/users")
@@ -207,16 +287,25 @@ async def provider_balance(request: Request):
 @router.post("/models")
 async def create_model(req: ModelCreateRequest, request: Request):
     admin = require_admin(request)
+    provider_config = dict(req.config or {})
+    if req.wire_api:
+        provider_config["wire_api"] = req.wire_api
+    try:
+        normalized = normalize_model_config({**req.model_dump(), "config": provider_config})
+    except ProviderConfigError as exc:
+        raise HTTPException(400, str(exc)) from exc
     model = db.create_model(
-        req.name, req.provider, req.base_url, req.api_key,
-        req.model_name, created_by=admin["sub"],
+        req.name, normalized["provider"], normalized["base_url"], req.api_key,
+        req.model_name.strip(), created_by=admin["sub"],
         temperature=req.temperature, max_tokens=req.max_tokens,
+        config={**provider_config, "wire_api": normalized["wire_api"]},
     )
     current_default = db.get_default_model()
     should_promote = not current_default or not current_default.get("api_key")
     if should_promote and model.get("id") and req.api_key:
         db.set_default_model(model["id"])
     app_state.reload_llm()
+    model_manager.invalidate_model_catalog_cache()
     db.audit(admin["uid"], admin["sub"], "create_model", req.name)
     return model
 
@@ -224,8 +313,35 @@ async def create_model(req: ModelCreateRequest, request: Request):
 @router.put("/models/{model_id}")
 async def update_model(model_id: str, req: ModelUpdateRequest, request: Request):
     admin = require_admin(request)
-    kw = {k: v for k, v in req.model_dump().items() if v is not None}
+    current = db.get_model(model_id)
+    if not current:
+        raise HTTPException(404, "模型配置不存在")
+    changes = {k: v for k, v in req.model_dump().items() if v is not None}
+    provider_config = parse_model_options(current)
+    if req.config is not None:
+        provider_config.update(req.config)
+    if req.wire_api is not None:
+        provider_config["wire_api"] = req.wire_api
+    merged = {**current, **changes, "config": provider_config}
+    try:
+        normalized = normalize_model_config(merged)
+    except ProviderConfigError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    kw = {
+        "provider": normalized["provider"],
+        "base_url": normalized["base_url"],
+        "model_name": str(merged.get("model_name") or "").strip(),
+        "temperature": merged.get("temperature", 0.1),
+        "max_tokens": merged.get("max_tokens", 4096),
+        "config": {**provider_config, "wire_api": normalized["wire_api"]},
+    }
+    if req.name is not None:
+        kw["name"] = req.name
+    if req.api_key is not None:
+        kw["api_key"] = req.api_key
     db.update_model(model_id, **kw)
+    app_state.reload_llm()
+    model_manager.invalidate_model_catalog_cache()
     db.audit(admin["uid"], admin["sub"], "update_model", f"{model_id}: {list(kw.keys())}")
     return {"ok": True}
 
@@ -236,6 +352,7 @@ async def delete_model(model_id: str, request: Request):
     ok = db.delete_model(model_id)
     if not ok:
         raise HTTPException(400, "无法删除默认模型")
+    model_manager.invalidate_model_catalog_cache()
     db.audit(admin["uid"], admin["sub"], "delete_model", model_id)
     return {"ok": True}
 
@@ -245,7 +362,17 @@ async def set_default_model(model_id: str, request: Request):
     admin = require_admin(request)
     db.set_default_model(model_id)
     app_state.reload_llm()
+    model_manager.invalidate_model_catalog_cache()
     db.audit(admin["uid"], admin["sub"], "set_default_model", model_id)
+    # V252：切换默认模型即刷新 Supabase 上报（App 直连兜底跟随最新默认模型）
+    try:
+        from hashmm.api import supabase_sync as _ss
+        if _ss.enabled():
+            _m = db.get_default_model()
+            if _m:
+                _ss.push_direct_llm(_m)
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -256,8 +383,22 @@ async def test_model(req: ModelCreateRequest, request: Request):
         "api_key": req.api_key, "base_url": req.base_url,
         "model_name": req.model_name, "provider": req.provider,
         "temperature": req.temperature, "max_tokens": req.max_tokens,
+        "wire_api": req.wire_api, "config": req.config,
     }
     return model_manager.test_model_connection(cfg)
+
+
+@router.post("/models/discover")
+async def discover_models(req: ModelCreateRequest, request: Request):
+    """Discover exact account-visible ids without persisting the credential."""
+    require_admin(request)
+    cfg = {
+        "api_key": req.api_key, "base_url": req.base_url,
+        "model_name": req.model_name or "_discovery_placeholder_",
+        "provider": req.provider, "wire_api": req.wire_api,
+        "config": req.config,
+    }
+    return model_manager.discover_provider_models(cfg)
 
 
 @router.get("/models/presets")
@@ -268,21 +409,9 @@ async def model_presets(request: Request):
 
 @router.get("/models/providers")
 async def list_providers(request: Request):
-    """List all supported LLM providers and their models."""
+    """Return provider protocol/capability metadata from the runtime registry."""
     require_admin(request)
-    try:
-        from hashmm.llm_provider import LLMProvider
-        return {"providers": LLMProvider.list_providers()}
-    except Exception:
-        # Fallback
-        return {"providers": [
-            {"id": "deepseek", "name": "DeepSeek", "models": ["deepseek-v4-pro", "deepseek-v4-flash"]},
-            {"id": "openai", "name": "OpenAI", "models": ["gpt-4o", "gpt-4o-mini"]},
-            {"id": "anthropic", "name": "Anthropic", "models": ["claude-sonnet-4-20250514"]},
-            {"id": "google", "name": "Google", "models": ["gemini-2.5-pro", "gemini-2.5-flash"]},
-            {"id": "zhipu", "name": "智谱AI", "models": ["glm-4-plus", "glm-4-flash"]},
-            {"id": "moonshot", "name": "Moonshot", "models": ["moonshot-v1-128k"]},
-        ]}
+    return {"providers": list_provider_specs()}
 
 
 # ── Knowledge Bases ──
@@ -319,6 +448,97 @@ async def delete_kb(kb_id: str, request: Request):
 
 
 # ── Documents ──
+
+_DOC_UPLOAD_SUFFIXES = {
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx",
+    ".txt", ".md", ".csv", ".html", ".htm",
+}
+_INVALID_DOC_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _validated_doc_id(doc_id: str) -> str:
+    """Keep document object IDs inside ``data/docs``.
+
+    IDs may contain Chinese and punctuation, so an ASCII-only regex would
+    reject legitimate data.  What matters is forbidding path semantics and
+    control bytes before any destructive filesystem operation.
+    """
+    value = str(doc_id or "").strip()
+    if (
+        not value or len(value) > 220 or value in {".", ".."}
+        or "/" in value or "\\" in value
+        or any(ord(ch) < 32 for ch in value)
+    ):
+        raise HTTPException(400, "doc_id 格式无效")
+    return value
+
+
+def _safe_doc_upload_name(raw_name: str | None) -> str:
+    raw = str(raw_name or "").replace("\\", "/")
+    base = raw.rsplit("/", 1)[-1].strip().strip(".")
+    base = _INVALID_DOC_NAME.sub("_", base).strip()
+    if not base:
+        raise HTTPException(400, "文件名无效")
+    suffix = Path(base).suffix.lower()
+    if suffix not in _DOC_UPLOAD_SUFFIXES:
+        raise HTTPException(415, f"不支持的文档类型: {suffix or '无扩展名'}")
+    if len(base) > 180:
+        keep = max(1, 180 - len(suffix))
+        base = f"{Path(base).stem[:keep]}{suffix}"
+    return base
+
+
+def _doc_upload_limit() -> int:
+    import os
+    try:
+        configured = int(os.environ.get("HASHMM_MAX_DOC_UPLOAD_BYTES", 100 * 1024 * 1024))
+    except (TypeError, ValueError):
+        configured = 100 * 1024 * 1024
+    return max(1024 * 1024, min(configured, 512 * 1024 * 1024))
+
+
+async def _stage_document_upload(upload, staging: Path) -> tuple[Path, int, str]:
+    """Stream one upload to an atomic, content-addressed staging file."""
+    import hashlib
+    import os
+    import uuid
+
+    name = _safe_doc_upload_name(getattr(upload, "filename", ""))
+    limit = _doc_upload_limit()
+    staging.mkdir(parents=True, exist_ok=True)
+    temp = staging / f".upload-{uuid.uuid4().hex}.tmp"
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with open(temp, "xb") as handle:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise HTTPException(413, f"文件超过上传上限（{limit // (1024 * 1024)} MB）")
+                digest.update(chunk)
+                handle.write(chunk)
+        if total == 0:
+            raise HTTPException(400, "不能上传空文件")
+        sha256 = digest.hexdigest()
+        target = staging / name
+        if target.exists():
+            existing = hashlib.sha256()
+            with open(target, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    existing.update(chunk)
+            if existing.hexdigest() != sha256:
+                target = staging / f"{Path(name).stem}-{sha256[:12]}{Path(name).suffix.lower()}"
+        if target.exists():
+            temp.unlink(missing_ok=True)
+        else:
+            os.replace(temp, target)
+        return target, total, sha256
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
 
 @router.get("/docs")
 async def list_docs(request: Request):
@@ -374,7 +594,10 @@ async def list_docs(request: Request):
                     if meta_file.exists():
                         try:
                             meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                            docs[did]["source_path"] = meta.get("source_path", "")
+                            # Absolute server paths are implementation details,
+                            # not useful UI data.  Expose only whether reparsing
+                            # has an available source receipt.
+                            docs[did]["source_available"] = bool(meta.get("source_path", ""))
                             docs[did]["folder"] = meta.get("folder", "")
                             docs[did]["created_at"] = meta.get("created_at", parsed_file.stat().st_mtime)
                             docs[did]["updated_at"] = meta.get("updated_at", parsed_file.stat().st_mtime)
@@ -416,6 +639,7 @@ async def list_docs(request: Request):
 async def delete_doc(doc_id: str, request: Request):
     """Delete a parsed document and its data."""
     admin = require_admin(request)
+    doc_id = _validated_doc_id(doc_id)
     import os as _os, shutil
     deleted = False
     for root_dir in [Path(_os.getcwd()), Path("/root/autodl-tmp")]:
@@ -468,6 +692,7 @@ async def delete_doc(doc_id: str, request: Request):
 async def reparse_doc(doc_id: str, request: Request):
     """Re-parse an existing document: delete old data → re-ingest with same doc_id → reload pipeline."""
     admin = require_admin(request)
+    doc_id = _validated_doc_id(doc_id)
     import os as _os
 
     # ── Step 1: Find the original file ──
@@ -692,7 +917,6 @@ async def scan_source_files(request: Request):
                 expected_doc_id = f"doc-{f.stem}"
                 files_found.append({
                     "filename": f.name,
-                    "path": str(f),
                     "size_kb": round(f.stat().st_size / 1024),
                     "location": label,
                     "expected_doc_id": expected_doc_id,
@@ -864,9 +1088,53 @@ async def batch_reparse(request: Request):
 # v6.0: Prompt Templates API
 # ═══════════════════════════════════════════════════════════════
 
+_TEMPLATE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_TEMPLATE_CATEGORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
+
+def _validated_template_id(template_id: str) -> str:
+    value = str(template_id or "").strip()
+    if not _TEMPLATE_ID_RE.fullmatch(value):
+        raise HTTPException(400, "invalid template id")
+    return value
+
+
+async def _template_payload(request: Request) -> tuple[str, str, str, list[str]]:
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "invalid JSON body") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(400, "JSON body must be an object")
+    name = str(body.get("name") or "").strip()
+    prompt = str(body.get("prompt") or "").strip()
+    category = str(body.get("category") or "general").strip().lower()
+    variables_raw = body.get("variables", [])
+    if not name or len(name) > 120:
+        raise HTTPException(400, "name is required and must be at most 120 characters")
+    if not prompt or len(prompt) > 100_000:
+        raise HTTPException(400, "prompt is required and must be at most 100000 characters")
+    if not _TEMPLATE_CATEGORY_RE.fullmatch(category):
+        raise HTTPException(400, "invalid category")
+    if not isinstance(variables_raw, list) or len(variables_raw) > 32:
+        raise HTTPException(400, "variables must be a list with at most 32 items")
+    variables: list[str] = []
+    seen: set[str] = set()
+    for raw in variables_raw:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        if len(value) > 64 or any(ord(ch) < 32 for ch in value):
+            raise HTTPException(400, "invalid template variable")
+        if value not in seen:
+            variables.append(value)
+            seen.add(value)
+    return name, category, prompt, variables
+
 @router.get("/templates")
 async def list_templates(category: str = "", request: Request = None):
     """List prompt templates, optionally filtered by category."""
+    require_admin(request)
     templates = db.list_templates(category=category if category else None)
     return {"templates": templates}
 
@@ -875,100 +1143,55 @@ async def list_templates(category: str = "", request: Request = None):
 async def create_template(request: Request):
     """Create a new prompt template."""
     admin = require_admin(request)
-    body = await request.json()
-    name = body.get("name", "").strip()
-    prompt = body.get("prompt", "").strip()
-    category = body.get("category", "general")
-    variables = body.get("variables", "")
+    name, category, prompt, variables = await _template_payload(request)
+    tid = db.create_template(name, category, prompt, variables, admin.get("sub", "admin"))
+    db.audit(admin["uid"], admin.get("sub", "admin"), "create_template", tid)
+    return {"ok": True, "id": tid, "template": next(
+        (item for item in db.list_templates() if item.get("id") == tid), None
+    )}
 
-    if not name or not prompt:
-        raise HTTPException(400, "name and prompt are required")
 
-    import uuid as _uuid
-    tid = f"tpl-{_uuid.uuid4().hex[:8]}"
-    db.save_template(tid, name, category, prompt, variables, admin.get("sub", "admin"))
-    return {"ok": True, "id": tid}
+@router.patch("/templates/{template_id}")
+async def update_template(template_id: str, request: Request):
+    """Atomically update a template without deleting its identity or usage history."""
+    admin = require_admin(request)
+    template_id = _validated_template_id(template_id)
+    name, category, prompt, variables = await _template_payload(request)
+    updated = db.update_template(template_id, name, category, prompt, variables)
+    if updated is None:
+        raise HTTPException(404, "Template not found")
+    db.audit(admin["uid"], admin.get("sub", "admin"), "update_template", template_id)
+    return {"ok": True, "id": template_id, "template": updated}
 
 
 @router.delete("/templates/{template_id}")
 async def delete_template(template_id: str, request: Request):
     """Delete a prompt template."""
-    require_admin(request)
-    with db._conn() as c:
-        c.execute("DELETE FROM prompt_templates WHERE id=?", (template_id,))
-    return {"ok": True}
+    admin = require_admin(request)
+    template_id = _validated_template_id(template_id)
+    if not db.delete_template(template_id):
+        raise HTTPException(404, "Template not found")
+    db.audit(admin["uid"], admin.get("sub", "admin"), "delete_template", template_id)
+    return {"ok": True, "id": template_id}
 
 
 @router.post("/templates/{template_id}/use")
 async def use_template(template_id: str, request: Request):
     """Increment use count for a template and return it."""
-    db.use_template(template_id)
-    with db._conn() as c:
-        row = c.execute("SELECT * FROM prompt_templates WHERE id=?", (template_id,)).fetchone()
+    require_admin(request)
+    template_id = _validated_template_id(template_id)
+    row = db.use_template(template_id)
     if not row:
         raise HTTPException(404, "Template not found")
-    return dict(row)
+    return row
 
 
-    """Delete a parsed document and its data."""
-    admin = require_admin(request)
-    import os as _os, shutil
-    deleted = False
-    for root_dir in [Path(_os.getcwd()), Path("/root/autodl-tmp")]:
-        doc_dir = root_dir / "data" / "docs" / doc_id
-        if doc_dir.exists():
-            shutil.rmtree(doc_dir)
-            deleted = True
-
-        # Remove from chunks.jsonl
-        chunks_file = root_dir / "data" / "chunks.jsonl"
-        if chunks_file.exists():
-            remaining = []
-            with open(chunks_file, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line.strip())
-                        if entry.get("doc_id") != doc_id:
-                            remaining.append(line)
-                    except Exception:
-                        remaining.append(line)
-            with open(chunks_file, "w", encoding="utf-8") as f:
-                f.writelines(remaining)
-
-        if deleted:
-            break
-
-    # Remove from KG
-    try:
-        from hashmm.kg.storage import KGStorage
-        storage = KGStorage()
-        if storage.exists():
-            kg, cm = storage.load()
-            kg.remove_by_source(doc_id)
-            storage.save(kg, cm)
-    except Exception as _e:
-        log_suppressed(logger, _e)
-
-    # v6.0: Remove from FAISS + BM25 indexes
-    try:
-        from hashmm.retriever_bridge import get_pipeline
-        pipe = get_pipeline()
-        if pipe:
-            removed_v = pipe.vector_index.remove_by_doc(doc_id)
-            pipe.bm25_index.remove_by_doc(doc_id)
-            pipe.vector_index.save()
-            pipe.bm25_index.save()
-            logger.info(f"Removed {removed_v} vectors for {doc_id}")
-    except Exception as _e:
-        logger.debug(f"Index cleanup failed: {_e}")
-
-    db.audit(admin["uid"], admin["sub"], "delete_doc", doc_id)
-    return {"ok": deleted, "doc_id": doc_id}
-
-
+# V308：本端点写好了却【丢了装饰器】，从未注册进路由 → 前端永远调不到。补回注册。
+@router.get("/docs/{doc_id}/detail")
 async def doc_detail(doc_id: str, request: Request):
     """Get full parsed document detail — sections, tables, images, quality."""
     require_admin(request)
+    doc_id = _validated_doc_id(doc_id)
     import os as _os
     for root_dir in [Path(_os.getcwd()), Path("/root/autodl-tmp")]:
         doc_dir = root_dir / "data" / "docs" / doc_id
@@ -1026,12 +1249,11 @@ async def upload_and_parse(request: Request):
     if not file:
         raise HTTPException(400, "No file uploaded")
 
-    # Save to staging
+    # Save to staging without trusting filename path components or loading an
+    # unbounded request body into RAM.
     staging = Path("data/staging")
-    staging.mkdir(parents=True, exist_ok=True)
-    filepath = staging / file.filename
-    content = await file.read()
-    filepath.write_bytes(content)
+    filepath, upload_bytes, upload_sha256 = await _stage_document_upload(file, staging)
+    display_name = _safe_doc_upload_name(getattr(file, "filename", ""))
 
     # Run ingest
     try:
@@ -1048,7 +1270,7 @@ async def upload_and_parse(request: Request):
             pipeline.community_mgr.set_llm(app_state.llm_fn)
 
         result = await asyncio.to_thread(pipeline.ingest_file, filepath, extract_kg=True)
-        db.audit(admin["uid"], admin["sub"], "upload_and_parse", file.filename)
+        db.audit(admin["uid"], admin["sub"], "upload_and_parse", display_name)
 
         # v11: Save source_path in doc metadata for future reparse
         try:
@@ -1058,7 +1280,7 @@ async def upload_and_parse(request: Request):
                 if meta_path.parent.exists():
                     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
                     meta["source_path"] = str(filepath.resolve())
-                    meta["filename"] = file.filename
+                    meta["filename"] = display_name
                     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
                     break
         except Exception as _e:
@@ -1077,6 +1299,11 @@ async def upload_and_parse(request: Request):
         return {
             "ok": True,
             "result": result.to_dict(),
+            "upload": {
+                "filename": display_name,
+                "bytes": upload_bytes,
+                "sha256": upload_sha256,
+            },
             "message": f"解析完成: {result.num_chunks} 切片, "
                        f"{result.num_entities} 实体, {result.num_relations} 关系",
         }
@@ -1340,7 +1567,7 @@ async def rebuild_index(request: Request):
         progress(message="索引重建完成")
         return {"reloaded": True, "detail": result}
 
-    job_id = jobs.spawn("index_rebuild", _worker)
+    job_id = jobs.spawn("index_rebuild", _worker, owner_id=admin["uid"])
     db.audit(admin["uid"], admin["sub"], "index_rebuild", f"job={job_id}")
     return {"ok": True, "job_id": job_id}
 
@@ -1433,7 +1660,7 @@ async def batch_index(request: Request):
 
         return {"total": len(files), "ok": ok, "fail": fail}
 
-    job_id = jobs.spawn("batch_index", _worker, total=len(doc_ids))
+    job_id = jobs.spawn("batch_index", _worker, total=len(doc_ids), owner_id=admin["uid"])
     db.audit(admin["uid"], admin["sub"], "batch_index", f"job={job_id}")
     return {"ok": True, "job_id": job_id}
 
@@ -1463,11 +1690,31 @@ async def usage_summary(request: Request, days: int = 30):
     return usage.summary(days=days)
 
 
-@router.get("/usage/me", summary="当前用户用量", tags=["Admin"])
+@router.get("/usage/me", summary="当前用户用量", tags=["User"])
 async def usage_me(request: Request, days: int = 30):
-    user = require_admin(request)
+    # V260: 查自己的用量只需登录——此前误加 require_admin，导致普通用户看自己的
+    # Token/成本被 403 挡下（用户实测"有的功能只有管理员能看"的一例）。
+    user = require_auth(request)
     from hashmm.api import usage
     return usage.user_quota_used(user["uid"], days=days)
+
+
+@router.get("/usage/overview", summary="当前可见范围的使用概览", tags=["User"])
+async def usage_overview(request: Request, days: int = 30):
+    """Stable cross-client usage view: team for admins, personal otherwise."""
+    user = require_auth(request)
+    from hashmm.api import usage
+    return usage.overview_for(user, days=days)
+
+
+@router.get("/audit/mine", summary="当前用户操作日志", tags=["User"])
+async def audit_mine(request: Request, limit: int = 200):
+    """V270 用户版控制台：普通用户查看**自己**的操作日志（登录即可）。
+    复用 query_audit_logs 的 user_id 过滤——不新造查询、口径与管理员日志页一致；
+    只回自己的行，越权面为零。"""
+    user = require_auth(request)
+    res = db.query_audit_logs(user_id=user["uid"], limit=max(1, min(limit, 500)))
+    return res if isinstance(res, dict) else {"logs": res}
 
 
 @router.get("/quality/dashboard", summary="线上质量大盘", tags=["Admin"])
@@ -1533,10 +1780,21 @@ async def create_scheduled(request: Request):
     action = (body.get("action") or "").strip()
     if not action:
         raise HTTPException(400, "缺少 action")
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        raise HTTPException(400, "params 必须是对象")
+    params = dict(params)
+    conv_id = str(params.get("conv_id") or "").strip()
+    if conv_id:
+        # 定时结果会写回 Chat，因此创建时必须验证目标会话，并绑定当时的真实 owner。
+        # 执行时还会复核 owner，避免会话删除/ID 复用后把结果写给另一个用户。
+        conv = require_conv_access(request, conv_id)
+        params["conv_id"] = conv_id
+        params["conv_owner_uid"] = str(conv.get("user_id") or "")
     from hashmm import scheduler
     try:
         t = scheduler.create_task(
-            action=action, name=body.get("name", ""), params=body.get("params") or {},
+            action=action, name=body.get("name", ""), params=params,
             schedule_kind=body.get("schedule_kind", "interval"),
             interval_seconds=int(body.get("interval_seconds", 3600)),
             daily_at=body.get("daily_at", ""),
@@ -1941,6 +2199,122 @@ async def delete_eval_case(case_id: str, request: Request):
     evaluator = RAGEvaluator()
     removed = evaluator.remove_case(case_id)
     return {"ok": removed}
+
+
+@router.get("/eval/feedback-candidates",
+            summary="列出真实流量反馈产生的待复核用例",
+            tags=["Evaluation"])
+async def list_feedback_candidates(request: Request, status: str = "pending",
+                                   limit: int = 100):
+    """V349 EDD flywheel: production failures awaiting human curation."""
+    require_admin(request)
+    allowed = {"", "pending", "reviewing", "approved", "dismissed", "positive", "withdrawn"}
+    if status not in allowed:
+        raise HTTPException(400, "不支持的反馈状态")
+    cases = db.list_feedback_cases(status=status, limit=limit)
+    return {
+        "schema": "hashmm.feedback-review.v1",
+        "cases": cases,
+        "count": len(cases),
+        "reason_options": db.FEEDBACK_FAILURE_REASONS,
+        "policy": "负反馈只生成候选；人工填写可信参考答案后才进入 held-out 回归集。",
+    }
+
+
+@router.post("/eval/feedback-candidates/{candidate_id}",
+             summary="复核真实流量反馈并决定是否进入回归集",
+             tags=["Evaluation"])
+async def review_feedback_candidate(candidate_id: str, request: Request):
+    admin = require_admin(request)
+    body = await request.json()
+    decision = str(body.get("decision") or "").lower()
+    if decision not in ("approve", "dismiss"):
+        raise HTTPException(400, "decision 仅支持 approve 或 dismiss")
+    candidate = db.get_feedback_case(candidate_id)
+    if not candidate or candidate.get("status") != "pending":
+        raise HTTPException(404, "待复核用例不存在")
+    reference = str(body.get("reference_answer") or "").strip()
+    eval_case_id = ""
+    claimed = db.claim_feedback_case(case_id=candidate_id, reviewer=admin["uid"])
+    if not claimed:
+        raise HTTPException(409, "该用例已被其他管理员处理")
+    if decision == "approve":
+        if len(reference) < 5:
+            db.release_feedback_case_claim(case_id=candidate_id, reviewer=admin["uid"])
+            raise HTTPException(400, "加入回归集前必须填写可信参考答案")
+        try:
+            from hashmm.evaluation.feedback_loop import build_reviewed_eval_case
+            eval_case = build_reviewed_eval_case(candidate, reference)
+            eval_case_id = eval_case["id"]
+            from hashmm.evaluation import RAGEvaluator
+            RAGEvaluator().add_case(eval_case)
+        except Exception:
+            db.release_feedback_case_claim(case_id=candidate_id, reviewer=admin["uid"])
+            raise
+    reviewed = db.review_feedback_case(
+        case_id=candidate_id, decision=decision, reviewer=admin["uid"],
+        reference_answer=reference, eval_case_id=eval_case_id,
+        expected_status="reviewing",
+    )
+    if not reviewed:
+        if eval_case_id:
+            from hashmm.evaluation import RAGEvaluator
+            RAGEvaluator().remove_case(eval_case_id)
+        db.release_feedback_case_claim(case_id=candidate_id, reviewer=admin["uid"])
+        raise HTTPException(409, "该用例已被其他管理员处理")
+    db.audit(admin["uid"], admin["sub"], "eval_feedback_review",
+             f"{decision}:{candidate_id}:{eval_case_id}")
+    return {"ok": True, "feedback_case": reviewed, "eval_case_id": eval_case_id}
+
+
+@router.post("/eval/redteam",
+             summary="运行注入防御红队评测",
+             description="用红队用例验证间接提示注入防御（不可信区隔离 + 外泄闸）是否有效",
+             tags=["Evaluation"])
+async def run_redteam_endpoint(request: Request):
+    """V300 第五期：注入防御红队。验证第二期加的注入防线是否真的有效——有防御没验证等于没防御。"""
+    admin = require_admin(request)
+    from hashmm.evaluation.injection_redteam import run_redteam
+    report = run_redteam()
+    db.audit(admin["uid"], admin["sub"], "eval_redteam", report.get("verdict", ""))
+    return report
+
+
+@router.post("/eval/ir",
+             summary="运行检索 IR 评测（Recall@k / nDCG / MRR）",
+             description="对 query→相关 doc_id 金标准跑经典 IR 指标，衡量检索器排序质量（独立于答案生成）",
+             tags=["Evaluation"])
+async def run_ir_eval_endpoint(request: Request):
+    """V211 差距一：检索侧 IR 评测。用 ir_cases.json 的金标准跑 Recall@k/nDCG/MRR。
+
+    Body 可选 {"ks": [1,3,5,10]}。返回 {n, summary, per_case}。
+    """
+    admin = require_admin(request)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception as _e:
+        log_suppressed(logger, _e)
+    ks = tuple(int(x) for x in (body.get("ks") or [1, 3, 5, 10]))
+
+    from hashmm.evaluation.ir_eval import load_ir_cases, run_ir_eval
+    from hashmm.chat_retrieval import get_chat_retrieval
+    chat_rag = get_chat_retrieval()
+
+    def _retrieve(query: str, k: int = 10):
+        msgs = [{"role": "user", "content": query}]
+        try:
+            _enh, sources, _strat = chat_rag.enhance(query, msgs, retrieval_mode="mix")
+            return sources or []
+        except Exception as _e:
+            log_suppressed(logger, _e)
+            return []
+
+    cases = load_ir_cases()
+    import asyncio
+    report = await asyncio.to_thread(run_ir_eval, cases, _retrieve, ks)
+    db.audit(admin["uid"], admin["sub"], "eval_ir", f"n={report.get('n')}")
+    return report
 
 
 @router.post("/eval/run",
@@ -2363,7 +2737,7 @@ async def export_all_data(request: Request):
     # Skills
     try:
         from hashmm.evolution.skill_manager import get_skill_manager
-        data["data"]["skills"] = get_skill_manager().list_skills()
+        data["data"]["skills"] = get_skill_manager().list_skills(include_all=True)
     except Exception:
         data["data"]["skills"] = []
 

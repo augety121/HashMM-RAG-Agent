@@ -88,16 +88,22 @@ def _run(llm, conv):
     return asyncio.run(_go())
 
 
-def test_verify_phase_catches_and_fixes_broken_py():
+def test_verify_phase_catches_and_fixes_broken_py(monkeypatch):
     import shutil
     from hashmm.api.database import CONV_FILES_ROOT
+    # This test verifies the compile/fix loop, not semantic tool retrieval.
+    # Other full-suite tests may enable retrieval globally; keep create_file
+    # deterministically available so suite order cannot change this contract.
+    monkeypatch.setenv("HASHMM_TOOL_RETRIEVAL", "0")
     conv = "cVerifyFix"
     shutil.rmtree(CONV_FILES_ROOT / conv, ignore_errors=True)
     llm = _FixerLLM()
     events = _run(llm, conv)
 
     verifies = [ed for et, ed in events if et == "trace" and ed.get("node") == "verify"]
-    assert any("编译失败" in v["detail"] for v in verifies)      # 拦截有迹可循
+    assert any("编译失败" in v["detail"] for v in verifies), (
+        f"应产生编译失败验证事件；实际事件：{events!r}"
+    )                                                            # 拦截有迹可循
     assert any("验证通过" in v["detail"] for v in verifies)      # 修复后放行
     assert llm.saw_verify_feedback                                # 修复指令真的进了上下文
     tokens = "".join(ed for et, ed in events if et == "token")

@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.text.BasicTextField
@@ -49,7 +50,6 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.ContentPaste
-import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -100,6 +100,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hashmm.app.data.remote.RemoteDevice
 import com.hashmm.app.ui.components.HashMascot
+import com.hashmm.app.ui.components.pressBounce
 import org.json.JSONObject
 import android.graphics.Matrix
 import org.webrtc.RendererCommon
@@ -126,7 +127,15 @@ fun RemoteControlScreen(
     val context = LocalContext.current
 
     LaunchedEffect(Unit) { viewModel.connect() }
-    BackHandler { if (state.stage == RemoteStage.STREAMING) viewModel.backToDeviceList() else { viewModel.disconnect(); onBack() } }
+    BackHandler {
+        if (state.stage in setOf(
+                RemoteStage.APPROVAL_PENDING, RemoteStage.SESSION_AUTHORIZED,
+                RemoteStage.NEGOTIATING, RemoteStage.WAITING_FIRST_FRAME,
+                RemoteStage.STREAMING,
+            )) {
+            viewModel.backToDeviceList()
+        } else { viewModel.disconnect(); onBack() }
+    }
 
     // 进入投屏：锁横屏 + 沉浸式全屏（隐藏状态栏/导航栏）；退出自动还原。
     val streaming = state.stage == RemoteStage.STREAMING
@@ -173,22 +182,33 @@ fun RemoteControlScreen(
                 RemoteStage.STREAMING -> {
                     var controlMode by remember { mutableStateOf("trackpad") }   // trackpad=虚拟鼠标(拖动移光标+箭头)；touch=触屏绝对点击
                     var fillMode by remember { mutableStateOf(false) }         // 默认「适应」=完整显示整个屏幕（不裁边）；可在设置切「铺满」
-                    val cursor = remember { mutableStateOf(androidx.compose.ui.geometry.Offset(0.5f, 0.5f)) } // 归一化虚拟光标
-                    RemoteVideo(viewModel = viewModel, track = track, relayFrame = relayFrame, state = state, controlMode = controlMode, cursor = cursor, fillMode = fillMode)
+                    val cursor = remember { mutableStateOf(androidx.compose.ui.geometry.Offset(0.5f, 0.5f)) } // 归一化虚拟光标（相对视频内容区 0..1）
+                    // 拖选起点（内容区 0..1000）：null=未在拖选。长按虚拟鼠标左键=定起点；移动光标后再点左键=发一次 left_click_drag。
+                    val dragStart = remember { mutableStateOf<Pair<Int, Int>?>(null) }
+                    // V252: 缩放状态提升到此层——虚拟鼠标移光标时 RemoteVideo 才能做"视口跟随"
+                    //（放大后光标可达整个远程屏幕，视口自动平移追光标 = "页面外还有个看不见的大框"）。
+                    val zoomScaleState = remember { mutableFloatStateOf(1f) }
+                    val zoomPanState = remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                    RemoteVideo(viewModel = viewModel, track = track, relayFrame = relayFrame, state = state, controlMode = controlMode, cursor = cursor, fillMode = fillMode, dragStart = dragStart,
+                        zoomScaleState = zoomScaleState, zoomPanState = zoomPanState)
                     StreamingControls(
                         viewModel = viewModel,
                         state = state,
                         cursor = cursor,
+                        dragStart = dragStart,
                         controlMode = controlMode,
                         onModeChange = { controlMode = it },
                         fillMode = fillMode,
                         onFillModeChange = { fillMode = it },
-                        onExit = { viewModel.backToDeviceList() },
+                        onExit = { viewModel.exitStreaming() },
                     )
                 }
                 RemoteStage.PICK_DEVICE -> DevicePicker(
                     devices = state.devices,
                     relayOn = state.relayOn,
+                    protocol = state.protocol,
+                    ownerFingerprint = state.ownerFingerprint,
+                    lastSnapshotAt = state.lastSnapshotAt,
                     onToggleRelay = { viewModel.setRemoteRelay(!state.relayOn) },
                     onPick = { viewModel.selectDevice(it.id) },
                     onRetry = { viewModel.refreshDevices() }
@@ -214,6 +234,10 @@ private fun RemoteVideo(
     controlMode: String,
     cursor: androidx.compose.runtime.MutableState<androidx.compose.ui.geometry.Offset>,
     fillMode: Boolean,
+    dragStart: androidx.compose.runtime.MutableState<Pair<Int, Int>?>,
+    // V252: 缩放状态由父级提升传入（虚拟鼠标与视频区共享）——光标动、视口才能跟。
+    zoomScaleState: androidx.compose.runtime.MutableFloatState,
+    zoomPanState: androidx.compose.runtime.MutableState<androidx.compose.ui.geometry.Offset>,
 ) {
     // 视频原生分辨率（由 RendererEvents 回填）用于触摸归一化
     var frameW by remember { mutableStateOf(state.remoteW) }
@@ -231,9 +255,9 @@ private fun RemoteVideo(
     // 离开投屏时释放渲染器的 EGL 资源
     DisposableEffect(Unit) { onDispose { svr?.release() } }
 
-    // 缩放状态先声明（下面的 LaunchedEffect 复位会用到，Kotlin 局部变量必须先声明后用）
-    var zoomScale by remember { mutableFloatStateOf(1f) }
-    var zoomPan by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    // V252: 缩放状态改为父级共享（委托读写，行为与旧局部变量完全一致）
+    var zoomScale by zoomScaleState
+    var zoomPan by zoomPanState
 
     // 中继模式下用中继帧的宽高做触摸归一化（帧保留远端屏幕宽高比）
     LaunchedEffect(relayFrame) {
@@ -268,6 +292,8 @@ private fun RemoteVideo(
                         else send(viewModel, "double_click", mapX(o.x), mapY(o.y), boxW, boxH, frameW, frameH, fillMode)
                     },
                     onLongPress = { o ->
+                        // 拖选进行中：长按不再当右键（避免拖选途中误触发右键菜单）
+                        if (dragStart.value != null) return@detectTapGestures
                         if (controlMode == "trackpad") { val (x, y) = curXY(); viewModel.sendClickAt("right_click", x, y) }
                         else send(viewModel, "right_click", mapX(o.x), mapY(o.y), boxW, boxH, frameW, frameH, fillMode)
                     },
@@ -275,20 +301,24 @@ private fun RemoteVideo(
             }
             .pointerInput(controlMode, frameW, frameH, boxW, boxH) {
                 if (controlMode == "trackpad") {
-                    // 虚拟鼠标：未放大时单指拖=相对移光标；放大后单指拖=平移画面（滑动看全屏不同部位）
+                    // V252 虚拟鼠标：单指拖**始终移光标**——包括放大后。
+                    // 旧行为（放大后单指拖=平移画面）把光标困在了当前可视框里，"只能操作屏幕内"；
+                    // 现在光标在整个远程屏幕（内容坐标 0..1）自由移动，配合上面的视口跟随，
+                    // 光标走到可视边缘时画面自动平移追上——放大只是"放大镜"，可达范围不缩水。
+                    // 想纯平移画面（不动光标）：双指拖（下方 transform 手势，保留原样）。
                     detectDragGestures(
                         onDrag = { change, drag ->
                             change.consume()
-                            if (zoomScale > 1.01f) {
-                                zoomPan = zoomPan + drag
-                            } else {
-                                val w = if (boxW > 0) boxW else 1
-                                val h = if (boxH > 0) boxH else 1
-                                val nx = (cursor.value.x + drag.x / w * 1.8f).coerceIn(0f, 1f)
-                                val ny = (cursor.value.y + drag.y / h * 1.8f).coerceIn(0f, 1f)
-                                cursor.value = androidx.compose.ui.geometry.Offset(nx, ny)
-                                viewModel.sendMouseMove((nx * 1000).toInt(), (ny * 1000).toInt())
-                            }
+                            // 增量按"内容区"尺寸换算：不同机型/适应铺满下移动手感一致，且与箭头绘制同一坐标系。
+                            // 放大时再除以 zoomScale：手指移动 1cm，光标在**看到的画面**里也移动约 1cm——精细操作更稳。
+                            val cr = contentRect(boxW, boxH, frameW, frameH, fillMode)
+                            val cw = if (cr[2] > 1f) cr[2] else 1f
+                            val ch = if (cr[3] > 1f) cr[3] else 1f
+                            val z = if (zoomScale > 1f) zoomScale else 1f
+                            val nx = (cursor.value.x + drag.x / cw * 1.8f / z).coerceIn(0f, 1f)
+                            val ny = (cursor.value.y + drag.y / ch * 1.8f / z).coerceIn(0f, 1f)
+                            cursor.value = androidx.compose.ui.geometry.Offset(nx, ny)
+                            viewModel.sendMouseMove((nx * 1000).toInt(), (ny * 1000).toInt())
                         },
                     )
                 } else {
@@ -375,29 +405,235 @@ private fun RemoteVideo(
                 },
             )
         }
-        // 远程光标箭头：始终画在 cursor 处（随拖动移动）。帧分辨率未知时退化为按整框计算，保证箭头一定可见。
+        // 远程光标箭头：始终画在 cursor 处（随拖动移动）。cursor 是"内容区归一化"坐标，
+        // 绘制必须经 contentRect 映射回屏幕——适应/铺满统一一套数学，箭头指哪、点击就落哪。
         if (boxW > 0 && boxH > 0) {
-            val hasFrame = frameW > 0 && frameH > 0
-            val fa = if (hasFrame) frameW.toFloat() / frameH else boxW.toFloat() / boxH
-            val ba = boxW.toFloat() / boxH
-            val fitW = if (fillMode || !hasFrame) boxW.toFloat() else (if (fa > ba) boxW.toFloat() else boxH * fa)
-            val fitH = if (fillMode || !hasFrame) boxH.toFloat() else (if (fa > ba) boxW / fa else boxH.toFloat())
-            val fitLeft = (boxW - fitW) / 2f
-            val fitTop = (boxH - fitH) / 2f
-            val ax = fitLeft + cursor.value.x * fitW
-            val ay = fitTop + cursor.value.y * fitH
+            val cr = contentRect(boxW, boxH, frameW, frameH, fillMode)
+            val ax = cr[0] + cursor.value.x * cr[2]
+            val ay = cr[1] + cursor.value.y * cr[3]
             val axT = boxW / 2f + (ax - boxW / 2f) * zoomScale + zoomPan.x
             val ayT = boxH / 2f + (ay - boxH / 2f) * zoomScale + zoomPan.y
-            Canvas(Modifier.offset { IntOffset(axT.toInt(), ayT.toInt()) }.size(26.dp)) {
-                val w = size.width; val h = size.height
-                val p = Path().apply {
-                    moveTo(w * 0.04f, h * 0.02f); lineTo(w * 0.04f, h * 0.80f)
-                    lineTo(w * 0.26f, h * 0.60f); lineTo(w * 0.40f, h * 0.95f)
-                    lineTo(w * 0.54f, h * 0.89f); lineTo(w * 0.39f, h * 0.55f)
-                    lineTo(w * 0.66f, h * 0.55f); close()
+            // 拖选橡皮筋：起点圆点 + 起点→当前光标的虚线（同样经缩放/平移补偿），用户随时看得见"从哪拖到哪"
+            dragStart.value?.let { (sx1000, sy1000) ->
+                val sx = cr[0] + sx1000 / 1000f * cr[2]
+                val sy = cr[1] + sy1000 / 1000f * cr[3]
+                val sxT = boxW / 2f + (sx - boxW / 2f) * zoomScale + zoomPan.x
+                val syT = boxH / 2f + (sy - boxH / 2f) * zoomScale + zoomPan.y
+                Canvas(Modifier.matchParentSize()) {
+                    drawLine(
+                        color = Color(0xE64F86C6),
+                        start = androidx.compose.ui.geometry.Offset(sxT, syT),
+                        end = androidx.compose.ui.geometry.Offset(axT, ayT),
+                        strokeWidth = 4f,
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(14f, 10f)),
+                    )
+                    drawCircle(Color(0xE64F86C6), radius = 10f, center = androidx.compose.ui.geometry.Offset(sxT, syT))
+                    drawCircle(Color.White, radius = 4f, center = androidx.compose.ui.geometry.Offset(sxT, syT))
                 }
-                drawPath(p, Color(0xF2000000), style = Stroke(width = 6f))   // 深色描边（任何底色上都看得见）
-                drawPath(p, Color.White)                                      // 白色填充
+            }
+            // V260: 恢复"虚拟小鼠标"——V253 重构时被换成了纯箭头（用户实测点名要回来）。
+            // 组合造型：左上箭头尖 = 精确落点（不牺牲精度），右下挂一枚精致小鼠标身体
+            // （圆角椭圆 + 中缝 + 滚轮），与大鼠标同款灰蓝描边，好看且一眼认出是"鼠标"。
+            Canvas(Modifier.offset { IntOffset(axT.toInt(), ayT.toInt()) }.size(40.dp)) {
+                val w = size.width; val h = size.height
+                // 箭头（占左上 45% 区域，尖端=画布原点=落点）
+                val a = Path().apply {
+                    moveTo(w * 0.02f, h * 0.01f); lineTo(w * 0.02f, h * 0.37f)
+                    lineTo(w * 0.12f, h * 0.28f); lineTo(w * 0.18f, h * 0.44f)
+                    lineTo(w * 0.25f, h * 0.41f); lineTo(w * 0.18f, h * 0.26f)
+                    lineTo(w * 0.30f, h * 0.26f); close()
+                }
+                drawPath(a, Color(0xF2000000), style = Stroke(width = 5f))
+                drawPath(a, Color.White)
+                // 小鼠标身体（右下，圆角椭圆）
+                val ink = Color(0xFF6B7A94)
+                val bodyL = w * 0.40f; val bodyT = h * 0.36f
+                val bodyW = w * 0.52f; val bodyH = h * 0.60f
+                val rr = androidx.compose.ui.geometry.RoundRect(
+                    bodyL, bodyT, bodyL + bodyW, bodyT + bodyH,
+                    androidx.compose.ui.geometry.CornerRadius(bodyW * 0.5f, bodyH * 0.42f))
+                val body = Path().apply { addRoundRect(rr) }
+                drawPath(body, Color(0xF5F0F4FB))
+                drawPath(body, ink, style = Stroke(width = 4f))
+                // 中缝（上半）+ 滚轮
+                drawLine(ink, androidx.compose.ui.geometry.Offset(bodyL + bodyW / 2f, bodyT + 3f),
+                    androidx.compose.ui.geometry.Offset(bodyL + bodyW / 2f, bodyT + bodyH * 0.42f), strokeWidth = 3f)
+                drawRoundRect(ink,
+                    topLeft = androidx.compose.ui.geometry.Offset(bodyL + bodyW / 2f - w * 0.035f, bodyT + bodyH * 0.14f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.07f, bodyH * 0.22f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.035f, w * 0.035f))
+            }
+            // ── V253 UU 式虚拟大鼠标（完全对照 UU 远程重画）─────────────────────
+            // 交互模型重构：**鼠标本体 = 光标本身**。上面那枚白箭头就"挂"在本体左上角，
+            // 箭头尖端即点击落点——拖本体任何区域（左右键面上滑、掌托）都是在移光标；
+            // 光标被其他途径移动（在屏幕上单指拖）时，本体自动吸附跟去。
+            // 尖端可达屏幕四角（本体允许出屏），"边缘不好点"从根上解决；
+            // 放大后想看别处：双指平移画面，再把鼠标拖过去点——分工明确，无落点漂移。
+            if (controlMode == "trackpad") {
+                var mouseOpen by remember { mutableStateOf(true) }
+                // 统一移动入口：给尖端一个屏幕位移 → clamp 全屏 → 逆变换回内容坐标 → 上报
+                fun moveTip(dx: Float, dy: Float) {
+                    val cr2 = contentRect(boxW, boxH, frameW, frameH, fillMode)
+                    if (cr2[2] < 1f || cr2[3] < 1f) return
+                    val z = if (zoomScale > 0f) zoomScale else 1f
+                    // 当前尖端屏幕坐标（每次现算，读最新 state——手势闭包长驻，不能吃组合期快照）
+                    val ax0 = cr2[0] + cursor.value.x * cr2[2]
+                    val ay0 = cr2[1] + cursor.value.y * cr2[3]
+                    val tx = (boxW / 2f + (ax0 - boxW / 2f) * z + zoomPan.x + dx).coerceIn(0f, boxW.toFloat())
+                    val ty = (boxH / 2f + (ay0 - boxH / 2f) * z + zoomPan.y + dy).coerceIn(0f, boxH.toFloat())
+                    // 屏幕 → 未变换画面 → 内容归一化（与点击落点同一套数学）
+                    val ax1 = (tx - zoomPan.x - boxW / 2f) / z + boxW / 2f
+                    val ay1 = (ty - zoomPan.y - boxH / 2f) / z + boxH / 2f
+                    val nx = ((ax1 - cr2[0]) / cr2[2]).coerceIn(0f, 1f)
+                    val ny = ((ay1 - cr2[1]) / cr2[3]).coerceIn(0f, 1f)
+                    cursor.value = androidx.compose.ui.geometry.Offset(nx, ny)
+                    viewModel.sendMouseMove((nx * 1000).toInt(), (ny * 1000).toInt())
+                }
+                fun cur1000() = (cursor.value.x * 1000).toInt().coerceIn(0, 1000) to (cursor.value.y * 1000).toInt().coerceIn(0, 1000)
+                fun leftClick() {
+                    val (x, y) = cur1000()
+                    val st = dragStart.value
+                    if (st == null) viewModel.sendClickAt("left_click", x, y)
+                    else { dragStart.value = null; viewModel.sendDrag(st.first, st.second, x, y) }   // 粘滞拖选收尾
+                }
+                // V254: 进入触控板模式先把被控端光标对齐到 App 光标处——
+                // 否则 Windows 真实光标停在别处，看起来像"箭头和大鼠标是分开的"。
+                LaunchedEffect(Unit) {
+                    val (x, y) = cur1000(); viewModel.sendMouseMove(x, y)
+                }
+                if (mouseOpen) {
+                    val ink = Color(0xFF6B7A94)          // UU 同款灰蓝线条
+                    val line = Color(0x596B7A94)
+                    val bodyShape = RoundedCornerShape(topStart = 56.dp, topEnd = 56.dp, bottomStart = 44.dp, bottomEnd = 44.dp)
+                    val dragging = dragStart.value != null
+                    var pressL by remember { mutableStateOf(false) }
+                    var pressR by remember { mutableStateOf(false) }
+                    // V260 本体定位修复：此前偏移 +30/+42 是**像素**、而光标图形是 dp（高密屏
+                // ≈2.6-3x），本体压在箭头/小鼠标上面——用户看到"箭头在大鼠标下面"。改 dp 换算，
+                // 并加 smart-flip：尖端靠屏幕右/下边缘时本体自动翻到左/上侧，保证永远完整
+                // 在屏内（治"大鼠标缩在右下角拉不出来"）。
+                    val den = androidx.compose.ui.platform.LocalDensity.current
+                    val bodyWpx = with(den) { 116.dp.toPx() }
+                    val bodyHpx = with(den) { 148.dp.toPx() }
+                    val offX = with(den) { 26.dp.toPx() }   // > 小鼠标画布宽 40dp*0.65 有效区
+                    val offY = with(den) { 30.dp.toPx() }
+                    val gap = with(den) { 4.dp.toPx() }
+                    val bx = if (axT + offX + bodyWpx <= boxW) axT + offX
+                             else (axT - bodyWpx - gap).coerceAtLeast(0f)
+                    val by = if (ayT + offY + bodyHpx <= boxH) ayT + offY
+                             else (ayT - bodyHpx - gap).coerceAtLeast(0f)
+                    Box(Modifier.offset { IntOffset(bx.toInt(), by.toInt()) }) {
+                        Box(
+                            Modifier.size(116.dp, 148.dp).clip(bodyShape)
+                                .background(Brush.verticalGradient(listOf(Color(0xF5F0F4FB), Color(0xEEDDE5F2))))
+                                .border(2.dp, Color(0xCCB9C6DB), bodyShape),
+                        ) {
+                            Column(Modifier.fillMaxSize()) {
+                                // 上半：左右键（无文字，UU 同款留白）——tap=点击；面上滑动=移光标
+                                Row(Modifier.fillMaxWidth().weight(0.46f)) {
+                                    Box(Modifier.weight(1f).fillMaxHeight()
+                                        .background(if (pressL) Color(0x3D4F86C6) else Color.Transparent)
+                                        .pointerInput(Unit) {
+                                            detectTapGestures(
+                                                onPress = { pressL = true; tryAwaitRelease(); pressL = false },
+                                                onTap = { leftClick() },
+                                            )
+                                        }
+                                        .pointerInput(Unit) { detectDragGestures { ch, d -> ch.consume(); moveTip(d.x, d.y) } })
+                                    Box(Modifier.width(1.5.dp).fillMaxHeight().background(line))
+                                    Box(Modifier.weight(1f).fillMaxHeight()
+                                        .background(if (pressR) Color(0x3D4F86C6) else Color.Transparent)
+                                        .pointerInput(Unit) {
+                                            detectTapGestures(
+                                                onPress = { pressR = true; tryAwaitRelease(); pressR = false },
+                                                onTap = { val (x, y) = cur1000(); viewModel.sendClickAt("right_click", x, y) },
+                                            )
+                                        }
+                                        .pointerInput(Unit) { detectDragGestures { ch, d -> ch.consume(); moveTip(d.x, d.y) } })
+                                }
+                                Box(Modifier.fillMaxWidth().height(1.5.dp).background(line))
+                                // 下半：掌托（拖=移光标）
+                                Box(Modifier.fillMaxWidth().weight(0.54f)
+                                    .pointerInput(Unit) { detectDragGestures { ch, d -> ch.consume(); moveTip(d.x, d.y) } })
+                            }
+                            // 滚轮胶囊（顶中，▲▼ 两可点半区；UU 同款白底描边）
+                            Column(
+                                Modifier.align(Alignment.TopCenter).padding(top = 16.dp)
+                                    .size(28.dp, 50.dp).clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFFF7FAFE)).border(2.dp, ink, RoundedCornerShape(14.dp)),
+                            ) {
+                                Box(Modifier.fillMaxWidth().weight(1f).clickable { viewModel.sendScroll("up", 3) }, contentAlignment = Alignment.Center) {
+                                    Canvas(Modifier.size(9.dp)) {
+                                        val pth = Path().apply { moveTo(size.width / 2f, 0f); lineTo(size.width, size.height); lineTo(0f, size.height); close() }
+                                        drawPath(pth, ink)
+                                    }
+                                }
+                                Box(Modifier.fillMaxWidth().weight(1f).clickable { viewModel.sendScroll("down", 3) }, contentAlignment = Alignment.Center) {
+                                    Canvas(Modifier.size(9.dp)) {
+                                        val pth = Path().apply { moveTo(0f, 0f); lineTo(size.width, 0f); lineTo(size.width / 2f, size.height); close() }
+                                        drawPath(pth, ink)
+                                    }
+                                }
+                            }
+                            // 拖动键（滚轮下方胶囊，UU 同款"两横线"）：
+                            //   按住并拖 = 实时拖动（按下记起点→拖动移光标→松手发 left_click_drag）
+                            //   单击 = 粘滞拖选开关（点亮→自由移光标→点左键或再点此键完成）
+                            Box(
+                                Modifier.align(Alignment.TopCenter).padding(top = 74.dp)
+                                    .size(38.dp, 26.dp).clip(RoundedCornerShape(13.dp))
+                                    .background(if (dragging) Color(0xFF4F86C6) else Color(0xFFF7FAFE))
+                                    .border(2.dp, if (dragging) Color(0xFF4F86C6) else ink, RoundedCornerShape(15.dp))
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(onTap = {
+                                            val st = dragStart.value
+                                            if (st == null) dragStart.value = cur1000().let { it.first to it.second }
+                                            else { dragStart.value = null; val (x, y) = cur1000(); viewModel.sendDrag(st.first, st.second, x, y) }
+                                        })
+                                    }
+                                    .pointerInput(Unit) {
+                                        detectDragGestures(
+                                            onDragStart = { if (dragStart.value == null) dragStart.value = cur1000().let { it.first to it.second } },
+                                            onDrag = { ch, d -> ch.consume(); moveTip(d.x, d.y) },
+                                            onDragEnd = {
+                                                dragStart.value?.let { st ->
+                                                    dragStart.value = null
+                                                    val (x, y) = cur1000()
+                                                    viewModel.sendDrag(st.first, st.second, x, y)
+                                                }
+                                            },
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(3.5.dp)) {
+                                    Box(Modifier.size(15.dp, 2.dp).clip(RoundedCornerShape(2.dp)).background(if (dragging) Color.White else ink))
+                                    Box(Modifier.size(15.dp, 2.dp).clip(RoundedCornerShape(2.dp)).background(if (dragging) Color.White else ink))
+                                }
+                            }
+                        }
+                        // 右上 ✕（本体外侧，UU 同款深色圆钮）：收起
+                        Box(
+                            Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-7).dp).size(25.dp)
+                                .clip(CircleShape).background(Color(0xB3121A2A)).clickable { mouseOpen = false },
+                            contentAlignment = Alignment.Center,
+                        ) { Text("\u2715", color = Color.White, fontSize = 12.sp) }
+                    }
+                } else {
+                    // 收起态（V254 联动）：小鼠标钮**贴着箭头**一起走——点它=原地展开成大鼠标；
+                    // 在它上面拖=照样移光标。小↔大只是形态切换，位置始终跟着箭头（UU 同款心智）。
+                    Surface(
+                        color = Color(0xE6F0F4FB), shape = CircleShape, shadowElevation = 3.dp,
+                        border = BorderStroke(1.5.dp, Color(0xCCB9C6DB)),
+                        modifier = Modifier
+                            .offset { IntOffset((axT + 26f).toInt(), (ayT + 34f).toInt()) }.size(38.dp)
+                            .pointerInput(Unit) { detectDragGestures { ch, d -> ch.consume(); moveTip(d.x, d.y) } }
+                            .pointerInput(Unit) { detectTapGestures(onTap = { mouseOpen = true }) },
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Mouse, contentDescription = "展开虚拟鼠标", tint = Color(0xFF6B7A94), modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -430,6 +666,7 @@ private fun BoxScope.StreamingControls(
     viewModel: RemoteControlViewModel,
     state: RemoteUiState,
     cursor: androidx.compose.runtime.MutableState<androidx.compose.ui.geometry.Offset>,
+    dragStart: androidx.compose.runtime.MutableState<Pair<Int, Int>?>,
     controlMode: String,
     onModeChange: (String) -> Unit,
     fillMode: Boolean,
@@ -446,14 +683,10 @@ private fun BoxScope.StreamingControls(
     var autoHide by remember { mutableStateOf(false) }  // 默认关：工具栏常驻（用户反馈"操作按钮没了"）；想看全屏可在设置里开自动隐藏
     var barsVisible by remember { mutableStateOf(true) }
     var rotated by remember { mutableStateOf(false) }
-    var keyMapping by remember { mutableStateOf(false) }   // UU：启用按键映射（游戏用，UI 开关）
-    var tabletTouch by remember { mutableStateOf(false) }  // UU：平板触控模式（多点触控，UI 开关）
     var settingsPage by remember { mutableStateOf("main") }   // main / security / winops
-    var secFingerprint by remember { mutableStateOf(false) }
-    var secAutoUnlock by remember { mutableStateOf(false) }
-    var secLockOnEnd by remember { mutableStateOf(false) }
-    var secMute by remember { mutableStateOf(false) }
-    var secAntiPeek by remember { mutableStateOf(false) }
+    // 安全页（只保留真实生效的两项，持久化到 SettingsStore）：断开后锁屏 / 断开后清空被控端剪贴板
+    val secLockOnEnd by viewModel.lockOnEnd.collectAsStateWithLifecycle()
+    val secWipeClip by viewModel.wipeClipOnEnd.collectAsStateWithLifecycle()
     LaunchedEffect(toast) { if (toast != null) { kotlinx.coroutines.delay(1400); toast = null } }
     // 自动隐藏工具栏：开启后、面板收起且工具栏可见时，无操作 3.5s 自动收起。
     LaunchedEffect(autoHide, barsVisible, panel) {
@@ -556,18 +789,6 @@ private fun BoxScope.StreamingControls(
         }
     }
 
-    // ── 悬浮虚拟鼠标（抄 UU）：触控板模式下显示。放在右侧工具栏之后渲染→层级在工具栏之上，小图标不会被工具栏盖住、可点。──
-    if (controlMode == "trackpad") {
-        FloatingMouse(
-            accent = accent,
-            cursor = cursor,
-            onMove = { x, y -> viewModel.sendMouseMove(x, y) },
-            onLeft = { val (x, y) = (cursor.value.x * 1000).toInt().coerceIn(0, 1000) to (cursor.value.y * 1000).toInt().coerceIn(0, 1000); viewModel.sendClickAt("left_click", x, y) },
-            onRight = { val (x, y) = (cursor.value.x * 1000).toInt().coerceIn(0, 1000) to (cursor.value.y * 1000).toInt().coerceIn(0, 1000); viewModel.sendClickAt("right_click", x, y) },
-            onScroll = { dir -> viewModel.sendScroll(dir, 3) },
-        )
-    }
-
     // ── 设置面板（对标 UU 远程的右侧设置）──
     if (showSettings) {
         // 半透明遮罩，点空白处关闭
@@ -581,13 +802,18 @@ private fun BoxScope.StreamingControls(
               when (settingsPage) {
                 "security" -> {
                     SettingsSubHeader("安全") { settingsPage = "main" }
-                    SettingSwitchRow("指纹验证", "开启后可更好地保护密码信息，解锁更安全", secFingerprint) { secFingerprint = it }
-                    SettingSwitchRow("自动解锁被控端", "记住 Windows 开机密码，连接后自动登录系统", secAutoUnlock) { secAutoUnlock = it }
-                    SettingSwitchRow("远程结束后被控端锁屏", "断开远程后自动锁定被控电脑", secLockOnEnd) { secLockOnEnd = it }
-                    SettingSwitchRow("被控端静音运行", "将被控端设为静音，控制端仍可听声音", secMute) { secMute = it }
-                    SettingSwitchRow("被控端防窥模式", "被控端本机黑屏，只有你这边能看到画面", secAntiPeek) { secAntiPeek = it }
+                    SettingSwitchRow("结束后锁定被控端", "断开远程时自动发送 Win+L，防止别人接着用你的电脑", secLockOnEnd) { viewModel.setLockOnEnd(it) }
+                    SettingSwitchRow("结束后清空被控端剪贴板", "断开时清掉推送过去的剪贴板内容（如密码），不留在对方机器上", secWipeClip) { viewModel.setWipeClipOnEnd(it) }
+                    Spacer(Modifier.height(6.dp))
+                    Surface(color = Color(0x14FFFFFF), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().clickable { viewModel.sendSystem("lock"); toast = "已发送锁屏指令" }) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Security, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("立即锁定被控端", color = Color.White, fontSize = 15.sp)
+                        }
+                    }
                     Spacer(Modifier.height(10.dp))
-                    Text("以上为被控端电脑设置，需被控端（桌面端）支持后生效；密码仅本地加密存储、不上传。", color = Color(0x80FFFFFF), fontSize = 11.sp, lineHeight = 16.sp)
+                    Text("两个开关立即生效并长期保存。防窥黑屏、指纹解锁等依赖被控端系统级驱动的能力暂不提供——做不到真实生效的开关我们不放出来。", color = Color(0x80FFFFFF), fontSize = 11.sp, lineHeight = 16.sp)
                 }
                 "winops" -> {
                     SettingsSubHeader("Windows 快捷操作") { settingsPage = "main" }
@@ -595,7 +821,7 @@ private fun BoxScope.StreamingControls(
                         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             pair.forEach { (label, key) ->
                                 Surface(color = Color(0x14FFFFFF), shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f).clickable { viewModel.sendKey(key); toast = "已发送：$label" }) {
-                                    Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { Text(label, color = Color.White, fontSize = 14.sp) }
+                                    Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) { Text(label, color = Color.White, fontSize = 13.sp) }
                                 }
                             }
                             if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -616,13 +842,10 @@ private fun BoxScope.StreamingControls(
                 }
                 Spacer(Modifier.height(22.dp))
                 Text("操作", color = Color(0xB3FFFFFF), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                SettingSwitchRow("启用按键映射", "把屏幕按键映射到键鼠（游戏用）", keyMapping) { keyMapping = it }
-                Spacer(Modifier.height(10.dp))
-                UuSegment("屏幕触控", "鼠标指针", controlMode == "touch", accent) { left -> onModeChange(if (left) "touch" else "trackpad") }
                 Spacer(Modifier.height(8.dp))
-                SettingSwitchRow("平板触控模式", "支持多点触控，建议玩原神、杀戮尖塔等游戏触屏版时开启", tabletTouch) { tabletTouch = it }
-                SettingSwitchRow("虚拟鼠标", "显示可拖动的虚拟光标，适合精细操作", controlMode == "trackpad") { on -> onModeChange(if (on) "trackpad" else "touch") }
+                UuSegment("屏幕触控", "鼠标指针", controlMode == "touch", accent) { left -> onModeChange(if (left) "touch" else "trackpad") }
+                Spacer(Modifier.height(4.dp))
+                SettingSwitchRow("虚拟鼠标", "显示可拖动的虚拟光标，适合精细操作；长按其左键可拖选", controlMode == "trackpad") { on -> onModeChange(if (on) "trackpad" else "touch") }
                 Spacer(Modifier.height(20.dp))
                 Text("画面与画质", color = Color(0xB3FFFFFF), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
@@ -636,14 +859,14 @@ private fun BoxScope.StreamingControls(
                     SettingChoice("高清", "均衡", state.quality == 1, accent, Modifier.weight(1f)) { viewModel.setRemoteQuality(1) }
                     SettingChoice("极清", "最清晰", state.quality == 2, accent, Modifier.weight(1f)) { viewModel.setRemoteQuality(2) }
                 }
-                SettingSwitchRow("安全中转 (Beta)", "强制经 TURN 中转，不暴露直连 IP", state.relayOn) { viewModel.setRemoteRelay(it) }
+                SettingSwitchRow("安全中转 (Beta)", "仅使用自有 TURN；切换后在下次连接生效", state.relayOn) { viewModel.setRemoteRelay(it) }
                 SettingSwitchRow("自动隐藏工具栏", "无操作 3.5 秒自动收起，点左上角手柄唤出", autoHide) { autoHide = it; if (!it) barsVisible = true }
-                SettingInfoRow(Icons.Outlined.NetworkCheck, "网络延迟", if (state.latencyMs >= 0) "${state.latencyMs} ms" else "测量中…", latencyColor(state.latencyMs))
+                NetworkQualityCard(state)
                 SettingActionRow(Icons.Outlined.HelpOutline, "操控指南", "查看手势说明") { showSettings = false; showGuide = true }
                 Spacer(Modifier.height(20.dp))
                 Text("更多设置", color = Color(0xB3FFFFFF), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
-                SettingActionRow(Icons.Outlined.Security, "安全", "指纹 / 锁屏 / 静音 / 防窥") { settingsPage = "security" }
+                SettingActionRow(Icons.Outlined.Security, "安全", "断开自动锁屏 / 清空剪贴板") { settingsPage = "security" }
                 SettingActionRow(Icons.Outlined.Apps, "Windows 快捷操作", "锁屏 / 任务管理器 / 截图等") { settingsPage = "winops" }
                 Spacer(Modifier.height(24.dp))
                 }
@@ -661,6 +884,7 @@ private fun BoxScope.StreamingControls(
                 GuideLine("单击", "轻点屏幕 = 鼠标左键单击")
                 GuideLine("双击", "快速点两下 = 双击")
                 GuideLine("长按", "按住不放 = 鼠标右键")
+                GuideLine("拖选", "触控板模式：长按虚拟鼠标左键定起点，移动光标后再点左键完成框选/拖动")
                 GuideLine("触屏 / 触控板", "触屏=直接点目标；触控板=拖动相对移光标，适合精细操作")
                 GuideLine("滚动", "用工具栏「滚动」面板上下左右滚动")
                 GuideLine("键盘 / 快捷键", "「键盘」输入文字回车；「快捷键」发 Esc / Tab / 方向键 / Ctrl+C 等")
@@ -774,6 +998,62 @@ private fun SettingInfoRow(icon: androidx.compose.ui.graphics.vector.ImageVector
 }
 
 @Composable
+private fun NetworkQualityCard(state: RemoteUiState) {
+    val health = remoteNetworkHealth(state.latencyMs, state.packetLossPct)
+    val tone = when (health) {
+        RemoteNetworkHealth.GOOD -> Color(0xFF8FE3A0)
+        RemoteNetworkHealth.FAIR -> Color(0xFFFFD479)
+        RemoteNetworkHealth.POOR -> Color(0xFFFF9F7A)
+        RemoteNetworkHealth.UNKNOWN -> Color(0x99FFFFFF)
+    }
+    val label = when (health) {
+        RemoteNetworkHealth.GOOD -> "连接稳定"
+        RemoteNetworkHealth.FAIR -> "连接波动"
+        RemoteNetworkHealth.POOR -> "连接受限"
+        RemoteNetworkHealth.UNKNOWN -> "正在测量"
+    }
+    Surface(
+        color = Color(0x14FFFFFF),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0x14FFFFFF)),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 13.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.NetworkCheck, contentDescription = null, tint = Color(0xCCFFFFFF), modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("连接质量", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text("仅显示当前链路实测值", color = Color(0x80FFFFFF), fontSize = 11.sp)
+                }
+                Box(Modifier.size(7.dp).clip(CircleShape).background(tone))
+                Spacer(Modifier.width(6.dp))
+                Text(label, color = tone, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkMetric("延迟", if (state.latencyMs >= 0) "${state.latencyMs} ms" else "--", Modifier.weight(1f))
+                NetworkMetric("丢包", if (state.packetLossPct >= 0.0) String.format("%.1f%%", state.packetLossPct) else "--", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkMetric("可用带宽", if (state.availableBitrateKbps >= 0) "${state.availableBitrateKbps} kbps" else "--", Modifier.weight(1f))
+                NetworkMetric("接收帧率", if (state.framesPerSecond >= 0) "${state.framesPerSecond} fps" else "--", Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun NetworkMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(11.dp)).background(Color(0x0FFFFFFF)).padding(horizontal = 10.dp, vertical = 9.dp)) {
+        Text(label, color = Color(0x80FFFFFF), fontSize = 10.sp, maxLines = 1)
+        Spacer(Modifier.height(2.dp))
+        Text(value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+    }
+}
+
+@Composable
 private fun GuideLine(label: String, desc: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
         Text(label, color = Color(0xFFEF3E36), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(96.dp))
@@ -788,7 +1068,7 @@ private fun SideButton(icon: androidx.compose.ui.graphics.vector.ImageVector, la
         Column(Modifier.padding(vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(19.dp))
             Spacer(Modifier.height(2.dp))
-            Text(label, color = Color.White, fontSize = 9.sp, maxLines = 1)
+            Text(label, color = Color.White, fontSize = 10.sp, maxLines = 1)
         }
     }
 }
@@ -836,7 +1116,7 @@ private fun RemoteKeyboard(
         }
         when (tab) {
             1 -> KeysRow(bg = bg) { onKey(it) }
-            2 -> PcKeyboard(bg = bg, accent = accent) { onKey(it) }
+            2 -> PcKeyboard(bg = bg, accent = accent, onType = onType, onKey = onKey)
         }
     }
 }
@@ -852,18 +1132,28 @@ private fun KbTab(label: String, active: Boolean, accent: Color, onClick: () -> 
 
 /** 整套电脑键盘：功能键 + 数字 + 字母 + 方向键；Ctrl/Alt/Shift/Win 为粘滞修饰键，点字母即发组合键。 */
 @Composable
-private fun PcKeyboard(bg: Color, accent: Color, onKey: (String) -> Unit) {
+private fun PcKeyboard(bg: Color, accent: Color, onType: (String) -> Unit, onKey: (String) -> Unit) {
     var ctrl by remember { mutableStateOf(false) }
     var alt by remember { mutableStateOf(false) }
     var shift by remember { mutableStateOf(false) }
+    var win by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(0) }
     var drag by remember { mutableFloatStateOf(0f) }
-    // 点 Ctrl/Alt/Shift 先"按住"（高亮），再点普通键发组合键（如 Ctrl+C），发完自动松开；无修饰键时直接发。
-    fun fire(send: String) {
+    // 点 Ctrl/Alt/Shift/Win 先"按住"（高亮），再点普通键发组合键（如 Ctrl+C），发完自动松开；无修饰键时直接发。
+    // 桌面端 key 协议只认白名单键名：符号键先映射成协议名；没有协议名的符号（[ ] \ ' ` 等）
+    // 在无 Ctrl/Alt/Win 时用「键入文本」兜底真实打出该字符——从此没有一个键是摆设。
+    fun fire(send: String, shifted: String? = null) {
         val mods = mutableListOf<String>()
-        if (ctrl) mods += "ctrl"; if (shift) mods += "shift"; if (alt) mods += "alt"
-        onKey((mods + send).joinToString("+"))
-        ctrl = false; alt = false; shift = false
+        if (ctrl) mods += "ctrl"; if (shift) mods += "shift"; if (alt) mods += "alt"; if (win) mods += "win"
+        val mapped = send.split("+").joinToString("+") { KEY_WIRE[it] ?: it }
+        val wireOk = mapped.split("+").all { it in WIRE_KEYS }
+        if (wireOk) {
+            onKey((mods + mapped).joinToString("+"))
+        } else if (!ctrl && !alt && !win) {
+            // 无法走 key 协议的字符：直接键入（shift 态键入其上档字符）
+            onType(if (shift && shifted != null) shifted else send)
+        }
+        ctrl = false; alt = false; shift = false; win = false
     }
     Surface(color = bg, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -882,13 +1172,13 @@ private fun PcKeyboard(bg: Color, accent: Color, onKey: (String) -> Unit) {
                     row.forEach { k ->
                         sum += k.w
                         if (k.mod) {
-                            val act = (k.send == "ctrl" && ctrl) || (k.send == "alt" && alt) || (k.send == "shift" && shift)
+                            val act = (k.send == "ctrl" && ctrl) || (k.send == "alt" && alt) || (k.send == "shift" && shift) || (k.send == "win" && win)
                             KKey(k.disp, Modifier.weight(k.w), active = act, accent = accent) {
-                                when (k.send) { "ctrl" -> ctrl = !ctrl; "alt" -> alt = !alt; "shift" -> shift = !shift }
+                                when (k.send) { "ctrl" -> ctrl = !ctrl; "alt" -> alt = !alt; "shift" -> shift = !shift; "win" -> win = !win }
                             }
                         } else {
                             val label = if (shift && k.shift != null) k.shift!! else k.disp
-                            KKey(label, Modifier.weight(k.w), accent = accent) { fire(k.send) }
+                            KKey(label, Modifier.weight(k.w), accent = accent) { fire(k.send, k.shift) }
                         }
                     }
                     // 第 1 页保留右侧留白对齐；第 2 页（功能键/导航键）铺满整行，两边一样齐、不留空。
@@ -912,12 +1202,29 @@ private val UU_KB_PAGE1: List<List<PcKeyDef>> = listOf(
     listOf(PcKeyDef("Q", null, "q"), PcKeyDef("W", null, "w"), PcKeyDef("E", null, "e"), PcKeyDef("R", null, "r"), PcKeyDef("T", null, "t"), PcKeyDef("Y", null, "y"), PcKeyDef("U", null, "u"), PcKeyDef("I", null, "i"), PcKeyDef("O", null, "o"), PcKeyDef("P", null, "p")),
     listOf(PcKeyDef("A", null, "a"), PcKeyDef("S", null, "s"), PcKeyDef("D", null, "d"), PcKeyDef("F", null, "f"), PcKeyDef("G", null, "g"), PcKeyDef("H", null, "h"), PcKeyDef("J", null, "j"), PcKeyDef("K", null, "k"), PcKeyDef("L", null, "l"), PcKeyDef("[", "{", "[")),
     listOf(PcKeyDef("Shift", null, "shift", 1f, true), PcKeyDef("Z", null, "z"), PcKeyDef("X", null, "x"), PcKeyDef("C", null, "c"), PcKeyDef("V", null, "v"), PcKeyDef("B", null, "b"), PcKeyDef("N", null, "n"), PcKeyDef("M", null, "m"), PcKeyDef("\u232b", null, "backspace"), PcKeyDef("]", "}", "]")),
-    listOf(PcKeyDef("Ctrl", null, "ctrl", 1f, true), PcKeyDef("Alt", null, "alt", 1f, true), PcKeyDef("Tab", null, "tab"), PcKeyDef("Space", null, "space", 2f), PcKeyDef("Enter", null, "enter"), PcKeyDef("\u2190", null, "left"), PcKeyDef("\u2191", null, "up"), PcKeyDef("\u2193", null, "down"), PcKeyDef("\u2192", null, "right")),
+    listOf(PcKeyDef("Ctrl", null, "ctrl", 1f, true), PcKeyDef("Alt", null, "alt", 1f, true), PcKeyDef("Win", null, "win", 1f, true), PcKeyDef("Tab", null, "tab"), PcKeyDef("Space", null, "space"), PcKeyDef("Enter", null, "enter"), PcKeyDef("\u2190", null, "left"), PcKeyDef("\u2191", null, "up"), PcKeyDef("\u2193", null, "down"), PcKeyDef("\u2192", null, "right")),
 )
 private val UU_KB_PAGE2: List<List<PcKeyDef>> = listOf(
     listOf(PcKeyDef("Esc", null, "escape"), PcKeyDef("`", "~", "`"), PcKeyDef("-", "_", "-"), PcKeyDef("=", "+", "="), PcKeyDef("\\", "|", "\\"), PcKeyDef(";", ":", ";"), PcKeyDef("'", "\"", "'"), PcKeyDef(",", "<", ","), PcKeyDef(".", ">", "."), PcKeyDef("/", "?", "/")),
     listOf(PcKeyDef("F1", null, "f1"), PcKeyDef("F2", null, "f2"), PcKeyDef("F3", null, "f3"), PcKeyDef("F4", null, "f4"), PcKeyDef("F5", null, "f5"), PcKeyDef("F6", null, "f6"), PcKeyDef("F7", null, "f7"), PcKeyDef("F8", null, "f8"), PcKeyDef("F9", null, "f9"), PcKeyDef("F10", null, "f10"), PcKeyDef("F11", null, "f11"), PcKeyDef("F12", null, "f12")),
-    listOf(PcKeyDef("PrtSc", null, "printscreen"), PcKeyDef("ScrLk", null, "scrolllock"), PcKeyDef("Pause", null, "pause"), PcKeyDef("Ins", null, "insert"), PcKeyDef("Home", null, "home"), PcKeyDef("PgUp", null, "pageup"), PcKeyDef("Del", null, "delete"), PcKeyDef("End", null, "end"), PcKeyDef("PgDn", null, "pagedown")),
+    // 原 PrtSc/ScrLk/Pause/Ins 走 key 协议在桌面端是黑名单外键名（静默丢弃=假按钮），
+    // 重排为全部真实可用：截屏改发 Win+Shift+S（Windows 原生截图）。
+    listOf(PcKeyDef("截屏", null, "win+shift+s", 1.6f), PcKeyDef("Home", null, "home"), PcKeyDef("PgUp", null, "pageup"), PcKeyDef("PgDn", null, "pagedown"), PcKeyDef("End", null, "end"), PcKeyDef("Del", null, "delete")),
+)
+
+// key 协议白名单（与桌面端 cu-actions KEY_NAMES 对齐）+ 符号→协议名映射。
+private val WIRE_KEYS: Set<String> = setOf(
+    "enter", "return", "tab", "escape", "esc", "space", "backspace", "delete", "del",
+    "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
+    "ctrl", "control", "alt", "shift", "win", "cmd", "meta", "super",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    "minus", "plus", "equal", "comma", "period", "slash", "semicolon",
+)
+private val KEY_WIRE: Map<String, String> = mapOf(
+    "-" to "minus", "+" to "plus", "=" to "equal", "," to "comma", "." to "period", "/" to "slash", ";" to "semicolon",
 )
 
 @Composable
@@ -938,88 +1245,6 @@ private fun MouseBtn(label: String, accent: Color, onClick: () -> Unit) {
     Surface(color = Color(0xE6161E2E), shape = RoundedCornerShape(16.dp), modifier = Modifier.width(118.dp).clickable(onClick = onClick)) {
         Box(Modifier.fillMaxWidth().padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
             Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-/**
- * 悬浮可拖动虚拟鼠标（抄 UU 远程的"鼠标形状"控件）。
- * 收起态：右下角一个可拖动的小鼠标图标；点一下展开。
- * 展开态：一个鼠标外形——整块拖动=移光标；顶部左半=左键、右半=右键；中间滚轮=上下滚动；右上角透明 ✕ 收起。
- * 点击/滚动按"落点位置"路由（视觉层不拦截手势），避免按钮与拖动冲突。
- */
-@Composable
-private fun BoxScope.FloatingMouse(
-    accent: Color,
-    cursor: androidx.compose.runtime.MutableState<androidx.compose.ui.geometry.Offset>,
-    onMove: (Int, Int) -> Unit,
-    onLeft: () -> Unit,
-    onRight: () -> Unit,
-    onScroll: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    var offX by remember { mutableStateOf(-104f) }   // px，相对 BottomEnd 向左（避开右侧竖排工具栏，否则小图标压在按钮下点不到）
-    var offY by remember { mutableStateOf(-360f) }   // px，相对 BottomEnd 向上
-
-    if (!expanded) {
-        Surface(
-            color = Color(0xCC1B2230), shape = CircleShape,
-            modifier = Modifier.align(Alignment.BottomEnd)
-                .offset { IntOffset(offX.toInt(), offY.toInt()) }
-                .size(48.dp)
-                .pointerInput(Unit) { detectDragGestures { _, drag -> offX += drag.x; offY += drag.y } }
-                .pointerInput(Unit) { detectTapGestures(onTap = { expanded = true }) },
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Mouse, contentDescription = "虚拟鼠标", tint = Color.White, modifier = Modifier.size(24.dp))
-            }
-        }
-    } else {
-        val shape = RoundedCornerShape(topStart = 54.dp, topEnd = 54.dp, bottomStart = 26.dp, bottomEnd = 26.dp)
-        val bodyBrush = Brush.verticalGradient(listOf(Color(0xF21E2D48), Color(0xF20B1322)))
-        Box(modifier = Modifier.align(Alignment.BottomEnd).offset { IntOffset(offX.toInt(), offY.toInt()) }) {
-            // 鼠标外形：顶部左半=左键、右半=右键（纯点击，绝不滑动）；中间滚轮点上/下半滚动；底部手柄拖动=挪窗。
-            // 移动光标：在「屏幕」上拖（默认虚拟鼠标模式），白箭头跟着走——不在鼠标身上拖，从根上避免点击和拖动打架。
-            Box(Modifier.size(116.dp, 134.dp).clip(shape).background(bodyBrush).border(1.dp, Color(0x33FFFFFF), shape)) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(Modifier.fillMaxWidth().weight(0.56f)) {
-                        Box(Modifier.weight(1f).fillMaxHeight().clickable { onLeft() }, contentAlignment = Alignment.Center) {
-                            Text("左键", color = Color(0xE6FFFFFF), fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 18.dp))
-                        }
-                        Box(Modifier.width(1.dp).fillMaxHeight(0.62f).align(Alignment.CenterVertically).background(Color(0x2EFFFFFF)))
-                        Box(Modifier.weight(1f).fillMaxHeight().clickable { onRight() }, contentAlignment = Alignment.Center) {
-                            Text("右键", color = Color(0xE6FFFFFF), fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 18.dp))
-                        }
-                    }
-                    Box(Modifier.fillMaxWidth().padding(horizontal = 18.dp).height(1.dp).background(Color(0x22FFFFFF)))
-                    Box(
-                        Modifier.fillMaxWidth().weight(0.44f)
-                            .pointerInput(Unit) { detectDragGestures { _, drag -> offX += drag.x; offY += drag.y } },
-                        contentAlignment = Alignment.Center,
-                    ) { Box(Modifier.width(34.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF))) }
-                }
-                // 中间滚轮：胶囊 + ▲▼，上半点=上滚、下半点=下滚（独立 clickable，z 序在上，不和左右键冲突）
-                Column(
-                    Modifier.align(Alignment.TopCenter).padding(top = 15.dp)
-                        .size(28.dp, 50.dp).clip(RoundedCornerShape(14.dp))
-                        .background(Brush.verticalGradient(listOf(Color(0x40FFFFFF), Color(0x14FFFFFF))))
-                        .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(14.dp)),
-                ) {
-                    Box(Modifier.fillMaxWidth().weight(1f).clickable { onScroll("up") }, contentAlignment = Alignment.Center) {
-                        Text("▲", color = Color(0xF2FFFFFF), fontSize = 10.sp)
-                    }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x33FFFFFF)))
-                    Box(Modifier.fillMaxWidth().weight(1f).clickable { onScroll("down") }, contentAlignment = Alignment.Center) {
-                        Text("▼", color = Color(0xF2FFFFFF), fontSize = 10.sp)
-                    }
-                }
-            }
-            // 右上角透明 ✕：收起成小鼠标
-            Box(
-                Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-7).dp).size(24.dp)
-                    .clip(CircleShape).background(Color(0x99000000)).clickable { expanded = false },
-                contentAlignment = Alignment.Center,
-            ) { Text("\u2715", color = Color.White, fontSize = 13.sp) }
         }
     }
 }
@@ -1118,21 +1343,21 @@ private fun KeysRow(bg: Color, onKey: (String) -> Unit) {
         Triple("Ctrl+C", "ctrl+c", "复制"), Triple("Ctrl+V", "ctrl+v", "粘贴"), Triple("Ctrl+X", "ctrl+x", "剪切"), Triple("Ctrl+A", "ctrl+a", "全选"),
         Triple("Ctrl+Z", "ctrl+z", "撤销"), Triple("Ctrl+S", "ctrl+s", "保存"), Triple("Win+D", "win+d", "显示桌面"), Triple("Win+L", "win+l", "锁屏"),
         Triple("Win+E", "win+e", "文件管理"), Triple("Win+X", "win+x", "快捷菜单"), Triple("Win+Tab", "win+tab", "切换窗口"), Triple("Win", "win", "开始菜单"),
-        Triple("Caps", "capslock", "大小写"), Triple("Tab", "tab", "制表"), Triple("Esc", "escape", "退出"), Triple("\u23ce", "enter", "回车"),
+        Triple("Del", "delete", "删除"), Triple("Tab", "tab", "制表"), Triple("Esc", "escape", "退出"), Triple("\u23ce", "enter", "回车"),
     )
     Surface(color = bg, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            keys.chunked(6).forEach { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            keys.chunked(4).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     row.forEach { (disp, send, label) ->
                         Surface(color = Color(0x1FFFFFFF), shape = RoundedCornerShape(7.dp), modifier = Modifier.weight(1f).clickable { onKey(send) }) {
-                            Column(Modifier.padding(vertical = 2.dp, horizontal = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(disp, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                Text(label, color = Color(0x99FFFFFF), fontSize = 6.sp, maxLines = 1)
+                            Column(Modifier.padding(vertical = 2.5.dp, horizontal = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(disp, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                Text(label, color = Color(0x99FFFFFF), fontSize = 8.5.sp, maxLines = 1)
                             }
                         }
                     }
-                    repeat(6 - row.size) { Spacer(Modifier.weight(1f)) }
+                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -1141,20 +1366,27 @@ private fun KeysRow(bg: Color, onKey: (String) -> Unit) {
 
 @Composable
 private fun SystemPanel(bg: Color, accent: Color, onCmd: (String) -> Unit) {
-    // (显示, cmd, 是否危险)
+    // (显示, cmd, 是否危险)。危险命令二次确认：首点按钮变「确认XX？」，3 秒内再点才执行——
+    // 防误触远程关机（V254）。
     val items = listOf(
         Triple("锁屏", "lock", false), Triple("显示桌面", "show_desktop", false), Triple("任务管理器", "task_manager", false),
         Triple("重启", "reboot", true), Triple("关机", "shutdown", true),
     )
+    var arming by remember { mutableStateOf("") }   // 正在等待确认的 cmd
+    LaunchedEffect(arming) { if (arming.isNotEmpty()) { kotlinx.coroutines.delay(3000); arming = "" } }
     Surface(color = bg, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items.forEach { (label, cmd, danger) ->
+                val armed = arming == cmd
                 Surface(
-                    color = if (danger) accent.copy(alpha = 0.85f) else Color(0x1FFFFFFF),
+                    color = if (armed) Color(0xFFD64545) else if (danger) accent.copy(alpha = 0.85f) else Color(0x1FFFFFFF),
                     shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.clickable { onCmd(cmd) },
+                    modifier = Modifier.clickable {
+                        if (danger && !armed) arming = cmd
+                        else { arming = ""; onCmd(cmd) }
+                    },
                 ) {
-                    Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+                    Text(if (armed) "确认$label？" else label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
                 }
             }
         }
@@ -1165,59 +1397,130 @@ private fun SystemPanel(bg: Color, accent: Color, onCmd: (String) -> Unit) {
 private fun DevicePicker(
     devices: List<RemoteDevice>,
     relayOn: Boolean,
+    protocol: String,
+    ownerFingerprint: String,
+    lastSnapshotAt: Long,
     onToggleRelay: () -> Unit,
     onPick: (RemoteDevice) -> Unit,
     onRetry: () -> Unit,
 ) {
+    // V244 重设计：中继开关行降为普通设置行（M3 Switch），空态从"一句话+描边按钮"
+    // 升级为「吉祥物 + 三步上线指引分组卡 + 墨黑主按钮」——第一次用的人照着三步就能连上。
+    val cs = MaterialTheme.colorScheme
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Spacer(Modifier.height(4.dp)) }
         item {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            val channelConnected = protocol == "hashmm.remote.v4"
+            val remoteReady = devices.any { it.remoteReady }
+            Surface(color = cs.surface, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier.size(8.dp).clip(CircleShape)
+                            .background(if (remoteReady) Color(0xFF22A06B) else if (channelConnected) Color(0xFFF59E0B) else cs.outline),
+                    )
+                    Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("中继模式", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.height(3.dp))
                         Text(
-                            "校园网/公司网连不上、一直「正在协商」时打开：画面经服务器中转，更易连通（画质略降）。",
-                            fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            when {
+                                remoteReady -> "已发现可远程电脑"
+                                channelConnected -> "账号通道已连接，未发现可远程电脑"
+                                else -> "设备通道尚未连接"
+                            },
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = cs.onSurface,
+                        )
+                        Text(
+                            buildString {
+                                append(if (ownerFingerprint.isNotBlank()) "账号校验 $ownerFingerprint" else "账号已验证")
+                                if (lastSnapshotAt > 0L) append(" · 设备列表已同步")
+                            },
+                            fontSize = 11.5.sp,
+                            color = cs.onSurfaceVariant,
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Box(
-                        Modifier.width(46.dp).height(26.dp).clip(CircleShape)
-                            .background(if (relayOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-                            .clickable { onToggleRelay() },
-                        contentAlignment = if (relayOn) Alignment.CenterEnd else Alignment.CenterStart,
-                    ) {
-                        Box(Modifier.padding(3.dp).size(20.dp).clip(CircleShape).background(Color.White))
+                    Text(if (remoteReady) "可连接" else "等待电脑", fontSize = 11.sp, color = cs.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            Surface(color = cs.surface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.SwapVert, null, tint = cs.onSurface, modifier = Modifier.size(21.dp))
+                    Spacer(Modifier.width(13.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("安全中继偏好", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = cs.onSurface, letterSpacing = (-0.2).sp)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "只使用自有 TURN，隐藏双方直连地址 · 需要管理员已配置 TURN",
+                            fontSize = 11.5.sp, color = cs.onSurfaceVariant, lineHeight = 15.sp,
+                        )
                     }
+                    Spacer(Modifier.width(10.dp))
+                    Switch(
+                        checked = relayOn,
+                        onCheckedChange = { onToggleRelay() },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = cs.primary,
+                            checkedThumbColor = Color.White,
+                            uncheckedTrackColor = cs.surfaceVariant,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedBorderColor = cs.outlineVariant,
+                        ),
+                    )
                 }
             }
         }
         if (devices.isEmpty()) {
             item {
                 Column(
-                    Modifier.fillMaxWidth().padding(top = 72.dp),
+                    Modifier.fillMaxWidth().padding(top = 44.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    HashMascot(Modifier.size(88.dp))
-                    Spacer(Modifier.height(16.dp))
-                    Text("暂无在线设备", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "在电脑端登录同一账号、打开客户端即自动上线可控",
-                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-                    )
-                    Spacer(Modifier.height(18.dp))
-                    OutlinedButton(onClick = onRetry) { Text("重新检测") }
+                    HashMascot(Modifier.size(76.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Text("暂无在线设备", fontWeight = FontWeight.Bold, fontSize = 17.sp,
+                        color = cs.onSurface, letterSpacing = (-0.3).sp)
+                    Spacer(Modifier.height(5.dp))
+                    Text("电脑上线后会自动出现在这里", fontSize = 13.sp,
+                        color = cs.onSurfaceVariant, textAlign = TextAlign.Center)
+                }
+            }
+            item {
+                Column {
+                    Text("如何让电脑上线", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                        color = cs.onSurfaceVariant, letterSpacing = 0.5.sp,
+                        modifier = Modifier.padding(start = 2.dp, bottom = 8.dp, top = 8.dp))
+                    Surface(color = cs.surface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                        Column {
+                            OnlineStepRow(1, "电脑端登录同一账号")
+                            Box(Modifier.fillMaxWidth().padding(start = 54.dp).height(0.5.dp)
+                                .background(cs.outlineVariant.copy(alpha = 0.6f)))
+                            OnlineStepRow(2, "打开 HashMM 桌面客户端")
+                            Box(Modifier.fillMaxWidth().padding(start = 54.dp).height(0.5.dp)
+                                .background(cs.outlineVariant.copy(alpha = 0.6f)))
+                            OnlineStepRow(3, "回到本页，设备自动上线")
+                        }
+                    }
+                }
+            }
+            item {
+                Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(containerColor = cs.primary, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 34.dp, vertical = 12.dp),
+                    ) {
+                        Icon(Icons.Outlined.Refresh, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("重新检测", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         } else {
@@ -1228,33 +1531,54 @@ private fun DevicePicker(
     }
 }
 
+/** 空态上线指引的一步：灰圆数字 + 说明。 */
 @Composable
-private fun DeviceSectionHeader(label: String, count: Int) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 2.dp, top = 8.dp, bottom = 2.dp),
-    ) {
-        Text(label, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.width(6.dp))
-        Text(count.toString(), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun OnlineStepRow(n: Int, text: String) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(25.dp).clip(CircleShape).background(cs.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text("$n", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = cs.onSurface)
+        }
+        Spacer(Modifier.width(14.dp))
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = cs.onSurface)
     }
 }
 
+@Composable
+private fun DeviceSectionHeader(label: String, count: Int) {
+    // V244：灰色小字分区标签（与全 App 分区标签同规）
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = 2.dp, top = 6.dp),
+    ) {
+        Text(label, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp,
+            letterSpacing = 0.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(6.dp))
+        Text(count.toString(), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// V245：旧的糖果色壁纸渐变（尤其暮紫）与品牌黑白红气质不合——换成四款低饱和"高级灰阶"，
+// 深端在左上、浅端在右下，配白字在线徽正好；水印一枚淡显示器图标补足"这是台电脑"的语义。
 private val deviceGradients = listOf(
-    listOf(Color(0xFF4F86C6), Color(0xFFA9CCE8)),  // 蓝天白云
-    listOf(Color(0xFF3A4D7A), Color(0xFF7C8AC0)),  // 暮蓝
-    listOf(Color(0xFF2E7D6B), Color(0xFF8FD3C2)),  // 青绿
-    listOf(Color(0xFF8B5E83), Color(0xFFCBA3C5)),  // 暮紫
+    listOf(Color(0xFF2F2F34), Color(0xFF515158)),  // 石墨
+    listOf(Color(0xFF3C4650), Color(0xFF6B7883)),  // 青灰
+    listOf(Color(0xFF57504A), Color(0xFF8A8078)),  // 暖灰
+    listOf(Color(0xFF424A46), Color(0xFF74807A)),  // 苔灰
 )
 
 @Composable
 private fun DeviceCard(d: RemoteDevice, online: Boolean, onClick: () -> Unit) {
+    // V244：去描边（无边白卡）+ 品牌回弹；下行从孤零零的宫格图标改成平台/状态文字
     val g = deviceGradients[d.name.hashCode().absoluteValue % deviceGradients.size]
+    val src = remember { MutableInteractionSource() }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth()
+            .pressBounce(src)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(interactionSource = src, indication = null, onClick = onClick),
     ) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             // 壁纸缩略图 + 在线徽标（仿 UU 远程）
@@ -1263,6 +1587,9 @@ private fun DeviceCard(d: RemoteDevice, online: Boolean, onClick: () -> Unit) {
                     .clip(RoundedCornerShape(12.dp))
                     .background(Brush.linearGradient(g)),
             ) {
+                Icon(Icons.Outlined.DesktopWindows, contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.20f),
+                    modifier = Modifier.size(30.dp).align(Alignment.Center))
                 if (online) {
                     Surface(
                         color = Color(0xE6101012), shape = RoundedCornerShape(10.dp),
@@ -1281,11 +1608,12 @@ private fun DeviceCard(d: RemoteDevice, online: Boolean, onClick: () -> Unit) {
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(d.name.ifBlank { "电脑" }, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(Modifier.height(5.dp))
-                Icon(
-                    Icons.Outlined.GridView, contentDescription = d.platform.ifBlank { "客户端" },
-                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp),
+                Text(d.name.ifBlank { "电脑" }, fontWeight = FontWeight.Bold, fontSize = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurface, letterSpacing = (-0.3).sp)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    (d.platform.ifBlank { "桌面客户端" }) + " · 点击连接",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Icon(Icons.Outlined.ChevronRight, contentDescription = "连接", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1317,6 +1645,21 @@ private fun CenterInfo(
             Button(onClick = onAction) { Text(actionLabel) }
         }
     }
+}
+
+/**
+ * 视频内容区矩形（相对屏幕 Box 的像素坐标）：[left, top, contentW, contentH]。
+ * 与 norm() 同一套数学——适应=min 缩放居中留边；铺满=max 缩放裁边（此时 left/top 为负）。
+ * 触控板模式的光标绘制与坐标换算、以及 norm() 都必须用同一矩形，否则"箭头指的"与"点到的"会错位。
+ */
+private fun contentRect(boxW: Int, boxH: Int, frameW: Int, frameH: Int, fill: Boolean): FloatArray {
+    if (boxW <= 0 || boxH <= 0) return floatArrayOf(0f, 0f, 1f, 1f)
+    val nw = if (frameW > 0) frameW else boxW
+    val nh = if (frameH > 0) frameH else boxH
+    val sx = boxW.toFloat() / nw; val sy = boxH.toFloat() / nh
+    val scale = if (fill) maxOf(sx, sy) else minOf(sx, sy)
+    val cw = nw * scale; val ch = nh * scale
+    return floatArrayOf((boxW - cw) / 2f, (boxH - ch) / 2f, cw, ch)
 }
 
 // ── 触摸坐标归一化到 0..1000（相对视频内容区）──

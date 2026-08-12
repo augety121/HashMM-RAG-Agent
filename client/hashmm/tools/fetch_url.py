@@ -34,11 +34,12 @@ def execute(args: dict, ctx: dict) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    # Block dangerous URLs
-    blocked = ["localhost", "127.0.0.1", "0.0.0.0", "169.254", "10.", "192.168"]
-    for b in blocked:
-        if b in url.split("/")[2] if len(url.split("/")) > 2 else "":
-            return "Error: 不允许访问内网地址"
+    # SSRF 防护（大厂标准）：解析 URL + DNS 解析后逐个 IP 校验，挡回环/内网/链路本地/云元数据/IP变体。
+    # 旧版仅字符串黑名单，可被域名解析到内网、172.16/12、IPv6、十进制IP 等绕过——现改为 net_guard 统一判定。
+    from hashmm.tools.net_guard import check_url_safe
+    _ok, _reason = check_url_safe(url)
+    if not _ok:
+        return f"Error: 目标地址被安全策略拦截（{_reason}）"
 
     t0 = time.time()
 
@@ -69,7 +70,7 @@ def execute(args: dict, ctx: dict) -> str:
 
 def _fetch_arxiv(url: str) -> str:
     """Fetch arxiv paper — tries abstract page first, then PDF."""
-    import requests
+    from hashmm.tools.net_guard import safe_get
 
     # Extract paper ID
     match = re.search(r'(\d{4}\.\d{4,5})', url)
@@ -81,7 +82,7 @@ def _fetch_arxiv(url: str) -> str:
     # 1. Try arxiv API for metadata + abstract
     try:
         api_url = f"http://export.arxiv.org/api/query?id_list={paper_id}"
-        resp = requests.get(api_url, timeout=15)
+        resp = safe_get(api_url, timeout=15)
         if resp.status_code == 200:
             text = resp.text
             # Parse basic XML fields
@@ -116,10 +117,10 @@ def _fetch_arxiv(url: str) -> str:
 
 def _fetch_pdf(url: str) -> str:
     """Download PDF and extract text using existing parser."""
-    import requests
+    from hashmm.tools.net_guard import safe_get
 
-    resp = requests.get(url, timeout=30, stream=True,
-                       headers={"User-Agent": "Mozilla/5.0 HashMM-RAG/1.0"})
+    resp = safe_get(url, timeout=30, stream=True,
+                    headers={"User-Agent": "Mozilla/5.0 HashMM-RAG/1.0"})
     resp.raise_for_status()
 
     # Save to temp file
@@ -172,11 +173,11 @@ def _fetch_pdf(url: str) -> str:
 
 def _fetch_webpage(url: str) -> str:
     """Fetch webpage and extract main text content."""
-    import requests
+    from hashmm.tools.net_guard import safe_get
 
-    resp = requests.get(url, timeout=15,
-                       headers={"User-Agent": "Mozilla/5.0 HashMM-RAG/1.0"},
-                       allow_redirects=True)
+    # safe_get 内部逐跳校验重定向（禁用自动跳转，手动跟随并重校验每一跳）→ 挡"公网URL 302到内网"绕过
+    resp = safe_get(url, timeout=15,
+                    headers={"User-Agent": "Mozilla/5.0 HashMM-RAG/1.0"})
     resp.raise_for_status()
 
     html = resp.text

@@ -16,12 +16,43 @@ pip install -r requirements.txt
 # 可选能力（GPU 模型、文档生成、渲染等）见 requirements-optional.txt
 
 # 2. 准备本地模型（BGE-M3 等），放到 .local_models/
-# 3. 启动服务
-python -m hashmm.api.server   # 默认端口 6006
+# 3. 复制安全配置并先跑诊断；正常启动不会联网安装依赖
+cp .env.example .env
+chmod 600 .env
+./hashmm-start.sh doctor
+./hashmm-start.sh
 
 # 4. 跑测试
 python -m pytest
 ```
+
+公网/AutoDL 部署必须在 `.env` 中显式设置 `HASHMM_HOST=0.0.0.0`、
+`HASHMM_ENV=production`、`HASHMM_REQUIRE_AUTH=1`、独立随机的
+`HASHMM_JWT_SECRET`/`HASHMM_SECRET` 以及精确的 `HASHMM_CORS_ORIGINS`。
+启动器会在配置不安全、端口冲突、代码版本错误或依赖不完整时拒绝启动。
+
+Windows 桌面正式包由 `installer-native/build-all.bat` 生成。V337 安装包内置经指纹和
+导入验证的 Python 运行时，新电脑无需安装 Python；出包链会同时生成 SHA-256 和版本清单。
+
+## 作为 Python 平台嵌入
+
+项目已提供标准 `pyproject.toml`，可直接安装开发版并调用稳定 `/v1` API：
+
+```bash
+pip install -e .
+```
+
+```python
+from hashmm.client import HashMMClient
+
+client = HashMMClient("http://127.0.0.1:6006", api_key="sk-...")
+result = client.rag("这份知识库的核心结论是什么？")
+print(result["answer"])
+print(result["sources"])
+```
+
+服务端需设置 `HASHMM_PUBLIC_API=1` 与 `HASHMM_API_KEY=...`；仅可信内网可用
+`HASHMM_PUBLIC_API_OPEN=1` 显式免鉴权。完整契约见 `docs/API.md`。
 
 配置项集中登记在 `hashmm/settings.py`，可运行其 `generate_config_md()` 生成完整配置文档（密钥自动脱敏）。
 

@@ -31,7 +31,7 @@ class IngestResult:
     num_relations: int = 0
     elapsed_ms: int = 0
     errors: list[str] = field(default_factory=list)
-    status: str = "success"  # "success" | "partial" | "failed"
+    status: str = "success"  # "success" | "partial" | "failed" | "duplicate" | "quarantined"
 
     def to_dict(self) -> dict:
         return {
@@ -144,6 +144,7 @@ class IngestPipeline:
                     extract_kg: bool = True,
                     on_progress: Callable[[IngestProgress], None] | None = None,
                     doc_id: str | None = None,
+                    skip_quality: bool = False,
                     ) -> IngestResult:
         """Ingest a single document file.
 
@@ -159,6 +160,24 @@ class IngestPipeline:
         filepath = Path(filepath)
         t0 = time.time()
         result = IngestResult(doc_id="", filename=filepath.name)
+
+        # V204 图2-①：文件指纹幂等控制——同一文件（SHA256）重复上传直接命中既有
+        # doc_id，跳过 解析/切块/向量化/KG 全流程（reparse 场景显式传 doc_id，跳过查重）。
+        _sha = ""
+        try:
+            from hashmm.pipeline import fingerprint as _fp
+            _sha = _fp.sha256_file(filepath)
+            if _sha and not doc_id:
+                _dup = _fp.lookup(_sha)
+                if _dup:
+                    result.doc_id = _dup["doc_id"]
+                    result.status = "duplicate"
+                    result.errors = []
+                    result.elapsed_ms = int((time.time() - t0) * 1000)
+                    logger.info(f"指纹命中，跳过重复入库: {filepath.name} -> doc {_dup['doc_id']}")
+                    return result
+        except Exception as _fpe:
+            log_suppressed(logger, _fpe, "fingerprint.guard")
 
         def _update(stage: str, progress: float, msg: str = ""):
             self.progress.stage = stage
@@ -185,6 +204,25 @@ class IngestPipeline:
                 if doc.quality.issues:
                     result.errors.extend(doc.quality.issues)
                 return result
+
+            # V205 P1-6：质量闸（防坏）——低分文档进隔离区待人工复核，不污染索引。
+            # skip_quality=True（隔离区"放行"重入）或阈值=0 时跳过；隔离模块失败按放行处理。
+            if not skip_quality:
+                try:
+                    from hashmm.pipeline import quarantine as _quar
+                    _thr = _quar.threshold()
+                    _score = float(getattr(doc.quality, "overall_score", 1.0) or 1.0)
+                    if _thr > 0 and _score < _thr:
+                        _rec = _quar.stage(filepath, _score, list(doc.quality.issues or []))
+                        if _rec:
+                            result.status = "quarantined"
+                            result.errors.append(
+                                f"解析质量分 {_score:.2f} 低于阈值 {_thr}，已进隔离区待复核（qid={_rec['qid']}）")
+                            result.errors.extend(list(doc.quality.issues or [])[:5])
+                            _update("done", 1.0, f"已隔离: {filepath.name}（质量分 {_score:.2f}）")
+                            return result
+                except Exception as _qe:
+                    log_suppressed(logger, _qe, "quality.gate")
 
             # Stage 2: Preprocess + OCR correction
             _update("preprocessing", 0.15, f"文本预处理 + OCR 纠错...")
@@ -306,6 +344,13 @@ class IngestPipeline:
 
             # Stage 5: Done
             result.elapsed_ms = round((time.time() - t0) * 1000)
+            # V204 图2-①：入库成功登记指纹（供下次幂等命中）
+            try:
+                if _sha and result.status == "success":
+                    from hashmm.pipeline import fingerprint as _fp2
+                    _fp2.register(_sha, filepath.name, filepath.stat().st_size, result.doc_id)
+            except Exception as _rge:
+                log_suppressed(logger, _rge, "fingerprint.register")
             _update("done", 1.0, f"完成: {result.num_chunks} 切片, "
                     f"{result.num_entities} 实体, {result.num_relations} 关系")
 
@@ -399,6 +444,11 @@ class IngestPipeline:
         return len(communities)
 
     def remove_document(self, doc_id: str):
+        try:
+            from hashmm.pipeline import fingerprint as _fp3
+            _fp3.forget_doc(doc_id)
+        except Exception as _fde:
+            log_suppressed(logger, _fde, "fingerprint.forget")
         """Remove a document and its KG contributions."""
         # Remove from KG
         self.kg.remove_by_source(doc_id)
@@ -697,7 +747,7 @@ def main():
     print(f"\n{'='*50}")
     print(f"Ingestion complete: {len(results)} documents")
     for r in results:
-        status = "✅" if r.status == "success" else "⚠️" if r.status == "partial" else "❌"
+        status = "成功" if r.status == "success" else "部分" if r.status == "partial" else "失败"
         print(f"  {status} {r.filename}: {r.num_chunks} chunks, "
               f"{r.num_entities} entities, {r.num_relations} rels ({r.elapsed_ms}ms)")
         for err in r.errors:

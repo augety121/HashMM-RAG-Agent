@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import time
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 # 导出/导入的白名单（data/ 下的顶层项；存在才打包）
@@ -35,7 +36,7 @@ def build_export_zip(data_dir: Path, out_path: Path) -> dict:
                 continue
             if src.is_file():
                 if item == "hashmm.sqlite":
-                    snap = out_path.parent / f".snap-{int(time.time())}.sqlite"
+                    snap = out_path.parent / f".snap-{time.time_ns()}.sqlite"
                     try:
                         _sqlite_snapshot(src, snap)
                         zf.write(snap, arcname=item)
@@ -59,8 +60,11 @@ def build_export_zip(data_dir: Path, out_path: Path) -> dict:
 
 def _sqlite_snapshot(src: Path, dest: Path) -> None:
     """运行中安全拍快照（sqlite backup API，WAL/journal 一致性由引擎保证）。"""
-    with sqlite3.connect(str(src)) as conn, sqlite3.connect(str(dest)) as out:
+    # sqlite3.Connection's context manager commits/rolls back but does *not*
+    # close the handle. On Windows that left the snapshot locked when unlinking.
+    with closing(sqlite3.connect(str(src))) as conn, closing(sqlite3.connect(str(dest))) as out:
         conn.backup(out)
+        out.commit()
 
 
 def inspect_zip(zip_path: Path) -> dict:

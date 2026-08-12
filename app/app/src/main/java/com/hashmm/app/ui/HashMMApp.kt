@@ -19,7 +19,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.platform.testTag
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -31,7 +32,6 @@ import com.hashmm.app.ui.legal.PrivacyScreen
 import com.hashmm.app.ui.legal.TermsScreen
 import com.hashmm.app.ui.memory.MemoryScreen
 import com.hashmm.app.ui.knowledge.KnowledgeScreen
-import com.hashmm.app.ui.workbench.WorkbenchScreen
 import com.hashmm.app.ui.models.ModelConfigScreen
 import com.hashmm.app.ui.kg.KGScreen
 import com.hashmm.app.ui.admin.AdminScreen
@@ -39,6 +39,7 @@ import com.hashmm.app.ui.relay.RelayScreen
 import com.hashmm.app.ui.usage.UsageScreen
 import com.hashmm.app.ui.validity.ValidityScreen
 import com.hashmm.app.ui.remote.RemoteControlScreen
+import com.hashmm.app.ui.tasks.ComputerTaskLaunchScreen
 
 @Composable
 fun HashMMApp() {
@@ -46,26 +47,41 @@ fun HashMMApp() {
     val photoVm: PhotoRequestViewModel = hiltViewModel()
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().testTag("hashmm-root")) {
             NavHost(navController = nav, startDestination = Routes.MAIN) {
 
             composable(Routes.MAIN) {
                 MainScaffold(
                     onOpenConversation = { convId -> nav.navigate(Routes.chatDetail(convId)) },
                     onNewChat = { text -> nav.navigate(Routes.chatDetail(java.util.UUID.randomUUID().toString(), text)) },
+                    onNewChatDispatch = { text, kind -> nav.navigate(Routes.chatDetail(java.util.UUID.randomUUID().toString(), text, kind)) },
+                    onOpenTaskLauncher = { kind, preset -> nav.navigate(Routes.taskLaunch(kind, preset)) },
                     onOpenRemote = { nav.navigate(Routes.REMOTE) },
                     onLogin = { nav.navigate(Routes.login(Routes.MAIN)) },
-                    onOpenTerms = { nav.navigate(Routes.TERMS) },
-                    onOpenPrivacy = { nav.navigate(Routes.PRIVACY) },
                     onOpenMemory = { nav.navigate(Routes.MEMORY) },
                     onOpenKnowledge = { nav.navigate(Routes.KNOWLEDGE) },
-                    onOpenWebClient = { nav.navigate(Routes.WEB_WORKBENCH) },
+                    onOpenScheduled = { nav.navigate(Routes.SCHEDULED) },
+                    onOpenRuns = { nav.navigate(Routes.RUNS) },
+                    onOpenWork = { nav.navigate(Routes.workCanvas(it)) },
+                    onOpenAudit = { nav.navigate(Routes.AUDIT) },
+                    onOpenQuality = { nav.navigate(Routes.QUALITY) },
+                    onOpenSelfTest = { nav.navigate(Routes.SELFTEST) },
+                    onOpenContext = { nav.navigate(Routes.CONTEXT) },
+                    onOpenAdvanced = { nav.navigate(Routes.ADVANCED) },
                     onOpenModels = { nav.navigate(Routes.MODELS) },
                     onOpenKg = { nav.navigate(Routes.KG) },
                     onOpenAdmin = { nav.navigate(Routes.ADMIN) },
                     onOpenRelay = { nav.navigate(Routes.RELAY) },
                     onOpenUsage = { nav.navigate(Routes.USAGE) },
+                    onOpenAgentsStudio = { nav.navigate(Routes.AGENTS_STUDIO) },
+                    onOpenDocStudio = { nav.navigate(Routes.DOC_STUDIO) },
+                    onOpenControlHub = { nav.navigate(Routes.CONTROL_HUB) },
                     onOpenValidity = { nav.navigate(Routes.VALIDITY) },
+                    onOpenClientConn = { nav.navigate(Routes.CLIENT_CONN) },
+                    onOpenPersonalInfo = { nav.navigate(Routes.PERSONAL_INFO) },
+                    onOpenAbout = { nav.navigate(Routes.ABOUT) },
+                    onOpenHelp = { nav.navigate(Routes.HELP) },
+                    onOpenDataList = { nav.navigate(Routes.DATA_LIST) },
                 )
             }
 
@@ -95,24 +111,119 @@ fun HashMMApp() {
                 arguments = listOf(
                     navArgument("convId") { type = NavType.StringType },
                     navArgument("initial") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("dispatch") { type = NavType.StringType; defaultValue = "" },
                 ),
             ) {
-                ChatDetailScreen(onBack = { nav.popBackStack() })
+                ChatDetailScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenAgentsStudio = { convId, goal -> nav.navigate(Routes.agentsStudio(convId, goal)) },
+                )
+            }
+
+            composable(
+                route = Routes.TASK_LAUNCH_ROUTE,
+                arguments = listOf(
+                    navArgument("kind") { type = NavType.StringType },
+                    navArgument("preset") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { entry ->
+                ComputerTaskLaunchScreen(
+                    kind = entry.arguments?.getString("kind").orEmpty(),
+                    preset = entry.arguments?.getString("preset").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                    onLaunch = { prompt, dispatchKind ->
+                        nav.navigate(Routes.chatDetail(java.util.UUID.randomUUID().toString(), prompt, dispatchKind))
+                    },
+                )
             }
 
             composable(Routes.REMOTE) {
                 RemoteControlScreen(onBack = { nav.popBackStack() })
             }
 
+            composable(Routes.CLIENT_CONN) { com.hashmm.app.ui.profile.ClientConnectionScreen(onBack = { nav.popBackStack() }) }
+
+            composable(Routes.PERSONAL_INFO) { com.hashmm.app.ui.profile.PersonalInfoScreen(onBack = { nav.popBackStack() }) }
+
+            composable(Routes.ABOUT) {
+                com.hashmm.app.ui.profile.AboutScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenTerms = { nav.navigate(Routes.TERMS) },
+                    onOpenPrivacy = { nav.navigate(Routes.PRIVACY) },
+                )
+            }
+
+            composable(Routes.HELP) { com.hashmm.app.ui.profile.HelpFeedbackScreen(onBack = { nav.popBackStack() }) }
+
+            composable(Routes.DATA_LIST) { com.hashmm.app.ui.profile.DataCollectionScreen(onBack = { nav.popBackStack() }) }
+
             composable(Routes.TERMS) { TermsScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.PRIVACY) { PrivacyScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.MEMORY) { MemoryScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.SCHEDULED) { com.hashmm.app.ui.workbench.ScheduledScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.RUNS) {
+                com.hashmm.app.ui.workbench.RunsScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenConversation = { nav.navigate(Routes.chatDetail(it)) },
+                )
+            }
+            composable(
+                route = Routes.WORK_CANVAS_ROUTE,
+                arguments = listOf(navArgument("runId") { type = NavType.StringType }),
+            ) { entry ->
+                com.hashmm.app.ui.workbench.WorkCanvasScreen(
+                    runId = entry.arguments?.getString("runId").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                    onOpenConversation = { nav.navigate(Routes.chatDetail(it)) },
+                )
+            }
+            composable(Routes.AUDIT) { com.hashmm.app.ui.workbench.AuditScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.QUALITY) {
+                com.hashmm.app.ui.workbench.QualityScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenRuns = { nav.navigate(Routes.RUNS) },
+                )
+            }
+            composable(Routes.SELFTEST) { com.hashmm.app.ui.workbench.SelfTestScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.CONTEXT) {
+                com.hashmm.app.ui.workbench.ContextScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenConversation = { nav.navigate(Routes.chatDetail(it)) },
+                )
+            }
+            composable(Routes.ADVANCED) {
+                com.hashmm.app.ui.workbench.AdvancedScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenTaskLauncher = { kind, preset -> nav.navigate(Routes.taskLaunch(kind, preset)) },
+                    onOpenAgentsStudio = { nav.navigate(Routes.AGENTS_STUDIO) },
+                )
+            }
             composable(Routes.KNOWLEDGE) { KnowledgeScreen(onBack = { nav.popBackStack() }) }
-            composable(Routes.WEB_WORKBENCH) { WorkbenchScreen(onBack = { nav.popBackStack() }, showBack = true) }
             composable(Routes.MODELS) { ModelConfigScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.KG) { KGScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.ADMIN) { AdminScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.RELAY) { RelayScreen(onBack = { nav.popBackStack() }) }
+            composable(
+                route = Routes.AGENTS_STUDIO_ROUTE,
+                arguments = listOf(
+                    navArgument("convId") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("goal") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { entry ->
+                com.hashmm.app.ui.studio.AgentsStudioScreen(
+                    existingConversationId = entry.arguments?.getString("convId").orEmpty(),
+                    initialGoal = entry.arguments?.getString("goal").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                    onOpenConversation = { nav.navigate(Routes.chatDetail(it)) },
+                )
+            }
+            composable(Routes.DOC_STUDIO) {
+                com.hashmm.app.ui.studio.DocStudioScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenConversation = { nav.navigate(Routes.chatDetail(it)) },
+                )
+            }
+            composable(Routes.CONTROL_HUB) { com.hashmm.app.ui.studio.ControlHubScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.USAGE) { UsageScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.VALIDITY) { ValidityScreen(onBack = { nav.popBackStack() }) }
             }

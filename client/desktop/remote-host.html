@@ -17,25 +17,74 @@
 const qs = new URLSearchParams(location.search);
 const MODE = qs.get("mode") || "lan";           // lan | account
 const PORT = qs.get("port") || "17690";
-let TOKEN = qs.get("token") || "";
+let TOKEN = "";                                // secret arrives over the narrow preload bridge
+let SOCKET_TICKET = "";                        // V1800 single-use 30s WebSocket admission ticket
 const SIGNAL = qs.get("signal") || "";          // account 模式的后端信令 wss
 const NAME = qs.get("name") || "被控端";
+let DEVICE_ID = "";
+let APP_VERSION = "";
+try {
+  DEVICE_ID = localStorage.getItem("hmm_remote_device_id") || "";
+  if (!DEVICE_ID) {
+    DEVICE_ID = "desktop-" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+    localStorage.setItem("hmm_remote_device_id", DEVICE_ID);
+  }
+} catch (_e) { DEVICE_ID = "desktop-" + Math.random().toString(36).slice(2); }
 const logEl = document.getElementById("log");
 const log = (s) => { try { logEl.textContent = s; } catch (_e) {} };
 
-let ipc = null; try { ipc = require("electron").ipcRenderer; } catch (_e) {}
+let ipc = (window.hashmmRemoteHost && window.hashmmRemoteHost.ipc) || null;
+const reportHostStatus = (state, detail) => {
+  if (!ipc) return;
+  try {
+    ipc.send("remote-host-status", {
+      state: String(state || "unknown"),
+      registered: state === "registered",
+      deviceId: DEVICE_ID,
+      detail: String(detail || "").slice(0, 240),
+      at: Date.now(),
+    });
+  } catch (_e) {}
+};
+try { if (ipc) ipc.on("remote-host-bootstrap", (_e, payload) => {
+  const t = payload && payload.token;
+  const ticket = payload && payload.ticket;
+  if ((!t || typeof t !== "string") && (!ticket || typeof ticket !== "string")) return;
+  TOKEN = (t && typeof t === "string") ? t : "";
+  SOCKET_TICKET = (ticket && typeof ticket === "string") ? ticket : "";
+  if (payload && payload.deviceId) DEVICE_ID = String(payload.deviceId).slice(0, 128);
+  if (payload && payload.appVersion) APP_VERSION = String(payload.appVersion).slice(0, 40);
+  reportHostStatus("media_ready");
+  if (MODE !== "account" && (!ws || ws.readyState > 1)) connect();
+}); } catch (_e) {}
+// Renderer readiness is an explicit handshake.  did-finish-load alone can race
+// preload/listener installation on slower packaged Windows machines.
+try { if (ipc) ipc.send("remote-host-ready", { at: Date.now(), mode: MODE }); } catch (_e) {}
 // V105 远程常驻在线：主进程会随 Supabase token 刷新把【新令牌】推过来，这里热更新 TOKEN。
 // 原因：本窗启动时拿到的 access_token 约 1 小时就过期，过期后 presence 上报会 401 静默失败，
 // 设备在手机端「我的设备」里 45s 后消失 —— 这就是「过一段时间远程界面里没东西」的根因。
-try { if (ipc) ipc.on("remote-host-token", (_e, t) => { if (t && typeof t === "string" && t.length > 20) TOKEN = t; }); } catch (_e) {}
+try { if (ipc) ipc.on("remote-host-token", (_e, t) => {
+  if (t && typeof t === "string" && t.length > 20) {
+    TOKEN = t;
+    if (_signalAuthRejected) {
+      _signalAuthRejected = false; _signalReconnectAttempt = 0;
+      try { if (!ws || ws.readyState > 1) connect(); } catch (_e2) {}
+    }
+  }
+}); } catch (_e) {}
+try { if (ipc) ipc.on("remote-host-access-decision", (_e, decision) => {
+  if (!decision || !decision.sessionId || !signalReady()) return;
+  signalSend({ type: "permissionDecision", sessionId: decision.sessionId,
+    decision: decision.decision === "approve" ? "approve" : "deny",
+    scopes: Array.isArray(decision.scopes) ? decision.scopes : [] });
+}); } catch (_e) {}
 // V103.90 远控自适应质量/编码偏好策略（纯逻辑模块；缺失则退回静态质量，不影响连接）。
-let RQ = null; try { RQ = require("./remote-quality.js"); } catch (_e) {}
+let RQ = (window.hashmmRemoteHost && window.hashmmRemoteHost.quality) || null;
 // V103.90 远控控制协议（结构化+版本化+校验；缺失则退回旧 {type:"input"} 直通）。
-let RP = null; try { RP = require("./remote-protocol.js"); } catch (_e) {}
+let RP = (window.hashmmRemoteHost && window.hashmmRemoteHost.protocol) || null;
 // V103.90 远控扩展控制器（双向剪贴板同步等）。
-let RX = null; try { RX = require("./remote-extras.js"); } catch (_e) {}
-let _clip = null; try { _clip = require("electron").clipboard; } catch (_e) {}
-const _clipSync = (RX && _clip) ? new RX.ClipboardSync({ minIntervalMs: 400 }) : null;
+let _clip = (window.hashmmRemoteHost && window.hashmmRemoteHost.clipboard) || null;
+const _clipSync = _clip ? { onLocalChange: (text) => _clip.onLocalChange(text), onRemoteData: (data) => _clip.onRemoteData(data) } : null;
 
 // V103.51 隐私防护：被控端把发出的视频轨替换为黑屏（停止泄露屏幕内容）。
 // 真正锁本地键鼠由主进程在注入链处拒绝注入（_remotePrivacyOn）；这里只管「别人看到的画面」。
@@ -65,7 +114,7 @@ if (ipc) {
   ipc.on("remote-set-privacy", (_e, on) => { try { _applyPrivacyToSenders(!!on); log(on ? "隐私模式：屏幕已对远端隐藏" : "隐私模式已关闭"); } catch (_e2) {} });
   // V103.52 主进程 → 经信令把文件/多屏的回复发回指定 viewer
   ipc.on("remote-host-reply", (_e, payload) => {
-    try { if (ws && ws.readyState === 1 && payload && payload.type) ws.send(JSON.stringify(payload)); } catch (_e2) {}
+    try { if (signalReady() && payload && payload.type) signalSend(payload); } catch (_e2) {}
   });
   ipc.on("remote-set-quality", (_e, q) => {
     // 调整发送编码码率/帧率上限（真彩=高码率）。失败静默，不影响连接。
@@ -85,12 +134,41 @@ if (ipc) {
   });
 }
 
-let stream = null, iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }];
+let stream = null, iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
 let _audioOn = false;       // 远端是否听本机声音（默认关，按需由 viewer 控制开启）
 let _relayOnly = false;     // 安全中转(Beta)：强制经 TURN 中转，不暴露 P2P 直连 IP
 const pcs = new Map();              // vid -> RTCPeerConnection
 let manualPC = null;
 let ws = null;
+let _accountSignalReady = false;
+let _signalReconnectAttempt = 0, _signalReconnectTimer = null, _signalAuthRejected = false, _signalGeneration = 0;
+
+function signalReady() { return MODE === "account" ? _accountSignalReady : !!(ws && ws.readyState === 1); }
+function signalSend(payload) {
+  try {
+    if (MODE === "account") {
+      if (!ipc || !_accountSignalReady) return false;
+      ipc.send("remote-host-signal-send", payload);
+      return true;
+    }
+    if (!ws || ws.readyState !== 1) return false;
+    ws.send(typeof payload === "string" ? payload : JSON.stringify(payload));
+    return true;
+  } catch (_e) { return false; }
+}
+function sendMilestone(vid, milestone, detail) {
+  const sessionId = _sessionByViewer.get(vid) || _relaySessionId || "";
+  if (!sessionId) return false;
+  return signalSend({ type: "milestone", vid, sessionId, milestone, detail: detail || {} });
+}
+try { if (ipc) ipc.on("remote-host-signal-state", (_e, state) => {
+  _accountSignalReady = !!(state && state.registered);
+  if (state && state.state === "registered") log("被控端已就绪，等待连接请求…");
+  else if (state && state.state === "reconnecting") log("远程控制通道正在恢复…");
+  else if (state && (state.state === "error" || state.state === "rejected" || state.state === "auth_expired")) {
+    log("远程主机注册失败：" + String(state.detail || state.state));
+  }
+}); } catch (_e) {}
 
 async function ensureStream() {
   if (stream) return stream;
@@ -116,40 +194,42 @@ async function ensureStream() {
   // 音频轨默认按当前开关状态（默认静音）；开关切换只改 track.enabled，无需重协商。
   try { const at = stream.getAudioTracks()[0]; if (at) at.enabled = _audioOn; } catch (_e) {}
   document.getElementById("self").srcObject = stream;
-  startRelayPush();   // 同时把画面以低帧率推到后端中继，供 P2P/TURN 打不通的查看端 HTTP 兜底拉取
   return stream;
 }
 // 被控端诊断：把抓屏/推流状态 POST 到后端日志（黑屏排障用，用户分享后端日志即可看到）。
 function hlog(msg) {
   try {
     console.log("[host-diag]", msg);
-    const base = _relayHttpBase(); const uid = _relayUid();
-    if (!base) return;
+    const base = _relayHttpBase();
+    if (!base || !_relaySessionId || !_relayTicket) return;
     fetch(base + "/api/remote/relay/hostlog", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) },
-      body: JSON.stringify({ msg: String(msg), room: uid }),
+      headers: { "Content-Type": "application/json", Authorization: "Remote " + _relayTicket },
+      body: JSON.stringify({ msg: String(msg), room: _relaySessionId }),
       keepalive: true,
     }).catch(() => {});
   } catch (_e) {}
 }
 // ── 帧中继兜底（仅账号模式）：把屏幕以低帧率 JPEG 推到后端，供 P2P/TURN 打不通的查看端 GET 拉取。
-// 不依赖 WebRTC 是否连通；信令与输入仍走原通道，只有「画面」多了这条 HTTP 兜底路。room=账号 uid。
-let _relayPushTimer = null;
-function _relayUid() {
-  try { return (JSON.parse(atob((TOKEN.split(".")[1]) || "")) || {}).sub || ""; } catch (_e) { return ""; }
-}
+// 不依赖 WebRTC 是否连通；中继 room 使用批准后的 session id，凭短时 host ticket 推帧。
+let _relayPushTimer = null, _relaySessionId = "", _relayTicket = "", _relayViewerId = "";
+let _compatPreviewRequested = false;
+let _legacyRelayDelayMs = 12000;
+const _relayFallbackTimers = new Map();
+const _sessionByViewer = new Map();
+const _lastControlSeqByViewer = new Map();
+const _fileChannelsByViewer = new Map();
 function _relayHttpBase() {
   // 账号模式优先用主进程传入的后端地址（与查看端 App 同一后端）；否则从 SIGNAL(WS) 派生。
   try { const ab = qs.get("apiBase"); if (ab) return ab.replace(/\/+$/, ""); } catch (_e) {}
   if (!SIGNAL) return "";
-  try { return SIGNAL.replace(/^ws/, "http").replace(/\/api\/remote\/ws.*$/, ""); } catch (_e) { return ""; }
+  try { return SIGNAL.replace(/^ws/, "http").replace(/\/api\/remote\/(?:v\d+\/)?ws.*$/, ""); } catch (_e) { return ""; }
 }
 function startRelayPush() {
-  if (_relayPushTimer) return;                 // 不再卡 MODE：只要能推就推（有信令URL+uid 即账号场景）
-  const base = _relayHttpBase(); const uid = _relayUid();
-  if (!base || !uid) { console.warn("[relay] 无法推帧：base/uid 为空", { base, uid, SIGNAL, MODE }); return; }
-  console.log("[relay] 开始推帧到", base, "room=", uid);
+  if (_relayPushTimer) return;
+  const base = _relayHttpBase();
+  if (!base || !_relaySessionId || !_relayTicket) { console.warn("[relay] 尚无已批准会话，暂不推帧"); return; }
+  console.log("[relay] 开始推帧到", base, "room=", _relaySessionId);
   const cvs = document.createElement("canvas");
   const ctx = cvs.getContext("2d");
   const vid = document.getElementById("self");
@@ -161,7 +241,7 @@ function startRelayPush() {
     // P2P(WebRTC)直连在用 → 查看端走直连拿画面，中继完全不需要，直接一帧都不推（后端日志彻底不刷屏）。
     let p2pLive = false;
     try { pcs.forEach((pc) => { if (pc && pc.connectionState === "connected") p2pLive = true; }); } catch (_e) {}
-    if (!p2pLive && !busy && stream && !_privacyOn) {  // 隐私黑屏时不推真实画面
+    if ((!p2pLive || _compatPreviewRequested) && !busy && stream && !_privacyOn) {  // 兼容预览在直连“已连接但无首帧”时仍须可用
       const w = vid.videoWidth || 0, h = vid.videoHeight || 0;
       if (w && h) {
         busy = true;
@@ -171,9 +251,9 @@ function startRelayPush() {
           ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
           const blob = await new Promise((res) => cvs.toBlob(res, "image/jpeg", 0.6));
           if (blob) {
-            const r = await fetch(base + "/api/remote/relay/" + encodeURIComponent(uid) + "/push", {
+            const r = await fetch(base + "/api/remote/relay/" + encodeURIComponent(_relaySessionId) + "/push", {
               method: "POST",
-              headers: { "Authorization": "Bearer " + TOKEN, "Content-Type": "image/jpeg" },
+              headers: { "Authorization": "Remote " + _relayTicket, "Content-Type": "image/jpeg" },
               body: blob,
             });
             if (r && r.ok) {
@@ -181,24 +261,62 @@ function startRelayPush() {
               let watching = false;
               try { watching = !!(await r.json()).watching; } catch (_e) {}
               _delay = watching ? 250 : 2500;
-              if (!_diagPushed) { _diagPushed = true; hlog("中继首帧已推送 " + cvs.width + "x" + cvs.height + "（画面在流）"); }
-            } else if (!_diagFailLogged && r) { _diagFailLogged = true; hlog("中继推帧 HTTP " + r.status + "（查看端将拉不到画面）"); }
+              if (!_diagPushed) {
+                _diagPushed = true;
+                sendMilestone(_relayViewerId, "fallback_first_frame", { stage: "compat_preview", width: cvs.width, height: cvs.height });
+                hlog("兼容预览首帧已推送 " + cvs.width + "x" + cvs.height);
+              }
+            } else if (!_diagFailLogged && r) {
+              _diagFailLogged = true;
+              const code = r.status === 401 ? "RELAY_HTTP_401" : r.status === 403 ? "RELAY_HTTP_403" : r.status === 404 ? "RELAY_HTTP_404" : "RELAY_HOST_NOT_PUSHING";
+              sendMilestone(_relayViewerId, "terminal_error", { stage: "compat_preview", errorCode: code });
+              hlog("兼容预览推帧 HTTP " + r.status);
+            }
           }
         } catch (_e) {
-          if (!_diagFailLogged) { _diagFailLogged = true; hlog("中继推帧异常：" + ((_e && _e.message) || _e)); }
+          if (!_diagFailLogged) {
+            _diagFailLogged = true;
+            sendMilestone(_relayViewerId, "terminal_error", { stage: "compat_preview", errorCode: "RELAY_REQUEST_TIMEOUT" });
+            hlog("兼容预览推帧异常：" + ((_e && _e.message) || _e));
+          }
         }
         busy = false;
       }
     }
     // P2P 在用时只本地复查（不发任何请求），3 秒一次；P2P 断了立刻回到正常中继节奏。
-    _relayPushTimer = setTimeout(pump, p2pLive ? 3000 : _delay);
+    _relayPushTimer = setTimeout(pump, (p2pLive && !_compatPreviewRequested) ? 3000 : _delay);
   };
   _relayPushTimer = setTimeout(pump, 0);
+}
+function stopRelayPush() {
+  if (_relayPushTimer) clearTimeout(_relayPushTimer);
+  _relayPushTimer = null;
+}
+function cancelRelayFallback(vid) {
+  const timer = _relayFallbackTimers.get(vid);
+  if (timer) clearTimeout(timer);
+  _relayFallbackTimers.delete(vid);
+}
+function scheduleRelayFallback(vid, delayMs) {
+  cancelRelayFallback(vid);
+  const delay = Math.max(0, Number.isFinite(Number(delayMs)) ? Number(delayMs) : _legacyRelayDelayMs);
+  _relayFallbackTimers.set(vid, setTimeout(() => {
+    _relayFallbackTimers.delete(vid);
+    const pc = pcs.get(vid);
+    if (pc && pc.connectionState === "connected") return;
+    if (vid !== _relayViewerId) return;
+    hlog("ICE 直连/TURN 尚未建立，启动兼容画面预览");
+    sendMilestone(vid, "fallback_started", { stage: "compat_preview" });
+    startRelayPush();
+  }, delay));
 }
 
 function makePC(onIce) {
   // 安全中转(Beta)：relayOnly 时强制 iceTransportPolicy=relay（仅经 TURN，不暴露直连 IP）。
-  const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: _relayOnly ? "relay" : "all" });
+  const pc = new RTCPeerConnection({
+    iceServers, iceTransportPolicy: _relayOnly ? "relay" : "all",
+    iceCandidatePoolSize: 2, bundlePolicy: "max-bundle",
+  });
   pc.onicecandidate = (e) => { if (e.candidate) onIce(e.candidate); };
   return pc;
 }
@@ -238,6 +356,26 @@ async function addScreenTracks(pc) { const s = await ensureStream(); for (const 
 // 与手动 remote-set-quality 共存：手动设置后暂停自适应 20s，避免互相打架。
 let _tierIndex = RQ ? RQ.DEFAULT_TIER : 2;
 let _autoPausedUntil = 0;
+const _lastTransportReportByViewer = new Map();
+function _selectedTransport(entries) {
+  try {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    let pair = entries.find((entry) => entry.type === "candidate-pair" && entry.selected);
+    if (!pair) {
+      const transport = entries.find((entry) => entry.type === "transport" && entry.selectedCandidatePairId);
+      if (transport) pair = byId.get(transport.selectedCandidatePairId);
+    }
+    if (!pair) pair = entries.find((entry) => entry.type === "candidate-pair" && entry.nominated && entry.state === "succeeded");
+    const local = pair ? byId.get(pair.localCandidateId) : null;
+    return {
+      candidateType: (local && local.candidateType) || "unknown",
+      protocol: (local && (local.protocol || local.relayProtocol)) || "unknown",
+      rttMs: pair && Number.isFinite(pair.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
+      bytesSent: pair && Number.isFinite(pair.bytesSent) ? pair.bytesSent : null,
+      bytesReceived: pair && Number.isFinite(pair.bytesReceived) ? pair.bytesReceived : null,
+    };
+  } catch (_e) { return { candidateType: "unknown", protocol: "unknown" }; }
+}
 function _applyTierToSenders(info) {
   for (const pc of pcs.values()) {
     try {
@@ -258,7 +396,8 @@ async function _adaptOnce() {
   if (Date.now() < _autoPausedUntil) return;
   try {
     // 取第一个活跃连接的统计作代表（单被控多观看场景下足够指导编码档位）
-    const pc = pcs.values().next().value;
+    const first = pcs.entries().next().value;
+    const vid = first && first[0], pc = first && first[1];
     if (!pc || !pc.getStats) return;
     const report = await pc.getStats();
     const entries = []; report.forEach(s => entries.push(s));
@@ -268,7 +407,22 @@ async function _adaptOnce() {
       _tierIndex = decision.tierIndex;
       _applyTierToSenders(decision);
       try { log(`自适应质量：${decision.direction === "down" ? "↓" : "↑"} ${decision.name}（${decision.reason}）`); } catch (_e) {}
-      if (ipc) { try { ipc.send("remote-quality-adapted", { tier: decision.name, index: _tierIndex, reason: decision.reason }); } catch (_e) {} }
+    }
+    // 每次采样都上报，而不只在升降档时上报；否则主界面永远看不到稳定连接的真实指标。
+    if (ipc) {
+      try {
+        ipc.send("remote-quality-telemetry", RQ.buildQualityTelemetry(stats, decision, {
+          mode: MODE === "account" || MODE === "supabase" ? "account" : "lan",
+          generation: _signalGeneration,
+          sampledAt: Date.now(),
+        }));
+      } catch (_e) {}
+    }
+    if (MODE === "account" && signalReady() && vid && Date.now() - (_lastTransportReportByViewer.get(vid) || 0) >= 60000) {
+      _lastTransportReportByViewer.set(vid, Date.now());
+      const transport = _selectedTransport(entries);
+      transport.packetLossPct = stats && Number.isFinite(stats.packetLossPct) ? stats.packetLossPct : null;
+      signalSend({ type: "transportReport", vid, sessionId: _sessionByViewer.get(vid) || "", report: transport });
     }
   } catch (_e) { /* 单次自适应失败忽略 */ }
 }
@@ -277,11 +431,11 @@ setInterval(_adaptOnce, 3000);
 // V103.90 双向剪贴板：轮询本机剪贴板，有新内容（非来自对端的回环）就发给 viewer 端。
 // Electron 无剪贴板变更事件，轮询是常规做法；_clipSync 负责防回环/去重/防抖。
 function _clipPollOnce() {
-  if (!_clipSync || !_clip || !ws || ws.readyState !== 1 || _privacyOn) return;
+  if (!_clipSync || !_clip || !signalReady() || _privacyOn) return;
   try {
     const txt = _clip.readText();
     const r = _clipSync.onLocalChange(txt);
-    if (r.send) ws.send(JSON.stringify({ type: "clip", text: r.payload.text, hash: r.payload.hash }));
+    if (r.send) signalSend({ type: "clip", text: r.payload.text, hash: r.payload.hash });
   } catch (_e) { /* 单次轮询失败忽略 */ }
 }
 setInterval(_clipPollOnce, 1000);
@@ -290,21 +444,94 @@ setInterval(_clipPollOnce, 1000);
 function wsAddress() { return MODE === "account" ? SIGNAL : ("ws://127.0.0.1:" + PORT + "/"); }
 function connect() {
   const url = wsAddress();
-  if (!url) { log("缺少信令地址"); return; }
-  ws = new WebSocket(url);
+  if (_signalReconnectTimer) { clearTimeout(_signalReconnectTimer); _signalReconnectTimer = null; }
+  const generation = ++_signalGeneration;
+  if (!url) { log("缺少信令地址"); if (MODE === "account") reportHostStatus("error", "signal-url-missing"); return; }
+  try { ws = new WebSocket(url); }
+  catch (error) {
+    if (MODE === "account") reportHostStatus("error", `socket-constructor:${String(error && error.message || error).slice(0, 120)}`);
+    return;
+  }
   ws.onopen = () => {
-    if (MODE === "account") { ws.send(JSON.stringify({ type: "auth", token: TOKEN, role: "host", name: NAME, platform: (navigator.platform || "") })); log("连接账号信令，注册被控端…"); }
+    if (generation !== _signalGeneration) return;
+    _signalReconnectAttempt = 0; _signalAuthRejected = false;
+    if (MODE === "account") { reportHostStatus("authenticating"); signalSend({ type: "auth", token: TOKEN, ticket: SOCKET_TICKET, role: "host", deviceId: DEVICE_ID, name: NAME, platform: (navigator.platform || ""), appVersion: APP_VERSION, protocol: "hashmm.remote.v4" }); log("连接账号信令，注册被控端…"); }
     else { ws.send(JSON.stringify({ type: "hostRegister", token: TOKEN })); log("连接本机信令，注册投屏端…"); }
   };
-  ws.onclose = () => { log("信令断开，3s 后重连"); setTimeout(connect, 3000); };
-  ws.onerror = () => {};
+  ws.onclose = () => {
+    if (generation !== _signalGeneration || _signalAuthRejected) return;
+    if (MODE === "account") reportHostStatus("disconnected", "signal-closed");
+    // Account tickets are single use.  Main owns recovery so every reconnect
+    // obtains a fresh ticket; retrying here would loop with an invalid ticket.
+    if (MODE === "account") { log("账号信令已断开，正在申请新的连接凭证"); return; }
+    const delays = [1000, 2000, 4000, 8000, 15000];
+    const delay = delays[Math.min(_signalReconnectAttempt++, delays.length - 1)];
+    log(`信令断开，${Math.ceil(delay / 1000)}s 后重连`);
+    _signalReconnectTimer = setTimeout(connect, delay);
+  };
+  ws.onerror = () => { if (MODE === "account") reportHostStatus("error", `signal-error:${url.startsWith("wss:") ? "wss" : "ws"}`); };
   ws.onmessage = async (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch (_e) { return; }
-    if (m.type === "hostReady" || m.type === "authOk") { if (Array.isArray(m.iceServers) && m.iceServers.length) iceServers = m.iceServers; log("被控端就绪，等待查看端…"); try { await ensureStream(); } catch (e) { log("屏幕捕获失败：" + ((e && e.message) || e)); } return; }
-    if (m.type === "hostRejected" || m.type === "authFail") { log("注册被拒（凭证不符）"); return; }
-    if (m.type === "viewerJoined") { await onViewerJoined(m.vid); return; }
-    if (m.type === "viewerLeft") { const pc = pcs.get(m.vid); if (pc) { try { pc.close(); } catch (_e) {} pcs.delete(m.vid); } return; }
+    await onSignalMessage(m);
+  };
+}
+
+async function onSignalMessage(m) {
+    if (!m || typeof m !== "object") return;
+    if (m.type === "hostReady" || m.type === "authOk") {
+      if (MODE === "account") reportHostStatus("registered");
+      if (Array.isArray(m.iceServers) && m.iceServers.length) iceServers = m.iceServers;
+      log("被控端就绪，等待连接请求…");
+      if (MODE !== "account") { try { await ensureStream(); } catch (e) { log("屏幕捕获失败：" + ((e && e.message) || e)); } }
+      return;
+    }
+    if (m.type === "heartbeatAck") return;
+    if (m.type === "leaseRejected" || m.type === "deviceReplaced") {
+      if (MODE === "account") reportHostStatus("disconnected", m.type);
+      try { ws.close(); } catch (_e) {}
+      return;
+    }
+    if (m.type === "hostRejected" || m.type === "authFail") { _signalAuthRejected = true; if (MODE === "account") reportHostStatus("rejected", `auth:${String(m.reason || "credential-rejected").slice(0, 100)}`); log("注册被拒（凭证不符），等待新登录凭证"); try { ws.close(); } catch (_e) {} return; }
+    if (m.type === "permissionRequest") {
+      if (ipc) { try { ipc.send("remote-host-access-request", m); } catch (_e) {} }
+      return;
+    }
+    if (m.type === "viewerJoined") {
+      _relaySessionId = m.sessionId || ""; _relayTicket = m.ticket || ""; _relayViewerId = m.vid || "";
+      _relayOnly = !!m.relayOnly;
+      _legacyRelayDelayMs = Math.max(3000, Number(m.legacyRelayAfterMs) || 12000);
+      _sessionByViewer.set(m.vid, _relaySessionId);
+      _lastControlSeqByViewer.set(m.vid, 0);
+      await onViewerJoined(m.vid, m.scopes || []); return;
+    }
+    if (m.type === "ticket" && m.sessionId === _relaySessionId) { _relayTicket = m.ticket || _relayTicket; return; }
+    if (m.type === "viewerLeft") {
+      cancelRelayFallback(m.vid);
+      const pc = pcs.get(m.vid); if (pc) { try { pc.close(); } catch (_e) {} pcs.delete(m.vid); }
+      _grantsByViewer.delete(m.vid);
+      _sessionByViewer.delete(m.vid); _lastControlSeqByViewer.delete(m.vid);
+      _fileChannelsByViewer.delete(m.vid);
+      if (m.vid === _relayViewerId) { stopRelayPush(); _compatPreviewRequested = false; _relaySessionId = ""; _relayTicket = ""; _relayViewerId = ""; }
+      return;
+    }
     if (m.type === "rtcSignal") { await onViewerSignal(m.vid, m.kind, m.data); return; }
+    if (m.type === "compatReady") {
+      if (m.vid === _relayViewerId && m.sessionId === _relaySessionId) {
+        _compatPreviewRequested = true;
+        sendMilestone(m.vid, "fallback_started", { stage: "compat_preview" });
+        startRelayPush();
+        send({ type: "compatStarted", vid: m.vid, sessionId: _relaySessionId });
+      }
+      return;
+    }
+    if (m.type === "rtcOn") {
+      _compatPreviewRequested = false; stopRelayPush();
+      return;
+    }
+    if (m.type === "rtcOff") {
+      if (m.vid === _relayViewerId || !m.vid) scheduleRelayFallback(_relayViewerId, 0);
+      return;
+    }
     // 账号模式：viewer 的输入经后端中继到这里 → 交主进程注入
     // V103.90：输入消息经控制协议解码（兼容旧 {type:"input"} 与新 v1 信封），转发归一后的输入数据。
     if (RP) {
@@ -339,19 +566,111 @@ function connect() {
       } catch (_e) {}
       return;
     }
+}
+try { if (ipc) ipc.on("remote-host-signal-message", (_e, message) => {
+  const deliveryId = String(message && message._deliveryId || "");
+  onSignalMessage(message).then(() => {
+    if (deliveryId) ipc.send("remote-host-signal-ack", { deliveryId, ok: true });
+  }).catch((error) => {
+    if (deliveryId) ipc.send("remote-host-signal-ack", { deliveryId, ok: false });
+    reportHostStatus("media_error", String(error && error.message || error || "signal-handler-failed"));
+  });
+}); } catch (_e) {}
+// V1800 device lease: browser WebSocket ping frames are not exposed to JS, so
+// keep a small application heartbeat.  The server fences stale generations and
+// expires a host after 35 seconds when this loop can no longer reach it.
+setInterval(() => {
+  try { if (MODE !== "account" && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "heartbeat", at: Date.now() })); } catch (_e) {}
+}, 10000);
+const _grantsByViewer = new Map();
+async function onViewerJoined(vid, scopes) {
+  try {
+    _grantsByViewer.set(vid, new Set(Array.isArray(scopes) ? scopes : []));
+    if (pcs.has(vid)) { try { pcs.get(vid).close(); } catch (_e) {} }
+    const candidateCounts = { host: 0, srflx: 0, prflx: 0, relay: 0 };
+    const pc = makePC((cand) => {
+      try { const found = String(cand && cand.candidate || "").match(/ typ (host|srflx|prflx|relay)(?: |$)/); if (found) candidateCounts[found[1]] += 1; } catch (_e) {}
+      signalSend({ type: "rtcSignal", vid, kind: "ice", data: cand });
+    });
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === "complete") sendMilestone(vid, "candidates_gathered", { stage: "ice", candidateCounts });
+    };
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      if (state === "connected") {
+        cancelRelayFallback(vid);
+        stopRelayPush();
+        hlog("WebRTC 媒体通道已连接，画面不经过 HashMM API 服务器");
+        _selectedTransportForPC(pc).then((transport) => {
+          sendMilestone(vid, "candidate_pair_selected", Object.assign({ stage: "ice" }, transport));
+          sendMilestone(vid, "dtls_connected", Object.assign({ stage: "dtls" }, transport));
+        }).catch(() => {});
+      } else if (state === "failed") {
+        sendMilestone(vid, "terminal_error", { stage: "ice", errorCode: "ICE_ALL_PAIRS_FAILED" });
+        scheduleRelayFallback(vid, 0);
+      } else if (state === "disconnected") {
+        scheduleRelayFallback(vid, 3000);
+      }
+    };
+    // V420: approved pointer/keyboard events use the encrypted WebRTC
+    // DataChannel.  The authenticated signaling socket remains the fallback.
+    const bindControlChannel = (control) => {
+      control.onmessage = (event) => {
+        let message; try { message = JSON.parse(event.data); } catch (_e) { return; }
+        if (!message || message.type !== "input" || !_grantsByViewer.get(vid)?.has("control")) return;
+        const seq = Number(message.seq), ts = Number(message.timestamp), now = Date.now();
+        if (message.sessionId !== _sessionByViewer.get(vid) || !Number.isSafeInteger(seq) || seq < 1
+            || seq <= (_lastControlSeqByViewer.get(vid) || 0) || !Number.isFinite(ts)
+            || ts < now - 30000 || ts > now + 10000) return;
+        _lastControlSeqByViewer.set(vid, seq);
+        if (ipc) { try { ipc.send("remote-host-input", message); } catch (_e) {} }
+      };
+    };
+    try { bindControlChannel(pc.createDataChannel("hashmm-control-v1", { ordered: true })); } catch (_e) {}
+    try { bindControlChannel(pc.createDataChannel("hashmm-pointer-v1", { ordered: false, maxRetransmits: 0 })); } catch (_e) {}
+    try {
+      const fileChannel = pc.createDataChannel("hashmm-file-v1", { ordered: true });
+      _fileChannelsByViewer.set(vid, fileChannel);
+      fileChannel.onclose = () => { if (_fileChannelsByViewer.get(vid) === fileChannel) _fileChannelsByViewer.delete(vid); };
+      fileChannel.onmessage = (event) => {
+        if (!_grantsByViewer.get(vid)?.has("file_write")) return;
+        let message; try { message = JSON.parse(event.data); } catch (_e) { return; }
+        const allowed = new Set(["fileOffer", "fileChunk", "fileDone", "fileCancel", "fileResumeQuery"]);
+        if (!message || !allowed.has(message.type) || message.sessionId !== _sessionByViewer.get(vid)) return;
+        if (ipc) { try { ipc.send("remote-host-file", Object.assign({}, message, { vid })); } catch (_e) {} }
+      };
+    } catch (_e) { /* authenticated signaling fallback remains available */ }
+    pcs.set(vid, pc);
+    sendMilestone(vid, "capture_starting", { stage: "capture" });
+    await addScreenTracks(pc);
+    sendMilestone(vid, "capture_started", { stage: "capture" });
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    sendMilestone(vid, "offer_created", { stage: "signaling" });
+    signalSend({ type: "rtcSignal", vid, kind: "offer", data: pc.localDescription });
+    scheduleRelayFallback(vid, _legacyRelayDelayMs);
+    log("已向查看端 #" + vid + " 发送 offer");
+  } catch (e) {
+    sendMilestone(vid, "terminal_error", { stage: "capture_or_offer", errorCode: stream ? "OFFER_NOT_DELIVERED" : "CAPTURE_DENIED" });
+    scheduleRelayFallback(vid, 0); log("建立到 #" + vid + " 失败：" + ((e && e.message) || e));
+  }
+}
+
+async function _selectedTransportForPC(pc) {
+  const raw = await pc.getStats(), entries = []; raw.forEach((entry) => entries.push(entry));
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  let pair = entries.find((entry) => entry.type === "candidate-pair" && entry.selected);
+  if (!pair) { const transport = entries.find((entry) => entry.type === "transport" && entry.selectedCandidatePairId); if (transport) pair = byId.get(transport.selectedCandidatePairId); }
+  if (!pair) pair = entries.find((entry) => entry.type === "candidate-pair" && entry.nominated && entry.state === "succeeded");
+  const local = pair ? byId.get(pair.localCandidateId) : null;
+  return {
+    candidateType: (local && local.candidateType) || "unknown",
+    protocol: (local && (local.protocol || local.relayProtocol)) || "unknown",
+    rttMs: pair && Number.isFinite(pair.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
   };
 }
-async function onViewerJoined(vid) {
-  try {
-    if (pcs.has(vid)) { try { pcs.get(vid).close(); } catch (_e) {} }
-    const pc = makePC((cand) => ws.send(JSON.stringify({ type: "rtcSignal", vid, kind: "ice", data: cand })));
-    pcs.set(vid, pc);
-    await addScreenTracks(pc);
-    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-    ws.send(JSON.stringify({ type: "rtcSignal", vid, kind: "offer", data: pc.localDescription }));
-    log("已向查看端 #" + vid + " 发送 offer");
-  } catch (e) { log("建立到 #" + vid + " 失败：" + ((e && e.message) || e)); }
-}
+setInterval(() => {
+  try { if (signalReady() && _relayViewerId) signalSend({ type: "refreshTicket", vid: _relayViewerId }); } catch (_e) {}
+}, 90000);
 async function onViewerSignal(vid, kind, data) {
   const pc = pcs.get(vid); if (!pc) return;
   try { if (kind === "answer") await pc.setRemoteDescription(data); else if (kind === "ice") { try { await pc.addIceCandidate(data); } catch (_e) {} } } catch (_e) {}
@@ -380,8 +699,8 @@ if (ipc) {
 // ── Supabase 信令模式（P2P，无需后端/隧道）─────────────────
 // 同账号 + 联网即可：被控端凭账号令牌(=Supabase access token)向 remote_presence 上报在线，
 // 轮询 remote_signals 取 viewer 的 connect/answer/ice/input，offer/ice 写回。屏幕走 P2P。
-const SB_FALLBACK_URL = "";
-const SB_FALLBACK_KEY = "";
+const SB_FALLBACK_URL = "https://your-project.supabase.co";
+const SB_FALLBACK_KEY = "YOUR_SUPABASE_PUBLISHABLE_KEY";
 function _jwtSub(tok) {
   try {
     const b = tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -400,9 +719,17 @@ async function connectSupabase() {
     if (!HOST_ID) { HOST_ID = "h-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("hmm_host_id", HOST_ID); }
   } catch (_e) { HOST_ID = "h-" + Math.random().toString(36).slice(2, 10); }
   const meHost = "host:" + HOST_ID;
-  iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }, { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }];
+  iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
   const H = (extra) => Object.assign({ apikey: SB_KEY, Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" }, extra || {});
   let lastId = 0;
+  const HANDOFF_MAX_AGE_MS = 5 * 60 * 60 * 1000;   // 接力时间窗：5 小时内可接力，超出一律丢弃（用户要求）
+  function _rowTsMs(row) {
+    // 取信令时间戳(ms)：优先 Supabase 行的 created_at，其次 payload.ts；两者都没有则返回 NaN。
+    let ms = NaN;
+    if (row && row.created_at) { const t = Date.parse(row.created_at); if (!isNaN(t)) ms = t; }
+    if (isNaN(ms) && row && row.payload && row.payload.ts) { const t = Number(row.payload.ts); if (!isNaN(t)) ms = t; }
+    return ms;
+  }
 
   let _presenceWarned = false;
   async function upsertPresence() {
@@ -454,47 +781,107 @@ async function connectSupabase() {
       }
     } else if (kind === "handoff") {
       // V104：手机端接力——把对话交接到本桌面端，唤起窗口 + 通知。
-      // 双保险：除了 lastId 不 replay 历史，再按时间戳过滤——只处理近 3 分钟内的接力（旧 App 无 ts 则放行）。
-      const fresh = !data || !data.ts || (Date.now() - Number(data.ts) < 3 * 60 * 1000);
-      if (ipc && data && fresh) { try { ipc.send("remote-handoff", data); } catch (_e) {} }
+      // 时间窗（用户要求）：只接力 5 小时内的，超 5h 一律丢弃。实时接力（poll 阶段、已被 lastId 过滤掉历史）
+      // 若确无时间戳则放行，避免误伤无 ts 的旧 App 实时交接。
+      const _ts = _rowTsMs(row);
+      const fresh = isNaN(_ts) ? true : (Date.now() - _ts < HANDOFF_MAX_AGE_MS);
+      if (ipc && data && fresh) {
+        try { ipc.send("remote-handoff", data); } catch (_e) {}
+        // V203：回执——告诉手机端"本机已接管此对话"，App 接力页据此显示实时状态（已发送→已接管）。
+        try {
+          const convId = (data && (data.conv_id || data.convId)) || "";
+          const ackPayload = { conv_id: convId, host: meHost, host_name: (typeof NAME !== "undefined" ? NAME : ""), ts: Date.now() };
+          fetch(SB_URL + "/rest/v1/remote_signals", {
+            method: "POST", headers: Object.assign({}, H(), { "Content-Type": "application/json", Prefer: "return=minimal" }),
+            body: JSON.stringify({ room: ROOM, recipient: "relay:" + ROOM, sender: meHost, kind: "handoff_ack", payload: ackPayload }),
+          }).catch(() => {});
+        } catch (_e) {}
+      }
     } else if (kind === "bye") {
       const pc = pcs.get(vid); if (pc) { try { pc.close(); } catch (_e) {} pcs.delete(vid); }
     }
   }
-  async function poll() {
+  async function primeLastId() {
+    // 把 lastId 顶到当前最大 id；失败则抛错（供开机 fail-closed 重试），绝不静默归零。
+    const u = SB_URL + "/rest/v1/remote_signals?room=eq." + encodeURIComponent(ROOM) +
+      "&recipient=eq." + encodeURIComponent(meHost) + "&order=id.desc&limit=1&select=id";
+    const r = await fetch(u, { headers: H() });
+    if (!r.ok) throw new Error("prime " + r.status);
+    const rows = await r.json();
+    if (rows && rows[0] && rows[0].id) lastId = rows[0].id;
+  }
+  async function pickupRecentHandoff() {
+    // 开机一次性补「最近一条接力」：只取最新 1 条 handoff，且必须有时间戳、且在 5 小时内才处理（fail-closed）。
+    // 只唤起窗口（remote-handoff），绝不触发 input/connect —— 不会造成鼠标乱动 / 乱切页面 / 重建投屏。
     try {
       const u = SB_URL + "/rest/v1/remote_signals?room=eq." + encodeURIComponent(ROOM) +
-        "&recipient=eq." + encodeURIComponent(meHost) + "&id=gt." + lastId + "&order=id.asc";
+        "&recipient=eq." + encodeURIComponent(meHost) + "&kind=eq.handoff&order=id.desc&limit=1";
       const r = await fetch(u, { headers: H() });
       if (!r.ok) return;
       const rows = await r.json();
-      for (const row of rows) { if (row.id > lastId) lastId = row.id; await onRow(row); }
+      const row = rows && rows[0];
+      if (!row || !row.payload || !ipc) return;
+      const _ts = _rowTsMs(row);
+      if (isNaN(_ts)) return;                                 // 无时间戳：不补（宁可不接力，也不误弹来历不明的旧接力）
+      if (Date.now() - _ts >= HANDOFF_MAX_AGE_MS) return;     // 超 5 小时：丢弃
+      try { ipc.send("remote-handoff", row.payload); log("已补接最近一条接力（5 小时内）"); } catch (_e) {}
     } catch (_e) {}
+  }
+  let _polling = false;
+  async function poll() {
+    if (_polling) return;                  // 并发闸：上一轮没跑完就跳过，避免慢查询/大结果集叠加成风暴
+    _polling = true;
+    try {
+      const u = SB_URL + "/rest/v1/remote_signals?room=eq." + encodeURIComponent(ROOM) +
+        "&recipient=eq." + encodeURIComponent(meHost) + "&id=gt." + lastId + "&order=id.asc&limit=200";
+      const r = await fetch(u, { headers: H() });
+      if (!r.ok) return;
+      const rows = await r.json();
+      if (rows.length >= 200) {
+        // 熔断：单轮就来 200+ 条，几乎必是历史积压/异常 —— 把 lastId 顶到最大并丢弃这批，绝不灌给本机。
+        let mx = lastId; for (const row of rows) { if (row.id > mx) mx = row.id; }
+        lastId = mx; log("信令暴量(" + rows.length + ")，已跳过该批以保护本机");
+        return;
+      }
+      for (const row of rows) { if (row.id > lastId) lastId = row.id; await onRow(row); }
+    } catch (_e) {} finally { _polling = false; }
   }
   // 常驻被控：先上线注册 presence，不立刻抓屏；等查看端连接时
   //（onRow "connect" → addScreenTracks → ensureStream）再捕获。空闲不占屏幕捕获、不显示"正在共享"。
   await upsertPresence();
   setInterval(upsertPresence, 5000);
-  // 关键：开机先把 lastId 顶到当前最大 id —— 首轮只收"开机之后"的新信令，绝不 replay 历史。
-  // 否则一打开客户端就：① 旧"已接力"通知反复弹；② 上次排队的远程操作被一股脑灌给电脑（乱动）。
-  try {
-    const _pu = SB_URL + "/rest/v1/remote_signals?room=eq." + encodeURIComponent(ROOM) +
-      "&recipient=eq." + encodeURIComponent(meHost) + "&order=id.desc&limit=1&select=id";
-    const _pr = await fetch(_pu, { headers: H() });
-    if (_pr.ok) { const _rows = await _pr.json(); if (_rows && _rows[0] && _rows[0].id) lastId = _rows[0].id; }
-  } catch (_e) {}
-  setInterval(poll, 800);
   // 关闭/退出时尽力删除自己的 presence 行（keepalive 让请求能在页面卸载后完成），设备列表即时消失。
+  // 提前注册：即便后面 fail-closed 卡在等令牌刷新，也能保证退出时清理 presence。
   window.addEventListener("beforeunload", () => {
     try {
       fetch(SB_URL + "/rest/v1/remote_presence?room=eq." + encodeURIComponent(ROOM) + "&host_id=eq." + encodeURIComponent(HOST_ID),
         { method: "DELETE", headers: H(), keepalive: true });
     } catch (_e) {}
   });
+  // 关键修复（卡死根因）：开机必须先把 lastId 顶到当前最大 id，首轮 poll 只收"开机之后"的新信令、绝不 replay 历史。
+  // 旧实现把这一步包在 try/catch 里 fail-open：令牌过期(401)就静默失败、lastId 仍为 0，
+  // 首轮 poll 便拉回整张历史表 —— 上次排队的远程操作被一股脑灌给电脑(鼠标乱动/乱切页面)、
+  // 旧 connect 重建一堆 RTCPeerConnection+抓屏 → 内存冲到 ~28G、CPU 跑满、电脑卡死。
+  // 改为 fail-closed：顶不到 lastId 就退避重试（TOKEN 会被主进程热刷新，H() 调用时实时读取），
+  // 在 lastId 成功定位之前绝不开始 poll。
+  let _primed = false;
+  for (let _i = 0; _i < 900 && !_primed; _i++) {
+    try { await primeLastId(); _primed = true; }
+    catch (_e) {
+      if (_i === 0) log("信令初始化中（等待账号令牌刷新…）");
+      await new Promise((res) => setTimeout(res, Math.min(5000, 800 + _i * 400)));
+    }
+  }
+  if (!_primed) { log("信令初始化失败，已暂停轮询以保护本机（不会 replay 历史）"); return; }
+  // 开机一次性补"最近一条 5 小时内的接力"（只唤起窗口，绝不 replay 鼠标/键盘/投屏）。
+  await pickupRecentHandoff();
+  setInterval(poll, 800);
   log("Supabase 远程信令已就绪（常驻在线，等待查看端连接后开始投屏）…");
 }
 
-if (MODE === "supabase") connectSupabase(); else connect();
+if (MODE === "supabase") log("旧版直连信令已停用，请通过 HashMM 账号后端连接");
+else if (TOKEN) connect();
+else log("等待主进程安全下发连接凭证…");
 </script>
 </body>
 </html>

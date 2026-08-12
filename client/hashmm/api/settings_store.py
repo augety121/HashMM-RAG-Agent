@@ -13,15 +13,20 @@ from __future__ import annotations
 import os
 
 from hashmm.utils import get_logger
+from hashmm.secrets_crypto import decrypt_secret, encrypt_secret
 
 logger = get_logger("hashmm.settings")
 
 # Known settings: key → (env_var_fallback, is_secret, description)
 _KNOWN = {
-    "search_backend": ("HASHMM_SEARCH_BACKEND", False, "强制搜索后端 (serper/bing/tavily/duckduckgo，留空=自动)"),
+    "search_backend": ("HASHMM_SEARCH_BACKEND", False, "强制搜索后端 (baidu/brave/exa/gemini/serper/tavily/doubao/duckduckgo，留空=自动)"),
     "serper_api_key": ("HASHMM_SERPER_API_KEY", True, "Serper.dev API Key（推荐，国内可用）"),
-    "bing_api_key": ("HASHMM_BING_API_KEY", True, "Bing Web Search API Key"),
+    "bing_api_key": ("HASHMM_BING_API_KEY", True, "已退役：仅保留旧密钥迁移读取，不再执行 Bing Search API"),
     "tavily_api_key": ("HASHMM_TAVILY_API_KEY", True, "Tavily API Key"),
+    "baidu_search_api_key": ("HASHMM_BAIDU_SEARCH_API_KEY", True, "百度千帆 AI Search API Key"),
+    "brave_search_api_key": ("HASHMM_BRAVE_SEARCH_API_KEY", True, "Brave Search API Key"),
+    "exa_api_key": ("HASHMM_EXA_API_KEY", True, "Exa API Key"),
+    "gemini_api_key": ("HASHMM_GEMINI_API_KEY", True, "Google Gemini Grounding API Key"),
     "web_fallback_enabled": ("HASHMM_WEB_FALLBACK", False, "检索不到时是否联网兜底 (1/0)"),
     "llm_task_routing": ("HASHMM_LLM_TASK_ROUTING", False,
                           "F11 任务→后端路由覆盖(JSON,如 {\"answer\":\"local\",\"keyword\":\"cloud\"}；"
@@ -39,6 +44,39 @@ _KNOWN = {
     "supabase_publishable_key": ("HASHMM_SUPABASE_PUBLISHABLE_KEY", False, "Supabase Publishable Key（sb_publishable_…）"),
     "supabase_admin_emails": ("HASHMM_SUPABASE_ADMIN_EMAILS", False, "Supabase 管理员邮箱白名单（逗号分隔，这些邮箱登录后给 admin 角色）"),
 }
+
+_ENC_PREFIX = "enc:"
+
+
+def _stored_value(key: str, value: str) -> str:
+    is_secret = bool(_KNOWN.get(key, (None, False, ""))[1])
+    if not is_secret or not value:
+        return value
+    if value.startswith(_ENC_PREFIX):
+        return value
+    return _ENC_PREFIX + encrypt_secret(value)
+
+
+def _resolved_value(key: str, value: str) -> str:
+    is_secret = bool(_KNOWN.get(key, (None, False, ""))[1])
+    if not is_secret or not value:
+        return value
+    if value.startswith(_ENC_PREFIX):
+        return decrypt_secret(value[len(_ENC_PREFIX):])
+    # Existing releases stored these rows as plaintext. Keep them readable and
+    # migrate in place on the first authenticated use; listing still masks the
+    # resolved value and never exposes the ciphertext.
+    try:
+        from hashmm.api import database as db
+        import time
+        with db._conn() as c:
+            c.execute(
+                "UPDATE app_settings SET value=?,updated_at=? WHERE key=? AND value=?",
+                (_stored_value(key, value), time.time(), key, value),
+            )
+    except Exception as exc:
+        logger.warning("secret setting migration deferred for %s: %s", key, exc)
+    return value
 
 
 def _ensure_table():
@@ -61,7 +99,7 @@ def get_setting(key: str, default: str = "") -> str:
         with db._conn() as c:
             row = c.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
         if row and row["value"]:
-            return row["value"]
+            return _resolved_value(key, str(row["value"]))
     except Exception as e:
         logger.debug(f"get_setting db miss: {e}")
     env_var = _KNOWN.get(key, (None, False, ""))[0]
@@ -80,7 +118,7 @@ def set_setting(key: str, value: str) -> None:
         c.execute(
             "INSERT INTO app_settings (key,value,updated_at) VALUES (?,?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-            (key, value, time.time()),
+            (key, _stored_value(key, value), time.time()),
         )
 
 

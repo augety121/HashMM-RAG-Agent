@@ -114,11 +114,11 @@ def format_reflection_for_user(reflection: dict[str, Any]) -> str | None:
 
     parts = []
     if not reflection["complete"]:
-        parts.append("⚠️ 任务可能未完全完成")
+        parts.append("注意：任务可能未完全完成")
     if reflection["issues"]:
         for issue in reflection["issues"][:3]:
             parts.append(f"• {issue}")
     if reflection["fix_suggestion"]:
-        parts.append(f"💡 建议: {reflection['fix_suggestion']}")
+        parts.append(f"建议: {reflection['fix_suggestion']}")
 
     return "\n".join(parts) if parts else None

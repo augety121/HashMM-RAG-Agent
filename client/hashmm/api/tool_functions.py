@@ -6,19 +6,42 @@ SmartAgent uses tool_registry directly instead.
 from __future__ import annotations
 import os
 import sys
+import re                # V308 修 F821：re/json/time 在多个函数体内使用却从未 import
+import json              # （server.py 仍 import 本模块的 agent_plan 等，调用即 NameError 崩）
+import time
 import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
 from hashmm.api import app_state
 from hashmm.api import database as db
-from hashmm.utils import get_logger
+from hashmm.utils import get_logger, log_suppressed   # V308: log_suppressed 亦被用到
 
 logger = get_logger("hashmm.tools")
 
+
+# V308 修 F821 真 bug：agent_plan 的 prompt 里 f-string 引用了 TOOLS_DESC，但本模块从未
+# 定义它（同名常量在 evaluation/benchmarks/tool_calling.py，工具集完全不同，也没被 import）。
+# 结果：server.py 一 import 本模块的 agent_plan，调用即 NameError 崩溃。
+# 这里按 agent_plan 自己 Rules 里列出的工具补上正确定义。
+TOOLS_DESC = (
+    "可用工具：\n"
+    "- kb_search(query)：检索知识库，回答涉及文献/概念/数据的问题。\n"
+    "- analyze(...)：对检索到的内容做分析、对比、归纳。\n"
+    "- code_generate(...)：生成代码。\n"
+    "- file_create(...)：把内容写成文件。\n"
+    "- direct_answer()：无需工具，直接回答。"
+)
+
+
+def _get_llm_fn():
+    """V308 修 F821：_llm_fn 全局从未赋值。这些遗留函数应通过 app_state 动态取 LLM，
+    未配置时返回 None（调用方已有 `if not _llm_fn` 分支处理）。"""
+    return getattr(app_state, "llm_fn", None)
+
 def agent_plan(query: str, has_file: bool = False) -> list[dict]:
     """LLM-based task planner: decides which tools to use and in what order."""
-    if not _llm_fn:
+    if not _get_llm_fn():
         return [{"tool": "direct_answer", "reason": "LLM not configured"}]
     if has_file:
         return [{"tool": "analyze", "reason": "分析上传文件"}]
@@ -57,7 +80,7 @@ Plan:""")
 
 def tool_code_generate(query: str, context: str = "") -> dict:
     """Generate code based on user request."""
-    if not _llm_fn:
+    if not _get_llm_fn():
         return {"code": "", "language": "python", "error": "LLM not configured"}
     try:
         prompt = (f"你是一个高级编程助手。根据用户需求生成完整、可运行的代码。\n"

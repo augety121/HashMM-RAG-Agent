@@ -17,6 +17,16 @@ def _patched_log(self, level, msg, args, exc_info=None, extra=None,
 logging.Logger._log = _patched_log
 
 
+def log_suppressed(logger: logging.Logger, err: BaseException, note: str = "") -> None:
+    """统一记录"刻意吞掉"的异常：非致命路径上 except 后调用，
+    保证静默失败也在日志里留痕（DEBUG 级别，不打扰正常输出）。"""
+    try:
+        prefix = f"{note} | " if note else ""
+        logger.debug(f"[suppressed] {prefix}{type(err).__name__}: {err}")
+    except Exception:
+        pass
+
+
 def get_logger(name: str) -> logging.Logger:
     """Get a configured logger instance."""
     global _configured

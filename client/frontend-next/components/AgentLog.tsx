@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Loader2, CheckCircle2, AlertCircle, ChevronDown, Brain, Zap, MessageSquare, Search, Target, Package, PenLine, Wrench, Code2, Network, Bot, Puzzle, ShieldCheck, TrendingUp, Archive, Lock, CheckCheck, Sparkles, ListChecks, Quote, RefreshCw, Eye } from "lucide-react";
+import type { HookRun } from "@/lib/types";
 
 export interface AgentStep {
   id: string;
@@ -10,6 +11,7 @@ export interface AgentStep {
   status: "running" | "done" | "error";
   elapsed_ms?: number;
   result_preview?: string;
+  hooks?: HookRun[];
 }
 
 interface Props {
@@ -53,7 +55,7 @@ function StatusIcon({ status, size = 13 }: { status: string; size?: number }) {
   return <AlertCircle size={size} style={{ color: "#ef4444" }} />;
 }
 
-/** 提取工具名：新协议直接用 step.tool；旧数据剥掉 emoji 前缀后取首词。 */
+/** 提取工具名：新协议直接用 step.tool；旧数据剥掉字符前缀后取首词。 */
 function toolNameOf(s: AgentStep): string {
   if (s.tool) return s.tool;
   const d = (s.detail || "").replace(/^[^\w]+/, "");
@@ -63,8 +65,7 @@ function toolNameOf(s: AgentStep): string {
 /**
  * 旧数据兼容清洗（仅影响 V48 及更早的历史消息；新协议一个工具本来就只有一条）：
  * - 丢弃 "解析文本工具调用"、"调用 xxx..." 中间态噪音
- * - 合并 "🔧 x(args)" + "✅ x (44ms)" 这种 start/done 冗余对（V48 的合并因
- *   emoji 前缀导致名字对不上而失效，这是当时时间线满屏冗余对的根因）
+ * - 合并旧格式的 start/done 冗余对（V48 的字符前缀曾导致名字对不上）
  */
 function normalizeSteps(steps: AgentStep[]): AgentStep[] {
   const out: AgentStep[] = [];
@@ -75,8 +76,8 @@ function normalizeSteps(steps: AgentStep[]): AgentStep[] {
     }
     const prev = out[out.length - 1];
     if (
-      s.node === "tool" && detail.startsWith("✅") &&
-      prev && prev.node === "tool" && (prev.detail || "").startsWith("🔧") &&
+      s.node === "tool" && (detail.startsWith("\u2705") || detail.startsWith("完成 ·")) &&
+      prev && prev.node === "tool" && (prev.detail || "").startsWith("\u{1F527}") &&
       toolNameOf(prev) === toolNameOf(s)
     ) {
       out[out.length - 1] = s;   // 旧格式 start/done 对 → 留 done 一条
@@ -135,10 +136,11 @@ export function AgentLog({ steps, totalElapsed, visible, onToggle }: Props) {
             if (step.node === "tool") {
               const isExpanded = expandedStep === key;
               const name = toolNameOf(step) || "tool";
-              // 去掉旧格式的 emoji/名字前缀，只留参数/结果摘要
+              // 去掉旧格式的状态/名字前缀，只留参数/结果摘要
               const detail = (step.detail || "")
-                .replace(/^[✅🔧\s]*/, "")
+                .replace(new RegExp(`^[\\u2705\\u{1F527}\\s]*`, "u"), "")
                 .replace(new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:(（]?\\s*`), "");
+              const hookFailures = (step.hooks || []).filter(h => h.status === "error" || h.status === "denied" || h.status === "invalid").length;
               return (
                 <div key={key}>
                   <div className={`al-tool-card ${step.status === "error" ? "al-error" : ""}`}
@@ -147,10 +149,25 @@ export function AgentLog({ steps, totalElapsed, visible, onToggle }: Props) {
                     <Wrench size={11} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
                     <span className="al-tool-name">{name}</span>
                     {detail && <span className="al-tool-detail">{detail}</span>}
+                    {!!step.hooks?.length && (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-medium" style={{ color: hookFailures ? "#ef4444" : "var(--text-tertiary)" }}>
+                        <ShieldCheck size={10} /> Hook {step.hooks.length}{hookFailures ? ` / ${hookFailures} 异常` : ""}
+                      </span>
+                    )}
                     <span className="al-tool-ms">{fmtMs(step.elapsed_ms)}</span>
                   </div>
-                  {isExpanded && step.result_preview && (
-                    <div className="al-result-preview">{step.result_preview.slice(0, 300)}</div>
+                  {isExpanded && (step.result_preview || step.hooks?.length) && (
+                    <div className="al-result-preview space-y-1">
+                      {step.result_preview ? <div>{step.result_preview.slice(0, 300)}</div> : null}
+                      {(step.hooks || []).map((hook, hi) => (
+                        <div key={`${hook.hook}-${hi}`} className="flex items-center gap-2 text-[10px]">
+                          <span className="font-medium">{hook.lifecycle}</span>
+                          <span>{hook.hook}</span>
+                          <span className="ml-auto font-mono">{hook.status} · {hook.elapsed_ms}ms</span>
+                          {hook.reason ? <span className="truncate max-w-[180px]">{hook.reason}</span> : null}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               );
@@ -169,7 +186,7 @@ export function AgentLog({ steps, totalElapsed, visible, onToggle }: Props) {
                   </span>
                 )}
                 {step.elapsed_ms != null && step.elapsed_ms > 0 && (
-                  <span className="font-mono text-[9px] ml-auto flex-shrink-0"
+                  <span className="font-mono text-[10px] ml-auto flex-shrink-0"
                     style={{ color: "var(--text-tertiary)" }}>{fmtMs(step.elapsed_ms)}</span>
                 )}
               </div>

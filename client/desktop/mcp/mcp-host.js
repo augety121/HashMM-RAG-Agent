@@ -42,7 +42,7 @@ class McpHost {
     const init = await this._request("initialize", {
       protocolVersion: P.MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: "hashmm-host", version: "1.6.0" },
+      clientInfo: { name: "hashmm-host", version: "17.0.2" },
     });
     this._serverInfo = init && init.serverInfo;
     this._notify("notifications/initialized");

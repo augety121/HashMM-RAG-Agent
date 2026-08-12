@@ -209,14 +209,29 @@ def test_is_transient_classifier():
 
 # ── 4. 运行遥测 ──
 
-def test_run_record_off_by_default(tmp_path, monkeypatch):
+def test_run_record_off_when_explicitly_disabled(tmp_path, monkeypatch):
+    # V308：实现已将运行遥测默认改为【开启】（HASHMM_AGENT_TRACE 默认 "1"，甲方反馈
+    # “面板开箱要有数据”）。原测试断言“默认关闭”与实现意图直接矛盾且长期不可见
+    # （该文件顶层 sys.exit 曾杀死收集）。这里改为验证真正该守的契约：
+    # 【显式设 HASHMM_AGENT_TRACE=0 时不落盘】——可关闭这一开关必须有效。
     from hashmm.agent.run_record import RunRecord
-    monkeypatch.delenv("HASHMM_AGENT_TRACE", raising=False)
+    monkeypatch.setenv("HASHMM_AGENT_TRACE", "0")
     monkeypatch.setenv("HASHMM_TRACE_DIR", str(tmp_path))
     rec = RunRecord("c1", "查询")
     rec.add("tool_done", name="kb_search")
     assert rec.flush("done") is None
     assert not list(tmp_path.glob("*.jsonl"))
+
+
+def test_run_record_on_by_default(tmp_path, monkeypatch):
+    """对偶：默认（未设开关）应开启并落盘一条 JSONL。"""
+    from hashmm.agent.run_record import RunRecord
+    monkeypatch.delenv("HASHMM_AGENT_TRACE", raising=False)
+    monkeypatch.setenv("HASHMM_TRACE_DIR", str(tmp_path))
+    rec = RunRecord("c1", "查询")
+    rec.add("tool_done", name="kb_search")
+    path = rec.flush("done")
+    assert path is not None and path.exists()
 
 
 def test_run_record_writes_jsonl_when_enabled(tmp_path, monkeypatch):

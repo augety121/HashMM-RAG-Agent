@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.contentOrNull
 import org.json.JSONObject
 import java.time.Instant
 import javax.inject.Inject
@@ -62,6 +63,37 @@ class RelayRepository @Inject constructor(
             true
         } catch (e: Exception) {
             false
+        }
+    }
+
+    @Serializable
+    private data class AckRow(val kind: String, val payload: JsonElement? = null, val created_at: String? = null)
+
+    /**
+     * 查这个会话是否已被桌面端接管（读 handoff_ack 回执）。返回 (已接管, 接管主机名, 接管时间ms)。
+     * sinceMs：只认这个时间点之后的回执，避免读到上一次接力的旧 ack。
+     */
+    suspend fun handoffAck(convId: String, sinceMs: Long): Triple<Boolean, String, Long> = withContext(Dispatchers.IO) {
+        val room = uid() ?: return@withContext Triple(false, "", 0L)
+        try {
+            val rows = supabase.postgrest.from("remote_signals").select {
+                filter {
+                    eq("room", room)
+                    eq("recipient", "relay:$room")
+                    eq("kind", "handoff_ack")
+                }
+            }.decodeList<AckRow>()
+            for (r in rows) {
+                val obj = r.payload as? kotlinx.serialization.json.JsonObject ?: continue
+                fun str(k: String) = (obj[k] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+                fun num(k: String) = (obj[k] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toLongOrNull()
+                if (str("conv_id") != convId) continue
+                val ts = num("ts") ?: r.created_at?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
+                if (ts >= sinceMs - 2000) return@withContext Triple(true, str("host_name").orEmpty(), ts)
+            }
+            Triple(false, "", 0L)
+        } catch (_: Exception) {
+            Triple(false, "", 0L)
         }
     }
 }

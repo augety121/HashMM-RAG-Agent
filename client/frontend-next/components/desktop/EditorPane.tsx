@@ -91,7 +91,7 @@ export function EditorPane({ path, onClose }: { path: string; onClose?: () => vo
     const val = mode === "monaco" ? (edRef.current?.getValue() ?? "") : (taRef.current?.value ?? text);
     setStatus("保存中…");
     const r: any = await (L as any).write(path, val);
-    if (r && r.ok) { baseRef.current = val; setDirty(false); setStatus("已保存 ✓"); setTimeout(() => setStatus(""), 1800); }
+    if (r && r.ok) { baseRef.current = val; setDirty(false); setStatus("已保存"); setTimeout(() => setStatus(""), 1800); }
     else { setStatus("保存失败：" + ((r && r.error) || "未知")); }
   };
   const saveRef = useRef(save); saveRef.current = save;

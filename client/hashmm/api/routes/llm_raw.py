@@ -57,10 +57,53 @@ async def cu_save(request: Request):
     conv_id = (body.get("conv_id") or "").strip()
     user_content = (body.get("user_content") or "").strip()
     assistant_content = (body.get("assistant_content") or "").strip()
+    work_method = body.get("work_method")
     if not conv_id or not assistant_content:
         raise HTTPException(400, "conv_id 与 assistant_content 必填")
     require_conv_access(request, conv_id)     # 复用既有属主校验
     if user_content:
         db.create_message(conv_id, "user", user_content)
     mid = db.create_message(conv_id, "assistant", assistant_content)
-    return {"ok": True, "message_id": mid}
+    # Local Computer Use used to persist only prose, which made App and the
+    # shared work feed blind to real desktop work.  Record an owner-bound,
+    # deliberately unverified delivery: prose alone is not an execution receipt.
+    work_run_id = ""
+    try:
+        from hashmm.agent import work_runtime
+        user = get_current_user(request) or {}
+        run = work_runtime.create_run(
+            user_id=str(user.get("uid") or ""),
+            kind="computer",
+            source_id=f"cu:{mid}",
+            conv_id=conv_id,
+            title=user_content[:120] or "电脑工作",
+            status="delivered",
+            snapshot={
+                "goal": user_content,
+                "execution_mode": "desktop_local_computer_use",
+                "work_method": (
+                    work_method if isinstance(work_method, dict)
+                    else {"run_mode": "computer"}
+                ),
+                "local_execution": {
+                    "reported": True,
+                    "verified_receipts": 0,
+                    "model_prose_is_execution_evidence": False,
+                },
+            },
+        )
+        work_runtime.append_event(
+            run["id"],
+            user_id=str(user.get("uid") or ""),
+            event_type="local_execution_reported",
+            status="delivered",
+            summary="桌面端已回传结果，等待用户验收",
+            payload={"verified_receipts": 0},
+        )
+        work_run_id = str(run.get("id") or "")
+    except Exception as exc:
+        logger.warning(
+            "[llm_raw] computer work projection failed: %s",
+            type(exc).__name__,
+        )
+    return {"ok": True, "message_id": mid, "work_run_id": work_run_id}

@@ -9,7 +9,7 @@ interface DocInfo {
   tables?: number; images?: number; quality?: number;
   parser?: string; file_size?: number; full_text_chars?: number;
   status?: string; created_at?: string | number; updated_at?: string | number; summary?: string;
-  source_path?: string; folder?: string;
+  source_available?: boolean; folder?: string;
 }
 
 type Tab = "all" | "completed" | "analyzing" | "processing" | "queued" | "failed";
@@ -20,8 +20,9 @@ function Badge({ s }: { s: string }) {
     analyzing: ["分析中", "#d97706"], queued: ["等待中", "#6b7280"], failed: ["失败", "#ef4444"],
   };
   const [label, color] = m[s] || m.completed;
+  const Icon = s === "failed" ? XCircle : s === "completed" ? CheckCircle2 : Clock;
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
-    style={{ color, background: `${color}10` }}><CheckCircle2 size={11}/>{label}</span>;
+    style={{ color, background: `${color}10` }}><Icon size={11}/>{label}</span>;
 }
 
 function fmtTime(ts?: string | number) {
@@ -39,6 +40,9 @@ export function DocsTab() {
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const [total, setTotal] = useState({ chunks: 0, docs: 0 });
   const [uploading, setUploading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [msg, setMsg] = useState("");
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<Tab>("all");
@@ -55,31 +59,64 @@ export function DocsTab() {
   }, []);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const r = await (await fetch("/api/admin/docs", { headers: hdr() })).json();
-      const d: DocInfo[] = r.docs || [];
-      for (const x of d) { x.status ||= x.chunks > 0 ? "completed" : "queued"; x.created_at ||= new Date().toISOString(); x.updated_at ||= x.created_at; }
-      setDocs(d); setTotal({ chunks: r.total_chunks || 0, docs: r.total_docs || 0 });
-    } catch {}
+      const response = await fetch("/api/admin/docs", { headers: hdr() });
+      const r = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(r.detail || `服务返回 ${response.status}`);
+      if (r.error) throw new Error(r.error);
+      const d: DocInfo[] = (r.docs || []).map((item: DocInfo) => ({
+        ...item,
+        status: item.status || (item.chunks > 0 ? "completed" : "queued"),
+      }));
+      setDocs(d);
+      setTotal({ chunks: r.total_chunks ?? 0, docs: r.total_docs ?? d.length });
+      setLoadError("");
+      setLastUpdatedAt(Date.now());
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "文档状态读取失败");
+    } finally {
+      setLoading(false);
+    }
   }, [hdr]);
   useEffect(() => { load(); }, [load]);
 
   async function upload(files: FileList | File[]) {
-    setUploading(true); setMsg(""); let ok = 0;
+    setUploading(true); setMsg(""); let ok = 0; const failures: string[] = []; const receipts: string[] = [];
     for (const f of Array.from(files)) {
-      try { const fd = new FormData(); fd.append("file", f);
-        const r = await (await fetch("/api/admin/docs/upload-and-parse", { method: "POST", headers: hdr(), body: fd })).json();
-        if (r.ok) ok++; else setMsg(r.error || "解析失败");
-      } catch (e: unknown) { setMsg("失败: " + ((e as Error).message || "")); }
+      try {
+        const fd = new FormData(); fd.append("file", f);
+        const response = await fetch("/api/admin/docs/upload-and-parse", { method: "POST", headers: hdr(), body: fd });
+        const r = await response.json().catch(() => ({}));
+        if (!response.ok || !r.ok) {
+          failures.push(`${f.name}：${r.detail || r.error || `服务返回 ${response.status}`}`);
+        } else {
+          ok++;
+          if (r.upload?.sha256) receipts.push(`${f.name} ${String(r.upload.sha256).slice(0, 10)}`);
+        }
+      } catch (e: unknown) { failures.push(`${f.name}：${(e as Error).message || "网络错误"}`); }
     }
-    if (ok > 0) setMsg(`${ok} 个文件解析完成`);
-    setUploading(false); load();
+    setMsg(failures.length
+      ? `失败 ${failures.length} 个；成功 ${ok} 个。${failures.slice(0, 2).join("；")}`
+      : `${ok} 个文件解析完成${receipts.length ? ` · 内容回执 ${receipts.join("，")}` : ""}`);
+    if (fileRef.current) fileRef.current.value = "";
+    setUploading(false);
+    if (ok > 0) await load();
   }
 
   async function delSelected() {
     if (!selected.size || !confirm(`删除 ${selected.size} 个文档？`)) return;
-    for (const id of selected) { try { await fetch(`/api/admin/docs/${id}`, { method: "DELETE", headers: hdr() }); } catch {} }
-    setSelected(new Set()); load();
+    const failed = new Set<string>(); let removed = 0;
+    for (const id of selected) {
+      try {
+        const response = await fetch(`/api/admin/docs/${encodeURIComponent(id)}`, { method: "DELETE", headers: hdr() });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) failed.add(id); else removed++;
+      } catch { failed.add(id); }
+    }
+    setSelected(failed);
+    toast(failed.size ? `已删除 ${removed} 个，${failed.size} 个未删除并保持选中` : `已删除 ${removed} 个文档`, failed.size ? "error" : "success");
+    if (removed > 0) await load();
   }
 
   const counts: Record<string, number> = { all: docs.length };
@@ -123,29 +160,28 @@ export function DocsTab() {
          onDrop={e => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) upload(e.dataTransfer.files); }}>
 
       {/* ── Actions ── */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex gap-2">
-          <button onClick={load} className="admin-btn"><RotateCw size={13}/> 刷新</button>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div className="flex flex-wrap gap-2">
+          <button onClick={load} disabled={loading} className="admin-btn"><RotateCw size={13} className={loading ? "animate-spin" : ""}/> {loading ? "核对中" : "刷新"}</button>
           <button onClick={async () => {
             if (!confirm("批量重新解析所有文档？这需要较长时间。")) return;
-            setMsg("批量重新解析中…（耗时较长；客户端到服务器的网关可能在跑完前断开，但服务器会继续处理，稍后点刷新看进度）");
+            setMsg("正在等待批量重新解析回执；收到结果前不会把任务标记为完成。");
             try {
               const resp = await fetch("/api/admin/docs/batch-reparse", { method: "POST", headers: hdr() });
               if (resp.ok) {
                 const r = await resp.json().catch(() => ({} as { ok?: boolean; success?: number; total?: number; error?: string }));
                 setMsg(r.ok ? `完成: ${r.success}/${r.total} 成功` : (r.error || "已提交"));
               } else {
-                // 502/504/超时：网关掐断，但后端会继续解析
-                setMsg("网关已断开（如 502/超时），但批量重新解析仍在服务器后台进行。请稍后点「刷新」查看文档状态。");
+                setMsg(`失败：未取得批量任务回执（服务返回 ${resp.status}），无法确认是否已执行。请稍后刷新核对状态。`);
               }
             } catch {
-              setMsg("网关已断开，但批量重新解析可能仍在后台进行。请稍后点「刷新」查看文档状态。");
+              setMsg("失败：未取得批量任务回执，无法确认是否已执行。请稍后刷新核对状态。");
             }
             load();
             setTimeout(() => load(), 30000);   // 30 秒后自动再刷新一次
           }} className="admin-btn"><Zap size={13}/> 批量重新解析</button>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {selected.size > 0 && (
             <button onClick={delSelected} className="text-[12px] px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium"
               style={{ color: "#ef4444", background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)" }}>
@@ -154,7 +190,9 @@ export function DocsTab() {
           )}
           <button onClick={async () => {
             try {
-              const r = await (await fetch("/api/admin/docs/scan-files", { headers: hdr() })).json();
+              const response = await fetch("/api/admin/docs/scan-files", { headers: hdr() });
+              const r = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(r.detail || `服务返回 ${response.status}`);
               const parsed = r.files?.filter((f: {has_parsed: boolean}) => f.has_parsed).length || 0;
               toast(`发现 ${r.total} 个源文件（${parsed} 个已解析）`, "success");
             } catch { toast("扫描失败", "error"); }
@@ -167,6 +205,17 @@ export function DocsTab() {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="mb-4 px-4 py-3 rounded-xl flex items-start justify-between gap-3"
+          style={{ background: "#d9770608", border: "1px solid #d9770633" }}>
+          <div>
+            <div className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>文档状态暂时无法验证</div>
+            <div className="text-[11px] mt-1" style={{ color: "var(--text-secondary)" }}>{loadError}。已有列表为最近一次成功结果，不会用空列表覆盖。</div>
+          </div>
+          <button onClick={load} className="admin-btn">重试</button>
+        </div>
+      )}
 
       {/* ── Tabs + Search ── */}
       <div className="flex items-center justify-between mb-5">
@@ -302,7 +351,7 @@ export function DocsTab() {
                         </div>
                         <div className="mt-3 text-[11px] font-mono px-2 py-1.5 rounded-lg" style={{ background: "var(--bg-secondary)", color: "var(--text-tertiary)" }}>
                           <span style={{ color: "var(--text-secondary)" }}>doc_id:</span> {d.doc_id}
-                          {d.source_path && <><br/><span style={{ color: "var(--text-secondary)" }}>路径:</span> {d.source_path}</>}
+                          <br/><span style={{ color: "var(--text-secondary)" }}>源文件:</span> {d.source_available ? "可用于重新解析" : "未保留可用源文件"}
                           {d.folder && d.folder !== "." && <><br/><span style={{ color: "var(--text-secondary)" }}>文件夹:</span> {d.folder}</>}
                         </div>
                         <div className="flex gap-3 mt-4">
@@ -332,8 +381,15 @@ export function DocsTab() {
                           </button>
                           <button onClick={e => { e.stopPropagation();
                             if (confirm(`删除 ${d.filename}？`)) {
-                              fetch(`/api/admin/docs/${d.doc_id}`, { method: "DELETE", headers: hdr() }).then(load);
-                              setExpanded(null);
+                              fetch(`/api/admin/docs/${encodeURIComponent(d.doc_id)}`, { method: "DELETE", headers: hdr() })
+                                .then(async response => {
+                                  const result = await response.json().catch(() => ({}));
+                                  if (!response.ok || !result.ok) throw new Error(result.detail || "服务器未确认删除");
+                                  toast(`已删除「${d.filename}」`, "success");
+                                  setExpanded(null);
+                                  await load();
+                                })
+                                .catch(error => toast(error instanceof Error ? error.message : "删除失败", "error"));
                             }
                           }} className="text-[12px] px-3 py-1.5 rounded-lg flex items-center gap-1.5"
                             style={{ color: "#ef4444", border: "1px solid rgba(239,68,68,0.2)" }}>
@@ -354,6 +410,7 @@ export function DocsTab() {
 
       <div className="mt-4 px-1 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
         {total.docs} 篇文档 · {total.chunks.toLocaleString()} 个切片
+        {lastUpdatedAt ? ` · 已核对 ${new Date(lastUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
       </div>
     </div>
   );

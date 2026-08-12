@@ -91,6 +91,9 @@ def ensure_builtin_skills() -> bool:
                 s.prompt_template = marker + "\n" + HUASHU_PROMPT
                 s.trigger_patterns = list(HUASHU_TRIGGERS)
                 s.description = "HTML 原生设计（原型/幻灯片/海报/信息图），改编自花叔Design"
+                s.owner_id = ""
+                s.scope = "builtin"
+                s.workspace_id = ""
                 _persist(mgr, s)
                 logger.info(f"[BuiltinSkills] huashu-design 升级到 {HUASHU_SKILL_VERSION}")
                 return True
@@ -102,6 +105,7 @@ def ensure_builtin_skills() -> bool:
             prompt_template=f"[builtin:{HUASHU_SKILL_VERSION}]\n" + HUASHU_PROMPT,
             quality_score=0.6,   # 起步分：可被真实用户反馈升降
             created_at=_t.time(),
+            scope="builtin",
         )
         _persist(mgr, skill, new=True)
         logger.info("[BuiltinSkills] huashu-design 已注册")
@@ -120,14 +124,16 @@ def _persist(mgr, skill, new: bool = False) -> None:
             c.execute(
                 """INSERT OR REPLACE INTO skills
                    (id, name, description, trigger_patterns, prompt_template,
-                    examples, quality_score, use_count, created_at, last_used)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    examples, quality_score, use_count, created_at, last_used,
+                    owner_id, scope, workspace_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (skill.id, skill.name, skill.description,
                  _j.dumps(skill.trigger_patterns, ensure_ascii=False),
                  skill.prompt_template,
                  _j.dumps(skill.examples, ensure_ascii=False),
                  skill.quality_score, skill.use_count,
-                 skill.created_at, skill.last_used),
+                 skill.created_at, skill.last_used,
+                 skill.owner_id, "builtin", skill.workspace_id),
             )
         if new:
             mgr._skills.append(skill)

@@ -20,7 +20,7 @@ ok("type text/* →text", A.classifyFile({ name: "x", type: "text/plain" }).kind
 ok("exe→other", A.classifyFile({ name: "setup.exe" }).kind === "other");
 ok("image 可内联", A.classifyFile({ name: "a.png" }).canInline === true);
 ok("other 不可内联", A.classifyFile({ name: "a.zip" }).canInline === false);
-ok("有图标", A.classifyFile({ name: "a.png" }).icon === "🖼");
+ok("有类型标识", A.classifyFile({ name: "a.png" }).icon === "IMG");
 
 console.log("=== validateAttachment ===");
 ok("小图→ok", A.validateAttachment({ name: "a.png", size: 1024 }).ok === true);
@@ -40,7 +40,7 @@ console.log("=== attachmentLabel ===");
 const lbl = A.attachmentLabel({ name: "report.md", size: 2048 });
 ok("含文件名", lbl.name === "report.md");
 ok("含大小", lbl.size === "2.0 KB");
-ok("含图标", lbl.icon === "📄");
+ok("含类型标识", lbl.icon === "TXT");
 ok("长名截断", A.attachmentLabel({ name: "a".repeat(50) + ".txt", size: 1 }).short.includes("…"));
 
 console.log("=== buildTextContext ===");

@@ -13,8 +13,10 @@ asarUnpack:
   - "**/node_modules/onnxruntime-node/**"   # V101: 本地 OCR 推理，原生模块随包自带
 
 files:
+  - icon.png             # V2101: Observer V4 窗口图标；托盘使用 assets/brand 的专用小尺寸版本
   - main.js
   - preload.js
+  - browser-preload.js   # V339 共享浏览器窗口的窄 contextBridge；不暴露 Node/通用 IPC
   - shellserver.js
   - backendmgr.js
   - localrag.js
@@ -36,6 +38,7 @@ files:
   - conversation-store.js # V103.90 对话历史持久化：preload 运行时 require，必须随包
   - preferences.js       # V103.90 偏好设置：preload 运行时 require，必须随包
   - notify-core.js       # V103.90 桌面通知/未读：main.js 运行时 require，必须随包
+  - checkpoint.js        # V300 第二期 执行检查点/Rewind：main.js 运行时 require，必须随包，否则装机后 asar 内缺失、require 抛错
   - command-palette.js   # V103.90 命令面板模糊匹配：preload 运行时 require，必须随包
   - tab-manager.js       # V103.90 多标签会话：preload 运行时 require，必须随包
   - chat-export.js       # V103.90 对话导出：preload 运行时 require，必须随包
@@ -57,6 +60,7 @@ files:
   - services/**         # V101: 服务化骨架（service locator + ModelService）—— 对标 Marvis 多服务结构
   - isolation/**        # V101: 环境隔离守卫（只写自己目录，不污染用户系统环境）
   - app.html
+  - browser-cockpit.html # V339 实时共享浏览器/动作证据窗口
   - screenshot.html
   - remote-host.html      # V103.16: 投屏渲染进程页（隐藏窗，getDisplayMedia + WebRTC 推流），必须随包
   - remote-viewer.html    # V103.16: 查看端网页（宿主 HTTP 吐给控制方浏览器；跨网络时可存盘发对方），必须随包
@@ -87,8 +91,21 @@ extraResources:
     to: backend/requirements.txt
   - from: ../requirements-optional.txt
     to: backend/requirements-optional.txt
+  # V203: 内置技能包（Agent Skills / SKILL.md）。sidecar 后端启动时从
+  # backend/skills/packs 播种到用户数据区（skill_packs.builtin_src_dir 会解析到这里）。
+  - from: ../skills/packs
+    to: backend/skills/packs
   - from: ../CONFIG.md
     to: backend/CONFIG.md
+  # V334: installer-native is the offline/reliable delivery path. Ship the
+  # already verified Python runtime so a clean PC does not need system Python
+  # or a download from a backend that has not started yet.
+  - from: runtime
+    to: runtime
+    filter:
+      - "runtime-info.json"
+      - "requirements.runtime.txt"
+      - "python/**"
 
 directories:
   output: dist
@@ -107,10 +124,8 @@ win:
         - x64
   artifactName: HashMM-Setup-${version}.${ext}
   icon: build/icon.ico
-  # V102: 已删除「内置 Python 运行时」extraResources 块——运行时不再随安装包。
-  # 首次启用本地知识库时由 services/capability-pack.js 按需下载到
-  # userData/packs/python-runtime（main.js 的 runtimeDir() 会优先用它），拉不到则
-  # backendmgr.js 自动回退「检测系统 Python + venv」模式。这是安装包瘦身的最大一刀。
+  # V334: reliable native delivery includes the runtime. Capability-pack
+  # downloads remain an optional repair/upgrade path, not first-boot setup.
 
 nsis:
   oneClick: false

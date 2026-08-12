@@ -8,7 +8,7 @@ export default function PrivacyPage() {
     <div style={{ height: "100vh", overflowY: "auto" }}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "48px 28px 80px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif", color: "#1a1a1a", lineHeight: 1.9 }}>
         <h1 style={{ fontSize: 30, fontWeight: 700, marginBottom: 8 }}>隐私政策</h1>
-        <p style={{ color: "#888", fontSize: 14, marginBottom: 40 }}>最后更新日期：2026 年 6 月 26 日 · 生效日期：2026 年 6 月 26 日</p>
+        <p style={{ color: "#888", fontSize: 14, marginBottom: 40 }}>最后更新日期：2026 年 7 月 5 日 · 生效日期：2026 年 7 月 5 日 · 版本 2.1</p>
 
         <p style={{ fontSize: 14, color: "#444", marginBottom: 28 }}>HashMM-RAG Agent（以下简称「本服务」或「我们」）高度重视用户隐私保护。本隐私政策旨在向您说明我们如何收集、使用、存储和保护您的个人信息。使用本服务即表示您同意本政策中所述的数据实践。</p>
 
@@ -51,7 +51,13 @@ export default function PrivacyPage() {
         <S n="2" title="数据存储与安全">
           <h3>2.1 自部署架构</h3>
           <p>本服务的<strong>核心数据（对话记录、上传文件、知识库、审计与运行日志等）均存储在您自己控制的服务器上</strong>（SQLite，见 2.2），我们不在外部服务器上存储或备份这些核心数据。</p>
-          <p>2.1.1 <strong>云端同步（重要）：</strong>为实现「多端一致」——让网页端、桌面客户端、手机 App 共享同一帐户的头像、资料与记忆——<strong>以下少量数据会同步存储到第三方云数据库 Supabase</strong>：您的<strong>头像、显示资料、跨会话记忆条目</strong>（不含完整对话内容与知识库文件）。这些数据用于在您的多个终端间同步展示，受 Supabase 的安全与隐私政策约束（见第 4 节）。如您不希望任何数据离开自有服务器，可不配置 Supabase 同步、仅使用本地存储。</p>
+          <p>2.1.1 <strong>云端同步（重要，2026-07 更新）：</strong>为实现「多端一致」，在您配置了自己的 Supabase 项目（含 service_role 密钥）后，<strong>以下数据会同步存储到您自己的 Supabase 租户</strong>（不是本项目的服务器——本项目不设任何中转服务器）：</p>
+          <ul>
+            <li><strong>会话与消息</strong>（chat_conversations / chat_messages）：手机与桌面共享同一份对话，归档、删除随之同步；手机「直连模式」产生的轮次也会写入，供桌面端接力继续；</li>
+            <li><strong>跨会话记忆</strong>（user_memory）与<strong>头像、显示资料</strong>；</li>
+            <li><strong>零配置项</strong>（app_config）：仅用于向已登录客户端发布后端 HTTPS 地址和非敏感协议元数据。模型 API Key、服务角色密钥和用户令牌不会写入该表，也不会下发给其他客户端。</li>
+          </ul>
+          <p>知识库文件不上云。未配置 service_role 密钥时，以上同步全部自动停用，一切数据仅留在本机。这些数据受 Supabase 的安全与隐私政策约束（见第 4 节）。</p>
           <h3>2.2 数据库</h3>
           <p>用户数据使用 SQLite 数据库存储在服务器本地磁盘上。数据库文件位于 <code>data/hashmm.db</code>。数据库采用 WAL（Write-Ahead Logging）模式以提供更好的并发性能。</p>
           <h3>2.3 安全措施</h3>
@@ -90,6 +96,7 @@ export default function PrivacyPage() {
         <S n="4" title="第三方服务">
           <p>本服务在运行过程中可能与以下第三方服务交互：</p>
           <h3>4.1 大语言模型 API</h3>
+          <p><strong>手机直连模式（2026-07 新增）：</strong>当您的自建后端不在线时，手机 App 可将消息<strong>直接</strong>发送到您配置的模型端点继续问答——数据路径为「手机 → 您填写/同步的模型端点」，不经任何第三方中转；该轮次同样会写入您的 Supabase 会话以保持两端一致。</p>
           <p>当您使用 AI 对话功能时，您的查询内容（以及必要的上下文）会被发送到配置的 LLM API 服务商（如 DeepSeek、OpenAI、Anthropic Claude、Google Gemini、智谱 AI、Mistral、xAI、Moonshot、SiliconFlow 等，具体取决于您在「模型管理」中的配置）。请注意：</p>
           <ul>
             <li>发送的数据包括您的查询文本、对话历史（用于上下文）和系统提示词</li>

@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.EditCalendar
 import androidx.compose.material.icons.outlined.Refresh
@@ -33,8 +32,9 @@ import com.hashmm.app.data.remote.DocValidity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.hashmm.app.ui.components.ScreenHeader
 
-private val accent = Color(0xFFEF3E36)
+private val accent = com.hashmm.app.ui.theme.BrandRed   // V244：对齐品牌围巾红（旧值 0xFFEF3E36 已退役）
 
 private data class Filter(val key: String, val label: String)
 
@@ -51,11 +51,10 @@ fun ValidityScreen(onBack: () -> Unit, viewModel: ValidityViewModel = hiltViewMo
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            TopAppBar(
-                title = { Text("失效区 · 文档时效", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回") }
-                },
+            ScreenHeader(
+                title = "文档时效",
+                subtitle = "生效、到期、归档与恢复",
+                onBack = onBack,
                 actions = {
                     IconButton(onClick = { viewModel.load() }) { Icon(Icons.Outlined.Refresh, contentDescription = "刷新") }
                     TextButton(onClick = { viewModel.sweep() }, enabled = !ui.busy) {
@@ -63,7 +62,6 @@ fun ValidityScreen(onBack: () -> Unit, viewModel: ValidityViewModel = hiltViewMo
                         Spacer(Modifier.width(4.dp)); Text("扫描过期")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
     ) { padding ->
@@ -77,26 +75,28 @@ fun ValidityScreen(onBack: () -> Unit, viewModel: ValidityViewModel = hiltViewMo
                 Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // V244：M3 FilterChip（描边样式）→ 设计系统 HmmChip（选中＝墨黑实心+白字）
                 filters.forEach { f ->
-                    FilterChip(
+                    com.hashmm.app.ui.components.HmmChip(
+                        text = f.label,
                         selected = ui.filter == f.key,
                         onClick = { viewModel.load(f.key) },
-                        label = { Text(f.label) },
                     )
                 }
             }
 
             if (ui.loading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else if (ui.items.isEmpty()) {
-                Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Text("这里什么都没有", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                     Spacer(Modifier.height(6.dp))
-                    Text(
-                        "在「知识库」给文档设置到期日，过期后会自动出现在这里。也可点右上角「扫描过期」。",
-                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    com.hashmm.app.ui.components.HmmSkeletonList(count = 5)
                 }
+            } else if (ui.items.isEmpty()) {
+                com.hashmm.app.ui.components.HmmStateView(
+                    kind = com.hashmm.app.ui.components.HmmStateKind.Empty,
+                    icon = Icons.Outlined.Archive,
+                    title = "这里什么都没有",
+                    message = "在「知识库」给文档设置到期日，过期后会自动出现在这里。也可点右上角「扫描过期」。",
+                )
             } else {
                 LazyColumn(
                     Modifier.fillMaxSize().padding(horizontal = 16.dp),

@@ -46,6 +46,7 @@ class _State(TypedDict, total=False):
     sources: list
     trace: list
     corrected: bool
+    errors: list[dict]
 
 
 # ── individual node functions (shared by both the LangGraph and fallback paths) ──
@@ -62,6 +63,11 @@ def _make_retrieve(search_fn: Callable[[str], list]):
         except Exception as e:
             log_suppressed(logger, e)
             state["results"] = []
+            state.setdefault("errors", []).append({
+                "stage": "retrieve",
+                "type": type(e).__name__,
+                "message": str(e)[:240],
+            })
         state.setdefault("trace", []).append(f"retrieve: {len(state['results'])} hits")
         return state
     return _node_retrieve
@@ -87,6 +93,11 @@ def _make_generate(generate_fn: Callable[[str, list], Any]):
         except Exception as e:
             log_suppressed(logger, e)
             ans = ""
+            state.setdefault("errors", []).append({
+                "stage": "generate",
+                "type": type(e).__name__,
+                "message": str(e)[:240],
+            })
         if isinstance(ans, dict):
             state["answer"] = ans.get("answer", "")
             state["sources"] = ans.get("sources", state.get("results", []))
@@ -146,4 +157,9 @@ def run_agentic_rag(query: str, search_fn: Callable[[str], list],
     except Exception as e:
         log_suppressed(logger, e)
         state.setdefault("answer", "")
+        state.setdefault("errors", []).append({
+            "stage": "orchestrator",
+            "type": type(e).__name__,
+            "message": str(e)[:240],
+        })
         return state

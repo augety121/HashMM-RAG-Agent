@@ -1,6 +1,7 @@
 /** localllm 纯函数单测 —— 不触碰原生模块，沙箱直跑：node test_localllm.js */
 "use strict";
 const assert = require("assert");
+const path = require("path");
 const L = require("../localllm.js");
 
 let pass = 0;
@@ -10,7 +11,7 @@ function ok(name, cond) {
 }
 
 console.log("=== resolveModelPath ===");
-ok("拼出 models 下的 gguf 路径", L.resolveModelPath("/opt/app/models", "m.gguf") === "/opt/app/models/m.gguf");
+ok("拼出 models 下的 gguf 路径", L.resolveModelPath("/opt/app/models", "m.gguf") === path.join("/opt/app/models", "m.gguf"));
 ok("缺文件名用默认", L.resolveModelPath("/x", "").endsWith(L.DEFAULT_LLM_FILE));
 
 console.log("=== buildPrompt ===");

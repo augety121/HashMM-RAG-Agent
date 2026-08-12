@@ -24,6 +24,26 @@ function buildTrayMenuTemplate(state = {}, handlers = {}) {
     { type: "separator" },
     { label: "关闭窗口时最小化到托盘", type: "checkbox", checked: !!state.trayOnClose,
       click: (item) => h.setTrayOnClose && h.setTrayOnClose(item.checked) },
+    { label: "保持电脑唤醒（防休眠）", type: "checkbox", checked: !!state.keepAwake,
+      click: (item) => h.toggleKeepAwake && h.toggleKeepAwake(item.checked) },
+    (state.displays && state.displays.length > 1) ? {
+      label: "截屏 / 电脑操作屏幕",
+      submenu: [{ label: "主屏（默认）", type: "radio", checked: state.targetDisplay == null,
+                  click: () => h.setDisplay && h.setDisplay(null) }]
+        .concat(state.displays.slice(1).map((d) => ({
+          label: d.label, type: "radio", checked: state.targetDisplay === d.idx,
+          click: () => h.setDisplay && h.setDisplay(d.idx),
+        }))),
+    } : { label: "截屏屏幕：仅一块显示器", enabled: false },
+    { label: "桌面安全档位（浏览器确认）",
+      submenu: [
+        { label: "均衡（默认）——只拦支付/转账类", type: "radio", checked: (state.safetyMode || "balanced") === "balanced",
+          click: () => h.setSafetyMode && h.setSafetyMode("balanced") },
+        { label: "严格——登录/支付页都先确认", type: "radio", checked: state.safetyMode === "strict",
+          click: () => h.setSafetyMode && h.setSafetyMode("strict") },
+        { label: "关闭——不做浏览器确认", type: "radio", checked: state.safetyMode === "off",
+          click: () => h.setSafetyMode && h.setSafetyMode("off") },
+      ] },
     { type: "separator" },
     { label: "退出 HashMM", click: h.quit },
   ];

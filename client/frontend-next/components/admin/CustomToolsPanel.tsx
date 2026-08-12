@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
-import { Plus, Trash2, Play, Pencil, X, Globe, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Play, Pencil, X, Globe, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 
 type Param = api.CustomToolParam;
 type Cfg = api.CustomToolConfig;
@@ -43,9 +43,17 @@ export function CustomToolsPanel() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [headersText, setHeadersText] = useState("{}");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lastVerifiedAt, setLastVerifiedAt] = useState<number | null>(null);
 
   const load = useCallback(async () => {
-    try { const r = await api.listCustomTools(); setTools(r.tools || []); } catch {}
+    setLoading(true); setError(null);
+    try { const r = await api.listCustomTools(); setTools(r.tools || []); setLastVerifiedAt(Date.now()); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "自定义工具列表读取失败"); }
+    finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -84,12 +92,14 @@ export function CustomToolsPanel() {
 
   async function save() {
     const cfg = buildCfg(); if (!cfg) return;
-    if (!cfg.name || !cfg.url_template) { alert("工具名和 URL 不能为空"); return; }
+    if (!cfg.name || !cfg.url_template || saving) { if (!cfg.name || !cfg.url_template) alert("工具名和 URL 不能为空"); return; }
+    setSaving(true); setError(null); setNotice(null);
     try {
       if (cfg.id) await api.updateCustomTool(cfg.id, cfg);
       else await api.createCustomTool(cfg);
-      setEditing(null); load();
-    } catch (e) { alert("保存失败：" + String(e)); }
+      setEditing(null); setNotice("服务器已确认保存自定义工具。"); await load();
+    } catch (e) { setError("保存失败：" + (e instanceof Error ? e.message : String(e))); }
+    finally { setSaving(false); }
   }
   async function runTest() {
     const cfg = buildCfg(); if (!cfg) return;
@@ -103,8 +113,11 @@ export function CustomToolsPanel() {
     setTesting(false);
   }
   async function del(id?: string) {
-    if (!id || !confirm("确认删除该 API 工具？")) return;
-    try { await api.deleteCustomTool(id); load(); } catch {}
+    if (!id || saving || !confirm("确认删除该 API 工具？")) return;
+    setSaving(true); setError(null); setNotice(null);
+    try { await api.deleteCustomTool(id); setNotice("服务器已确认删除自定义工具。"); await load(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "删除未取得服务端回执"); }
+    finally { setSaving(false); }
   }
 
   const card = { background: "var(--bg-secondary)", border: "1px solid var(--border)" };
@@ -127,6 +140,10 @@ export function CustomToolsPanel() {
         </button>
       </div>
 
+      {error && <div className="mb-3 flex items-start gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(180,35,24,.06)", border: "1px solid rgba(180,35,24,.16)" }}><AlertCircle size={15} className="mt-0.5 flex-shrink-0" style={{ color: "#b42318" }} /><div className="flex-1"><div className="text-[12px]" style={{ color: "#b42318" }}>{error}</div><div className="text-[10.5px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{tools.length ? "当前保留最近一次成功读取的工具。" : "当前没有取得可验证的自定义工具列表。"}</div></div><button onClick={load} disabled={loading} className="inline-flex items-center gap-1 text-[11px]" style={{ color: "var(--accent)" }}><RefreshCw size={12} />重试</button></div>}
+      {notice && <div className="mb-3 rounded-xl px-4 py-2.5 text-[11.5px]" style={{ background: "var(--accent-light)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>{notice}</div>}
+      {lastVerifiedAt && !error && <div className="mb-3 text-[10px]" style={{ color: "var(--text-tertiary)" }}>本次已验证 · {new Date(lastVerifiedAt).toLocaleTimeString()}</div>}
+
       {/* List */}
       <div className="space-y-1">
         {tools.map(t => (
@@ -147,10 +164,10 @@ export function CustomToolsPanel() {
               <span className="text-[10px] font-mono" style={{ color: "var(--text-tertiary)" }}>调用 {t.call_count}</span>
             )}
             <button onClick={() => openEdit(t)} title="编辑" style={{ color: "var(--text-tertiary)" }}><Pencil size={15} /></button>
-            <button onClick={() => del(t.id)} title="删除" style={{ color: "var(--text-tertiary)" }}><Trash2 size={15} /></button>
+            <button disabled={saving} onClick={() => del(t.id)} title="删除" className="disabled:opacity-40" style={{ color: "var(--text-tertiary)" }}><Trash2 size={15} /></button>
           </div>
         ))}
-        {tools.length === 0 && (
+        {!loading && tools.length === 0 && !error && (
           <div className="text-center py-8 rounded-xl" style={card}>
             <Globe size={28} style={{ color: "var(--text-tertiary)", opacity: 0.3 }} className="mx-auto mb-2" />
             <p className="text-[12px]" style={{ color: "var(--text-secondary)" }}>还没有自定义 API 工具</p>
@@ -299,10 +316,10 @@ export function CustomToolsPanel() {
               <button onClick={() => setEditing(null)}
                 className="px-3 py-1.5 rounded-lg text-[12px]"
                 style={{ background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>取消</button>
-              <button onClick={save}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-white"
+              <button disabled={saving} onClick={save}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-white disabled:opacity-50"
                 style={{ background: "var(--accent)" }}>
-                <CheckCircle2 size={14} /> 保存
+                <CheckCircle2 size={14} /> {saving ? "等待回执…" : "保存"}
               </button>
             </div>
           </div>

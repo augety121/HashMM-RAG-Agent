@@ -10,6 +10,8 @@
 #include <QJsonDocument>
 #include <QDateTime>
 #include <QRegularExpression>
+#include <QCoreApplication>
+#include <QVersionNumber>
 
 namespace InstallEngine {
 
@@ -90,14 +92,34 @@ bool writeLastInstallRecord(const QString& installDir, const QString& version) {
     return true;
 }
 
-QString readValidLastInstall() {
+InstallRecord readValidLastInstallRecord() {
     QFile f(lastInstallRecordPath());
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
     auto doc = QJsonDocument::fromJson(f.readAll()); f.close();
-    if (!doc.isObject()) return QString();
+    if (!doc.isObject()) return {};
     QString dir = doc.object().value("installDir").toString();
-    if (!dir.isEmpty() && QFileInfo::exists(markerPath(dir))) return dir;
-    return QString();
+    if (dir.isEmpty() || !QFileInfo::exists(markerPath(dir))) return {};
+
+    QString version;
+    QFile marker(markerPath(dir));
+    if (marker.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const auto markerDoc = QJsonDocument::fromJson(marker.readAll());
+        if (markerDoc.isObject()) version = markerDoc.object().value("version").toString();
+    }
+    if (version.isEmpty()) version = doc.object().value("version").toString();
+    return {dir, version};
+}
+
+QString readValidLastInstall() {
+    return readValidLastInstallRecord().installDir;
+}
+
+int compareVersions(const QString& left, const QString& right) {
+    const QVersionNumber l = QVersionNumber::fromString(left.trimmed());
+    const QVersionNumber r = QVersionNumber::fromString(right.trimmed());
+    if (l.isNull() || r.isNull()) return 0;
+    const int compared = QVersionNumber::compare(l, r);
+    return compared < 0 ? -1 : (compared > 0 ? 1 : 0);
 }
 
 int countFiles(const QString& dir) {
@@ -105,6 +127,16 @@ int countFiles(const QString& dir) {
     QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) { it.next(); ++n; }
     return n;
+}
+
+qint64 directoryBytes(const QString& dir) {
+    qint64 total = 0;
+    QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += qMax<qint64>(0, it.fileInfo().size());
+    }
+    return total;
 }
 
 bool copyTree(const QString& from, const QString& to,
@@ -131,6 +163,108 @@ bool copyTree(const QString& from, const QString& to,
             if (!QFile::copy(src, dst)) { if (err) *err = "拷文件失败: " + src; return false; }
             if (onProgress && (++done % 8 == 0)) onProgress(qMin(99, done * 100 / total));
         }
+    }
+    if (onProgress) onProgress(100);
+    return true;
+}
+
+static bool dirEmpty(const QString& path) {
+    return QDir(path).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty();
+}
+
+static bool validateStagedPayload(const QString& stage, QString* err) {
+    const QStringList required = {
+        QStringLiteral("HashMM.exe"),
+        QStringLiteral("resources/app.asar"),
+        QStringLiteral("resources/webui/index.html"),
+        QStringLiteral("resources/backend/requirements.txt"),
+        QStringLiteral("resources/backend/hashmm/__init__.py"),
+        QStringLiteral("resources/runtime/runtime-info.json"),
+        QStringLiteral("resources/runtime/python/python.exe"),
+    };
+    for (const auto& rel : required) {
+        const QString full = QDir(stage).filePath(rel);
+        QFileInfo info(full);
+        if (!info.isFile() || info.size() <= 0) {
+            if (err) *err = QStringLiteral("安装包缺少或损坏：") + rel;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool copyTreeAtomic(const QString& from, const QString& to, const QString& version,
+                    const QStringList& preserveDirs,
+                    std::function<void(int)> onProgress, QString* err) {
+    const QString dest = QDir::cleanPath(to);
+    QFileInfo destInfo(dest);
+    if (destInfo.exists() && !destInfo.isDir()) {
+        if (err) *err = QStringLiteral("安装位置已存在同名文件：") + dest;
+        return false;
+    }
+    if (destInfo.isDir() && !dirEmpty(dest) && !QFileInfo::exists(markerPath(dest))) {
+        if (err) *err = QStringLiteral("目标目录非空且不是 HashMM 安装目录。请选择空目录，避免覆盖其它文件。");
+        return false;
+    }
+
+    QDir parent(destInfo.absolutePath());
+    if (!parent.exists() && !QDir().mkpath(parent.absolutePath())) {
+        if (err) *err = QStringLiteral("无法创建安装目录的父目录：") + parent.absolutePath();
+        return false;
+    }
+    const QString token = QString::number(QCoreApplication::applicationPid()) + "-" +
+                          QString::number(QDateTime::currentMSecsSinceEpoch());
+    const QString leaf = destInfo.fileName().isEmpty() ? QStringLiteral("HashMM") : destInfo.fileName();
+    const QString stage = parent.filePath("." + leaf + ".stage-" + token);
+    const QString backup = parent.filePath("." + leaf + ".backup-" + token);
+    QDir(stage).removeRecursively();
+    QDir(backup).removeRecursively();
+
+    if (!copyTree(from, stage, onProgress, err)) {
+        QDir(stage).removeRecursively();
+        return false;
+    }
+    if (!validateStagedPayload(stage, err) || !writeMarker(stage, version)) {
+        if (err && err->isEmpty()) *err = QStringLiteral("无法写入安装标记");
+        QDir(stage).removeRecursively();
+        return false;
+    }
+
+    const bool hadDest = QFileInfo::exists(dest);
+    if (hadDest && !QDir().rename(dest, backup)) {
+        if (err) *err = QStringLiteral("无法备份旧版本；请确认 HashMM 已完全退出：") + dest;
+        QDir(stage).removeRecursively();
+        return false;
+    }
+    if (!QDir().rename(stage, dest)) {
+        if (hadDest) QDir().rename(backup, dest);
+        if (err) *err = QStringLiteral("无法切换到新版本，旧版本已尝试恢复");
+        QDir(stage).removeRecursively();
+        return false;
+    }
+
+    QStringList moved;
+    auto rollback = [&]() {
+        for (auto it = moved.crbegin(); it != moved.crend(); ++it)
+            QDir().rename(QDir(dest).filePath(*it), QDir(backup).filePath(*it));
+        QDir(dest).removeRecursively();
+        if (hadDest) QDir().rename(backup, dest);
+    };
+    if (hadDest) {
+        for (const auto& name : preserveDirs) {
+            const QString oldPath = QDir(backup).filePath(name);
+            if (!QFileInfo::exists(oldPath)) continue;
+            const QString newPath = QDir(dest).filePath(name);
+            if (QFileInfo::exists(newPath) || !QDir().rename(oldPath, newPath)) {
+                rollback();
+                if (err) *err = QStringLiteral("迁移用户数据失败，已恢复旧版本：") + name;
+                return false;
+            }
+            moved << name;
+        }
+        // Backup contains only superseded program files now. A cleanup failure
+        // must not roll back an otherwise valid install or touch preserved data.
+        QDir(backup).removeRecursively();
     }
     if (onProgress) onProgress(100);
     return true;

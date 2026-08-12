@@ -37,6 +37,11 @@ class KGSearchResult:
     entities: list[dict] = field(default_factory=list)
     relations: list[dict] = field(default_factory=list)
     chunk_ids: list[str] = field(default_factory=list)  # source_ids to fetch
+    # Query-local, evidence-preserving graph support.  Each item identifies an
+    # original indexed chunk plus the real KG nodes/edges that selected it.
+    # This is deliberately not generated prose: Chat can audit and fetch the
+    # underlying chunk before it reaches the model context.
+    evidence: list[dict] = field(default_factory=list)
     elapsed_ms: int = 0
     mode: str = "mix"
 
@@ -149,6 +154,7 @@ class KGRetriever:
 
         t0 = time.time()
         all_chunk_ids: set[str] = set()
+        chunk_support: dict[str, dict] = {}
         result_entities: list[dict] = []
         result_relations: list[dict] = []
         seen_entity_keys: set[str] = set()
@@ -156,6 +162,20 @@ class KGRetriever:
         # Use keywords if provided, otherwise fall back to raw query
         entity_query = " ".join(ll_keywords) if ll_keywords else query
         relation_query = " ".join(hl_keywords) if hl_keywords else query
+
+        def add_support(source_id, *, score: float, kind: str, label: str) -> None:
+            sid = str(source_id or "").strip()
+            if not sid:
+                return
+            all_chunk_ids.add(sid)
+            item = chunk_support.setdefault(sid, {
+                "chunk_id": sid, "score": 0.0, "entities": [], "relations": [],
+            })
+            item["score"] = max(float(item["score"]), max(0.0, min(1.0, float(score or 0.0))))
+            bucket = "entities" if kind == "entity" else "relations"
+            clean_label = str(label or "").strip()[:240]
+            if clean_label and clean_label not in item[bucket]:
+                item[bucket].append(clean_label)
 
         # ── Step 1: Search EntityVDB (local retrieval) ──
         entity_matches = self._entity_vdb.search(entity_query, top_k=top_k_entities)
@@ -172,7 +192,7 @@ class KGRetriever:
             })
             # Collect source chunks from this entity
             for sid in em.source_ids:
-                all_chunk_ids.add(sid)
+                add_support(sid, score=em.score, kind="entity", label=em.name)
 
         # ── Step 2: Graph traversal from matched entities ──
         for em in entity_matches[:5]:  # traverse from top-5 entities
@@ -191,9 +211,17 @@ class KGRetriever:
                 edge_sources = edge.get("source_ids", [])
                 if isinstance(edge_sources, list):
                     for sid in edge_sources:
-                        all_chunk_ids.add(sid)
+                        add_support(
+                            sid, score=float(edge.get("weight", 0.5) or 0.5),
+                            kind="relation",
+                            label=f"{head_name} → {edge.get('relation', 'related')} → {tail_name}",
+                        )
                 elif edge_sources:
-                    all_chunk_ids.add(str(edge_sources))
+                    add_support(
+                        edge_sources, score=float(edge.get("weight", 0.5) or 0.5),
+                        kind="relation",
+                        label=f"{head_name} → {edge.get('relation', 'related')} → {tail_name}",
+                    )
 
             # Also collect chunks from neighbor nodes
             for neighbor in neighborhood.get("neighbors", []):
@@ -203,7 +231,10 @@ class KGRetriever:
                     n_sources = neighbor.get("source_ids", [])
                     if isinstance(n_sources, list):
                         for sid in n_sources:
-                            all_chunk_ids.add(sid)
+                            add_support(
+                                sid, score=0.35, kind="entity",
+                                label=neighbor.get("name") or n_key,
+                            )
 
         # ── Step 3: Search RelationVDB (global retrieval) ──
         relation_matches = self._relation_vdb.search(relation_query, top_k=top_k_relations)
@@ -225,7 +256,10 @@ class KGRetriever:
                     "score": round(rm.score, 4),
                 })
             for sid in rm.source_ids:
-                all_chunk_ids.add(sid)
+                add_support(
+                    sid, score=rm.score, kind="relation",
+                    label=f"{rm.head} → {rm.relation} → {rm.tail}",
+                )
 
         # ── Deduplicate relations ──
         seen_rels: set[str] = set()
@@ -244,10 +278,20 @@ class KGRetriever:
                     f"{len(result_relations)} relations, "
                     f"{len(all_chunk_ids)} source chunks, {elapsed}ms")
 
+        evidence = sorted(
+            chunk_support.values(),
+            key=lambda item: (
+                -float(item.get("score", 0.0)),
+                -(len(item.get("entities", [])) + len(item.get("relations", []))),
+                item.get("chunk_id", ""),
+            ),
+        )
+
         return KGSearchResult(
             entities=result_entities,
             relations=result_relations,
-            chunk_ids=list(all_chunk_ids),
+            chunk_ids=[item["chunk_id"] for item in evidence],
+            evidence=evidence,
             elapsed_ms=elapsed,
             mode=mode,
         )

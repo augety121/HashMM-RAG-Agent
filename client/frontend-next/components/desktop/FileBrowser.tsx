@@ -138,7 +138,7 @@ export function FileBrowser({
               {it.dir ? <Folder size={13} className="flex-shrink-0" /> : <FileText size={13} className="flex-shrink-0" />}
               <span className="flex-1 truncate text-left">{it.name}</span>
               {lit && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "var(--accent)" }} />}
-              {!it.dir && <span className="text-[9.5px] font-mono" style={{ color: "var(--text-tertiary)" }}>{fmtSize(it.size)}</span>}
+              {!it.dir && <span className="text-[10px] font-mono" style={{ color: "var(--text-tertiary)" }}>{fmtSize(it.size)}</span>}
             </button>
           );
         })}

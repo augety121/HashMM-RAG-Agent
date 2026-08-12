@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hashmm.app.data.remote.ModelCreate
 import com.hashmm.app.data.remote.ModelInfo
+import com.hashmm.app.data.remote.ModelProviderInfo
 import com.hashmm.app.data.remote.ModelRepository
 import com.hashmm.app.data.settings.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,36 +15,41 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** 厂商预设：provider -> (base_url, 推荐模型名)。与后端 PROVIDER_PRESETS 对齐。 */
-val PROVIDER_PRESETS: List<Triple<String, String, String>> = listOf(
-    Triple("openai", "https://api.openai.com/v1", "gpt-4o-mini"),
-    Triple("deepseek", "https://api.deepseek.com/v1", "deepseek-chat"),
-    Triple("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
-    Triple("zhipu", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
-    Triple("moonshot", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
-    Triple("ollama", "http://localhost:11434/v1", "qwen2.5:7b"),
-    Triple("lmstudio", "http://localhost:1234/v1", "local-model"),
-    Triple("vllm", "http://localhost:8000/v1", "served-model"),
+private val FALLBACK_PROVIDERS = listOf(
+    ModelProviderInfo("deepseek", "DeepSeek", "https://api.deepseek.com", listOf("chat_completions"), "chat_completions", false, false, "", emptyList()),
+    ModelProviderInfo("openai", "OpenAI", "https://api.openai.com/v1", listOf("chat_completions", "responses"), "chat_completions", false, false, "", emptyList()),
+    ModelProviderInfo("anthropic", "Anthropic Claude", "https://api.anthropic.com", listOf("anthropic_messages"), "anthropic_messages", false, false, "", emptyList()),
+    ModelProviderInfo("custom", "OpenAI 兼容服务", "", listOf("chat_completions"), "chat_completions", false, false, "填写服务商提供的 API 根地址。", emptyList()),
+    ModelProviderInfo("sub2api", "Sub2API / 自有反代", "", listOf("chat_completions", "responses"), "chat_completions", false, false, "填写你有权使用的 Sub2API HTTPS 根地址；先测试，再设为当前模型。", emptyList()),
 )
 
 data class AddForm(
     val show: Boolean = false,
     val name: String = "",
-    val provider: String = "openai",
-    val baseUrl: String = "https://api.openai.com/v1",
+    val provider: String = "deepseek",
+    val providerName: String = "DeepSeek",
+    val baseUrl: String = "https://api.deepseek.com",
     val apiKey: String = "",
-    val modelName: String = "gpt-4o-mini",
+    val modelName: String = "",
+    val wireApi: String = "chat_completions",
+    val wireApis: List<String> = listOf("chat_completions"),
+    val apiKeyOptional: Boolean = false,
+    val endpointNote: String = "",
+    val modelHints: List<String> = emptyList(),
     val testing: Boolean = false,
     val testOk: Boolean? = null,
     val testMsg: String? = null,
     val saving: Boolean = false,
 ) {
     val canSubmit: Boolean get() = name.isNotBlank() && modelName.isNotBlank() && baseUrl.isNotBlank()
+        && (apiKeyOptional || apiKey.isNotBlank())
 }
 
 data class ModelsUi(
     val loading: Boolean = true,
     val models: List<ModelInfo> = emptyList(),
+    val providers: List<ModelProviderInfo> = FALLBACK_PROVIDERS,
+    val providerError: String? = null,
     val error: String? = null,
     val switching: String? = null,
     val deleting: String? = null,
@@ -84,7 +90,14 @@ class ModelConfigViewModel @Inject constructor(
         _ui.value = _ui.value.copy(loading = true, error = null)
         viewModelScope.launch {
             val (list, err) = repo.listModels()
-            _ui.value = _ui.value.copy(loading = false, models = list, error = if (list.isEmpty()) err else null)
+            val (providers, providerError) = repo.listProviders()
+            _ui.value = _ui.value.copy(
+                loading = false,
+                models = list,
+                providers = providers.ifEmpty { FALLBACK_PROVIDERS },
+                providerError = providerError,
+                error = if (list.isEmpty()) err else null,
+            )
         }
     }
 
@@ -109,7 +122,21 @@ class ModelConfigViewModel @Inject constructor(
     }
 
     // ---- 新增模型表单 ----
-    fun openAdd() { _ui.value = _ui.value.copy(addForm = AddForm(show = true)) }
+    fun openAdd() {
+        val provider = _ui.value.providers.firstOrNull() ?: FALLBACK_PROVIDERS.first()
+        _ui.value = _ui.value.copy(addForm = AddForm(
+            show = true,
+            provider = provider.id,
+            providerName = provider.name,
+            baseUrl = provider.baseUrl,
+            wireApi = provider.defaultWireApi,
+            wireApis = provider.wireApis,
+            apiKeyOptional = provider.authOptional,
+            endpointNote = provider.endpointNote,
+            modelHints = provider.modelHints,
+            name = provider.name,
+        ))
+    }
     fun closeAdd() { _ui.value = _ui.value.copy(addForm = _ui.value.addForm.copy(show = false)) }
 
     private fun mutateForm(block: (AddForm) -> AddForm) {
@@ -120,15 +147,22 @@ class ModelConfigViewModel @Inject constructor(
     fun onApiKey(v: String) = mutateForm { it.copy(apiKey = v, testOk = null, testMsg = null) }
     fun onBaseUrl(v: String) = mutateForm { it.copy(baseUrl = v, testOk = null, testMsg = null) }
     fun onModelName(v: String) = mutateForm { it.copy(modelName = v, testOk = null, testMsg = null) }
+    fun onWireApi(v: String) = mutateForm { it.copy(wireApi = v, testOk = null, testMsg = null) }
 
     fun onProvider(p: String) {
-        val preset = PROVIDER_PRESETS.firstOrNull { it.first == p }
+        val provider = _ui.value.providers.firstOrNull { it.id == p } ?: return
         mutateForm {
             it.copy(
                 provider = p,
-                baseUrl = preset?.second ?: it.baseUrl,
-                modelName = preset?.third ?: it.modelName,
-                name = if (it.name.isBlank()) p.replaceFirstChar { c -> c.uppercase() } else it.name,
+                providerName = provider.name,
+                baseUrl = provider.baseUrl,
+                modelName = "",
+                wireApi = provider.defaultWireApi,
+                wireApis = provider.wireApis,
+                apiKeyOptional = provider.authOptional,
+                endpointNote = provider.endpointNote,
+                modelHints = provider.modelHints,
+                name = provider.name,
                 testOk = null, testMsg = null,
             )
         }
@@ -139,7 +173,7 @@ class ModelConfigViewModel @Inject constructor(
         if (f.testing || !f.canSubmit) return
         mutateForm { it.copy(testing = true, testOk = null, testMsg = null) }
         viewModelScope.launch {
-            val r = repo.testModel(ModelCreate(f.name, f.provider, f.baseUrl, f.apiKey, f.modelName))
+            val r = repo.testModel(ModelCreate(f.name, f.provider, f.baseUrl, f.apiKey, f.modelName, wireApi = f.wireApi))
             mutateForm { it.copy(testing = false, testOk = r.ok, testMsg = r.message + if (r.latencyMs > 0) "（${r.latencyMs}ms）" else "") }
         }
     }
@@ -149,7 +183,7 @@ class ModelConfigViewModel @Inject constructor(
         if (f.saving || !f.canSubmit) return
         mutateForm { it.copy(saving = true) }
         viewModelScope.launch {
-            val (ok, msg) = repo.createModel(ModelCreate(f.name, f.provider, f.baseUrl, f.apiKey, f.modelName))
+            val (ok, msg) = repo.createModel(ModelCreate(f.name, f.provider, f.baseUrl, f.apiKey, f.modelName, wireApi = f.wireApi))
             if (ok) {
                 _ui.value = _ui.value.copy(addForm = AddForm(show = false), toast = msg)
                 load()

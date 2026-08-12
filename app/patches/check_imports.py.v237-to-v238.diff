@@ -1,0 +1,12 @@
+--- /tmp/b-check_imports.py	2026-07-04 16:37:29.306331160 +0000
++++ tools/check_imports.py	2026-07-04 16:36:14.965305881 +0000
+@@ -14,7 +14,8 @@
+ "AlertDialog":"androidx.compose.material3.AlertDialog","OutlinedTextField":"androidx.compose.material3.OutlinedTextField",
+ "TextButton":"androidx.compose.material3.TextButton","Button":"androidx.compose.material3.Button",
+ "CircleShape":"androidx.compose.foundation.shape.CircleShape","RoundedCornerShape":"androidx.compose.foundation.shape.RoundedCornerShape",
+-"PullToRefreshBox":"androidx.compose.material3.pulltorefresh.PullToRefreshBox","HorizontalDivider":"androidx.compose.material3.HorizontalDivider"}
++"PullToRefreshBox":"androidx.compose.material3.pulltorefresh.PullToRefreshBox","HorizontalDivider":"androidx.compose.material3.HorizontalDivider",
++"IntrinsicSize":"androidx.compose.foundation.layout.IntrinsicSize","fillMaxHeight":"androidx.compose.foundation.layout.fillMaxHeight"}
+ root=os.path.join(os.path.dirname(__file__),"..","app","src","main","java","com","hashmm","app")
+ bad=[]
+ for dp,_,fs in os.walk(root):

@@ -26,20 +26,44 @@ _LOW_RISK_NAME = re.compile(
     r"(search|retrieve|read|get|list|fetch|lookup|calc|calculator|datetime|"
     r"查询|检索|读取|计算)", re.IGNORECASE)
 # Arg signals (e.g. an HTTP method that mutates).
-_HIGH_RISK_ARG = re.compile(r"\b(POST|PUT|DELETE|PATCH)\b", re.IGNORECASE)
+_HIGH_RISK_ARG = re.compile(r"\b(POST|PUT|DELETE|PATCH)\b", re.IGNORECASE)   # strict 档沿用
+# V228 balanced 档专用：只有"真危险"参数模式才升危（普通文本里出现 delete/post 一律不误伤）
+_TRULY_DANGEROUS_ARG = re.compile(
+    r"(rm\s+-rf\s+/|del\s+/[sq]\b|format\s+[a-z]:|mkfs\.|drop\s+(table|database)\b|"
+    r"shutdown\s+(-|/)|reg\s+delete|dd\s+if=)", re.IGNORECASE)
 
 
 def classify_tool_risk(tool_name: str, args: dict | None = None) -> str:
-    """Return 'high' or 'low' risk for a tool call."""
+    """Return 'high' or 'low' risk for a tool call.
+
+    V228 三档（HASHMM_SAFETY_MODE，默认 balanced）——既保安全、不误伤：
+      strict   老行为：名字或参数出现 POST/DELETE 等字样即 high（最严，也最容易误拦）。
+      balanced 默认：①只读类工具（search/read/fetch/查询…）**永不**因参数升危——
+               普通文本里出现 "delete/发送" 不再误伤；②非只读工具仅命中
+               「真危险模式」（rm -rf / format / drop table / shutdown…）或高危名才 high。
+      off      一律 low（仅审计留痕，不做任何拦截）——自己电脑自己做主。
+    """
+    import os as _os
+    mode = (_os.environ.get("HASHMM_SAFETY_MODE") or "balanced").strip().lower()
     name = tool_name or ""
-    if _HIGH_RISK_NAME.search(name):
-        return "high"
     blob = " ".join(f"{k}={v}" for k, v in (args or {}).items())
-    if _HIGH_RISK_ARG.search(blob):
-        return "high"
-    if _LOW_RISK_NAME.search(name):
+    if mode == "off":
         return "low"
-    # Unknown tools default to low (read-ish), but an explicit allowlist can override.
+    if mode == "strict":
+        if _HIGH_RISK_NAME.search(name):
+            return "high"
+        if _HIGH_RISK_ARG.search(blob):
+            return "high"
+        if _LOW_RISK_NAME.search(name):
+            return "low"
+        return "low"
+    # balanced（默认）
+    if _LOW_RISK_NAME.search(name):
+        return "low"                       # 只读工具无条件低危：参数里有啥词都不误伤
+    if _HIGH_RISK_NAME.search(name):
+        return "high"                      # 名字本身就是写/删/发/付 → 该确认还得确认
+    if _TRULY_DANGEROUS_ARG.search(blob):
+        return "high"                      # 未知工具但参数是真毁灭性命令
     return "low"
 
 

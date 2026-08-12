@@ -18,6 +18,7 @@ data class AdminUi(
     val tab: AdminTab = AdminTab.USERS,
     val loading: Boolean = true,
     val users: List<AdminUser> = emptyList(),
+    val usersNotice: String? = null,
     val usersError: String? = null,
     val auditEnabled: Boolean = false,
     val audit: List<AuditEntry> = emptyList(),
@@ -45,10 +46,15 @@ class AdminViewModel @Inject constructor(
     }
 
     private fun loadUsers() {
-        _ui.value = _ui.value.copy(loading = true, usersError = null)
+        _ui.value = _ui.value.copy(loading = true, usersNotice = null, usersError = null)
         viewModelScope.launch {
-            val (users, err) = repo.listUsers()
-            _ui.value = _ui.value.copy(loading = false, users = users, usersError = if (users.isEmpty()) err else null)
+            val result = repo.listUsers()
+            _ui.value = _ui.value.copy(
+                loading = false,
+                users = result.users,
+                usersNotice = result.notice,
+                usersError = result.error,
+            )
         }
     }
 

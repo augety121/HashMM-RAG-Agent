@@ -120,17 +120,47 @@ def _run_one(subquery: str, search_fn: Callable, worker_fn: Callable | None) -> 
 
 def orchestrate(query: str, search_fn: Callable, synth_fn: Callable,
                 worker_fn: Callable | None = None, llm_fn: Callable | None = None,
-                max_subagents: int | None = None) -> dict:
+                max_subagents: int | None = None,
+                execution_scope: dict | None = None) -> dict:
     """Decompose → run subagents in parallel → synthesize. ``search_fn(sub)->results``,
     optional ``worker_fn(sub, results)->finding`` (run these on local Qwen),
     ``synth_fn(query, subreports)->answer`` (the single paid call). Never raises."""
     cap = max_subagents if max_subagents is not None else _max_subagents()
     subqueries = decompose(query, llm_fn, max_parts=cap)
+    from hashmm.agent.fabric import build_delegation_plan
+    fabric = build_delegation_plan(
+        parent_scope=execution_scope,
+        goal=query,
+        roles=[
+            {
+                "id": f"retrieval_{index + 1}",
+                "role": "research",
+                "task": subquery,
+                "allowed_tools": ["kb_search", "kg_query", "web_search", "fetch_url"],
+                "success_criteria": ["return bounded findings with source observations"],
+            }
+            for index, subquery in enumerate(subqueries)
+        ],
+    )
+    from hashmm.agent.mesh import admit_mesh_work
+    admission = admit_mesh_work(
+        goal=query,
+        roles=[
+            {"id": f"retrieval_{index + 1}", "role": "research", "task": subquery}
+            for index, subquery in enumerate(subqueries)
+        ],
+        requested_mode="auto",
+        execution_scope=execution_scope,
+        adapter="legacy_agentic_rag",
+        require_delegation=execution_scope is not None,
+    )
+    if not admission["admitted"]:
+        subqueries = [query]
+    if execution_scope is not None and fabric["admitted_count"] == 0:
+        subqueries = [query]
     reports: list[dict] = []
     try:
-        if len(subqueries) == 1:
-            reports = [_run_one(subqueries[0], search_fn, worker_fn)]
-        else:
+        if len(subqueries) > 1 and admission["resolved_mode"] == "parallel":
             with ThreadPoolExecutor(max_workers=min(cap, len(subqueries))) as ex:
                 futs = {ex.submit(_run_one, sq, search_fn, worker_fn): sq for sq in subqueries}
                 for fut in as_completed(futs):
@@ -138,6 +168,11 @@ def orchestrate(query: str, search_fn: Callable, synth_fn: Callable,
                         reports.append(fut.result())
                     except Exception as e:
                         log_suppressed(logger, e)
+        else:
+            reports = [
+                _run_one(subquery, search_fn, worker_fn)
+                for subquery in subqueries
+            ]
     except Exception as e:
         log_suppressed(logger, e)
         reports = reports or [_run_one(subqueries[0], search_fn, worker_fn)]
@@ -156,4 +191,5 @@ def orchestrate(query: str, search_fn: Callable, synth_fn: Callable,
         merged_sources.extend(r.get("results", []))
     return {"answer": answer, "subqueries": subqueries, "reports": reports,
             "sources": merged_sources, "n_subagents": len(reports),
-            "effort": effort_level(query)}
+            "effort": effort_level(query), "mesh_admission": admission,
+            "fabric": fabric}

@@ -23,9 +23,9 @@ function classifyFile(file) {
   file = file || {};
   const ext = _ext(file.name);
   const type = String(file.type || "").toLowerCase();
-  if (IMAGE_EXT.has(ext) || type.startsWith("image/")) return { kind: "image", ext, icon: "🖼", canInline: true };
-  if (TEXT_EXT.has(ext) || type.startsWith("text/")) return { kind: "text", ext, icon: "📄", canInline: true };
-  return { kind: "other", ext, icon: "📎", canInline: false };
+  if (IMAGE_EXT.has(ext) || type.startsWith("image/")) return { kind: "image", ext, icon: "IMG", canInline: true };
+  if (TEXT_EXT.has(ext) || type.startsWith("text/")) return { kind: "text", ext, icon: "TXT", canInline: true };
+  return { kind: "other", ext, icon: "FILE", canInline: false };
 }
 
 /** 校验附件是否可加。 @returns { ok, reason, kind } */

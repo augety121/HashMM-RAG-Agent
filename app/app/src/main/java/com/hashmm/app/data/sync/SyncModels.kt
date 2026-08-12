@@ -14,6 +14,7 @@ data class ChatConversation(
     val metadata: JsonElement? = null,
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("updated_at") val updatedAt: String = "",
+    @SerialName("last_message_at") val lastMessageAt: String = "",
 )
 
 /** 与 Supabase chat_messages 表一一对应（镜像客户端 messages 表）。 */
@@ -28,8 +29,11 @@ data class ChatMessage(
     @SerialName("tool_calls") val toolCalls: JsonElement? = null,
     val files: JsonElement? = null,
     val sources: JsonElement? = null,
+    val groundings: JsonElement? = null,
+    @SerialName("run_manifest") val runManifest: JsonElement? = null,
     val suggestions: JsonElement? = null,
     val status: String = "complete",
+    val feedback: String = "",
     @SerialName("tokens_in") val tokensIn: Int = 0,
     @SerialName("tokens_out") val tokensOut: Int = 0,
     @SerialName("created_at") val createdAt: String = "",

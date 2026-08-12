@@ -13,7 +13,7 @@ const assert = require("assert");
 const http = require("http");
 const crypto = require("crypto");
 const { RemoteServer, acceptKey, decodeFrames } = require("../services/remote-server");
-const { PairingManager } = require("../services/remote-pairing");
+const { PairingManager, TrustedDeviceStore } = require("../services/remote-pairing");
 
 let passed = 0;
 const ok = (n) => { passed++; console.log("  ✓ " + n); };
@@ -86,8 +86,14 @@ function httpGet(port, path) {
 (async function run() {
   const injected = [];
   const pm = new PairingManager({ codeGen: () => "424242", maxAttempts: 5 });
+  let trustedRecords = {};
+  const trustedDevices = new TrustedDeviceStore({
+    load: () => trustedRecords,
+    save: (next) => { trustedRecords = JSON.parse(JSON.stringify(next)); },
+  });
   const srv = new RemoteServer({
     pairing: pm,
+    trustedDevices,
     fps: 30,
     hostToken: "HOSTTOK",
     iceServers: [{ urls: "stun:stun.example:3478" }],
@@ -115,8 +121,9 @@ function httpGet(port, path) {
   ok("hello 下发 ICE 配置（viewer 据此建 RTCPeerConnection）");
 
   // 3) viewer 配对
-  viewer.send({ type: "pair", code: "424242" });
-  await viewer.waitFor(() => viewer.msgs.find(m => m.type === "paired"));
+  viewer.send({ type: "pair", code: "424242", deviceId: "viewer-device-0001" });
+  const firstPair = await viewer.waitFor(() => viewer.msgs.find(m => m.type === "paired"));
+  assert.ok(firstPair.trustToken, "first pairing issues a persistent trust credential");
   ok("viewer 配对成功");
 
   // 4) host 用错 token 注册 → 被拒
@@ -168,7 +175,18 @@ function httpGet(port, path) {
   assert.strictEqual(left.vid, vid);
   ok("viewer 掉线 → host 收到 viewerLeft{vid}（可销毁对应 PC）");
 
-  console.log(`\n✅ remote-signaling 全部通过（共 ${passed} 项：网页托管 + ICE 下发 + host 注册 + 双向信令中继 + 多 viewer 路由 + 掉线通知）`);
+  // 10) same LAN device reconnects with the stored credential and does not
+  // need another pairing code. The host stores only the token digest.
+  const resumed = await connectWS(port);
+  await resumed.waitFor(() => resumed.msgs.find(m => m.type === "hello"));
+  resumed.send({ type: "resume", deviceId: "viewer-device-0001", trustToken: firstPair.trustToken });
+  const resumedPair = await resumed.waitFor(() => resumed.msgs.find(m => m.type === "paired" && m.resumed));
+  assert.strictEqual(resumedPair.trusted, true);
+  assert.notStrictEqual(trustedRecords["viewer-device-0001"].tokenHash, firstPair.trustToken);
+  ok("验证码首次配对后建立可撤销信任，后续连接免重复输入");
+  resumed.sock.destroy();
+
+  console.log(`\n✅ remote-signaling 全部通过（共 ${passed} 项：网页托管 + ICE 下发 + host 注册 + 双向信令中继 + 多 viewer 路由 + 受信任设备恢复）`);
   try { srv.stop(); } catch (_e) {}
   process.exit(0);
 })().catch((e) => { console.error("\n❌ 失败：", e && e.message); process.exit(1); });

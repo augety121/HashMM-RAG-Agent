@@ -77,6 +77,90 @@ def cost_by_tenant() -> dict:
     return {t: dict(v) for t, v in _COST_BY_TENANT.items()}
 
 
+# ── V204 图2-⑤：Trace JSONL 落盘（可观测性持久化）────────────────────────
+# 环形缓冲重启即丢；这里把每条 gen_ai 请求记录/工具调用/错误追加到
+# <DATA_DIR>/trace/agent-YYYYMMDD.jsonl，事后可回放、可喂 Dashboard、可做评测集。
+# 特性：按天分文件 + 单文件 20MB 轮转（.1 备份）；HASHMM_TRACE_JSONL=0 可关；永不抛错。
+import json as _json
+import os as _os
+import threading as _th
+from pathlib import Path as _Path
+
+_TRACE_LOCK = _th.Lock()
+_TRACE_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _trace_enabled() -> bool:
+    return (_os.environ.get("HASHMM_TRACE_JSONL", "1") or "1") != "0"
+
+
+def _trace_dir() -> _Path:
+    d = _os.environ.get("HASHMM_DATA_DIR") or _os.environ.get("DATA_DIR") or "data"
+    return _Path(d).expanduser().resolve() / "trace"
+
+
+def trace_append(kind: str, rec: dict) -> None:
+    """追加一条 trace 到当天 JSONL。观测层铁律：任何失败都吞掉，绝不影响请求路径。"""
+    if not _trace_enabled():
+        return
+    try:
+        d = _trace_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / (time.strftime("agent-%Y%m%d") + ".jsonl")
+        # V205 P0-2：自动附加会话/链路 ID（诊断助手按会话过滤的基础）
+        try:
+            from hashmm.trace_context import current_conv_id, current_trace_id
+            if "conv_id" not in rec:
+                _cid = current_conv_id()
+                if _cid:
+                    rec = {**rec, "conv_id": _cid}
+            if "trace_id" not in rec:
+                _tid = current_trace_id()
+                if _tid:
+                    rec = {**rec, "trace_id": _tid}
+        except Exception:
+            pass
+        line = _json.dumps({"kind": kind, **rec}, ensure_ascii=False, default=str)
+        with _TRACE_LOCK:
+            try:
+                if f.exists() and f.stat().st_size > _TRACE_MAX_BYTES:
+                    bak = f.with_suffix(".jsonl.1")
+                    if bak.exists():
+                        bak.unlink()
+                    f.rename(bak)
+            except Exception:
+                pass
+            with open(f, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception:  # nosem: observability-fallback
+        pass
+
+
+def trace_tail(n: int = 200, kinds: tuple = ()) -> list:
+    """读最近 n 条 trace（诊断助手用）。文件缺失/坏行都安静跳过。"""
+    out: list = []
+    try:
+        d = _trace_dir()
+        files = sorted(d.glob("agent-*.jsonl"))[-2:]
+        lines: list[str] = []
+        for f in files:
+            try:
+                lines.extend(f.read_text(encoding="utf-8", errors="replace").splitlines())
+            except Exception:
+                continue
+        for line in lines[-max(n * 3, n):]:
+            try:
+                rec = _json.loads(line)
+            except Exception:
+                continue
+            if kinds and rec.get("kind") not in kinds:
+                continue
+            out.append(rec)
+        return out[-n:]
+    except Exception:
+        return out
+
+
 def record_scheduled_run(action: str, status: str) -> None:
     """Count a scheduled-task run. Never raises."""
     try:
@@ -120,6 +204,8 @@ def record_tool_call(name: str, latency_ms: int, ok: bool) -> None:
     try:
         _TOOL_CALLS.append({"name": name, "latency_ms": int(latency_ms),
                             "ok": bool(ok), "_ts": time.time()})
+        trace_append("tool_call", {"name": name, "latency_ms": int(latency_ms),
+                                   "ok": bool(ok), "ts": time.time()})
     except Exception:  # nosem: observability-fallback
         pass
 
@@ -135,6 +221,7 @@ def record_error(code: str, *, trace_id: str = "") -> None:
         e["count"] += 1
         if trace_id:
             e["last_trace_id"] = trace_id
+        trace_append("error", {"code": code, "trace_id": trace_id, "ts": time.time()})
     except Exception:  # nosem: observability-fallback
         pass
 
@@ -264,6 +351,7 @@ def record_rag_request(*, model: str | None, input_tokens: int, output_tokens: i
         if top_score is not None:
             rec[HASHMM_RETRIEVAL_SCORE] = float(top_score)
         _REQUESTS.append(rec)
+        trace_append("gen_ai_request", rec)
         tracer = _otel_tracer()
         if tracer:
             with tracer.start_as_current_span("gen_ai.chat") as sp:

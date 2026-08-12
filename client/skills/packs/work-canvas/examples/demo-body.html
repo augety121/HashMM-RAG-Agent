@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作画布 V217 — 让用户看见</title>
+<style>
+[[PASTE canvas.css]]
+</style>
+</head>
+<body>
+<div class="wc-container">
+
+  <h1 class="wc-h1">V217 · 让用户看见：入口 × 图标栏 × 落盘</h1>
+  <p class="wc-sub">修复"功能做了但没有按钮"：画布链路补齐 3 个用户入口；左栏收起改为 52px 图标栏（对照你给的截图逐项落位）；版本历史按你的拍板升格为跨会话落盘。所有数字均为实测。</p>
+  <div class="wc-meta">
+    <span>生成 2026-07-03</span><span>·</span>
+    <span>范围：前端 5 文件 + 后端 1 文件（+208 −11）</span><span>·</span>
+    <span>基线：V216</span><span>·</span>
+    <span>状态：待你确认合入</span>
+    <button class="wc-btn ghost" type="button" data-wc-theme style="margin-left:auto">深/浅色</button>
+  </div>
+
+  <div class="wc-needs">
+    <h2>需要你拍板</h2>
+    <ol>
+      <li>V217 全量合入？照旧跑 <code>installer-native\build-all.bat</code>，第 3a 步 <code>next build</code> 是 TSX 的最终验证（本环境无 node_modules 未跑编译）。报红按 <code>patches/*.v216-to-v217.diff</code> 回滚——6 份补丁一文件一份，各自独立可反向。</li>
+      <li>本轮审计出 <strong>8 个前端死组件</strong>（全树零引用，清单见下方"验证清单"折叠）。按你《死代码确权》的规矩<strong>列出待拍板、未经确认不删</strong>；确认后下一轮清掉并出 diff。</li>
+    </ol>
+  </div>
+
+  <div class="wc-section">
+    <div class="wc-section-title">本轮规模（实测）</div>
+    <div class="wc-grid">
+      <div class="wc-card wc-stat"><div class="v good">+208</div><div class="l">新增行 / 6 文件（−11）</div></div>
+      <div class="wc-card wc-stat"><div class="v accent">3</div><div class="l">画布用户入口 <span class="wc-trend up">0→3</span></div></div>
+      <div class="wc-card wc-stat"><div class="v">52px</div><div class="l">收起态图标栏宽度</div></div>
+      <div class="wc-card wc-stat"><div class="v">10</div><div class="l">落盘版本上限 <span class="wc-trend flat">滚动淘汰</span></div></div>
+    </div>
+    <div class="wc-callout info"><span class="ic"></span><div><strong>问题定性：</strong>V216 只做了"画布打开后"的体验，没做"用户怎么走到画布"。你截图开的是 <code>mnist_cnn.py</code>——代码文件不走画布路径，右栏自然一个画布按钮都没有。本轮补的就是这条最后一公里，外加把"做了不显示"当成一类问题全树排查了一遍。</div></div>
+  </div>
+
+  <div class="wc-section">
+    <div class="wc-section-title">三个入口 —— 这就是你要的按钮<span class="wc-badge">点表头可排序</span></div>
+    <div class="wc-card" style="padding:0;overflow:hidden">
+      <table class="wc-table" data-wc-sort>
+        <thead><tr><th>入口</th><th>长在哪</th><th>点了会发生什么</th><th>实现</th></tr></thead>
+        <tbody>
+          <tr><td><strong>「画布」chip</strong></td><td>输入框工具条，「深度检索」右侧</td><td>插入指令模板到输入框，可改可删，<mark class="wc-mark">绝不代发</mark></td><td><code>ChatArea.tsx:1058</code></td></tr>
+          <tr><td><strong>「画布讲解」按钮</strong></td><td>右栏任何非画布产物的头部（你截图那个 .py 的位置）</td><td>回填"把这个文件本轮工作做成画布"的指令</td><td><code>ArtifactPanel.tsx:108</code></td></tr>
+          <tr><td><strong>画布内 composer</strong></td><td>画布底部（V215 起就有）</td><td>就地写指令回喂宿主</td><td><code>canvas.js · wc:prompt</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="wc-callout success"><span class="ic"></span><div><strong>三路一条链：</strong>全部汇入既有 <code>pendingPrompt</code> 链路（与「运行轨迹」复跑同源）——只回填输入框、你确认后发送。零新协议、零代发风险；技能包侧本就自动装载（首次问答播种内置包，触发词命中即注入手册）。</div></div>
+  </div>
+
+  <div class="wc-section">
+    <div class="wc-section-title">改了哪里<span class="wc-badge accent">点左侧文件切换 · 行内高亮是词级标注</span></div>
+    <div class="wc-changed">
+      <div class="wc-files" role="tablist" aria-label="改动文件">
+        <button class="wc-file" type="button" data-target="d1" style="--heat:0.88">
+          <span class="dot mod"></span><span class="n">Sidebar.tsx</span>
+          <span class="cnt">改·4</span>
+          <span class="s"><b class="p">+68</b> <b class="m">−3</b></span>
+        </button>
+        <button class="wc-file" type="button" data-target="d2" style="--heat:1">
+          <span class="dot mod"></span><span class="n">ArtifactPanel.tsx</span>
+          <span class="cnt">改·5</span>
+          <span class="s"><b class="p">+52</b> <b class="m">−5</b></span>
+        </button>
+        <button class="wc-file" type="button" data-target="d3" style="--heat:0.76">
+          <span class="dot mod"></span><span class="n">ChatArea.tsx</span>
+          <span class="cnt">改·3</span>
+          <span class="s"><b class="p">+15</b> <b class="m">−2</b></span>
+        </button>
+        <button class="wc-file" type="button" data-target="d4" style="--heat:0.52">
+          <span class="dot mod"></span><span class="n">conversations.py</span>
+          <span class="cnt">改·1</span>
+          <span class="s"><b class="p">+55</b></span>
+        </button>
+        <button class="wc-file" type="button" data-target="d5" style="--heat:0.52">
+          <span class="dot mod"></span><span class="n">api.ts · store.ts</span>
+          <span class="cnt">改·2</span>
+          <span class="s"><b class="p">+18</b> <b class="m">−1</b></span>
+        </button>
+      </div>
+      <div>
+        <div class="wc-diff" id="d1">
+          <div class="wc-diff-head">
+            <span>frontend-next/components/Sidebar.tsx — 收起不再消失</span>
+            <button class="wc-btn ghost" type="button" data-wc-copy="#raw1" style="padding:3px 9px;font-size:10.5px">复制 diff</button>
+          </div>
+          <div class="wc-diff-body">
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 早返回：null → 图标栏组件 @@</span></div>
+            <div class="dl del"><span class="ln"></span><span class="tx">if (!sbOpen) <mark class="wc-mark">return null;</mark></span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">if (!sbOpen) return &lt;<mark class="wc-mark">RailSidebar</mark> desktopMode={…} runnerDot={…} userInitial={…} isAdmin={…} /&gt;;</span></div>
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 355 新增 RailSidebar 组件（+60 行，折叠）@@</span></div>
+            <div class="dl ctx"><span class="ln">355</span><span class="tx">function RailSidebar(…) — 52px：展开 / ＋新对话 / 对话记录 / 视图直达 ×7 / 账号首字</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">className="w-[52px] flex-shrink-0 <mark class="wc-mark">hidden md:flex</mark> …"   // 手机宽度不渲染</span></div>
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 显式收起持久化 @@</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">onClick={() =&gt; { set({ sbOpen: false }); <mark class="wc-mark">localStorage.setItem("hmm_sb", "0")</mark> }}</span></div>
+          </div>
+          <pre id="raw1" hidden>--- a/frontend-next/components/Sidebar.tsx  (V216)
++++ b/frontend-next/components/Sidebar.tsx  (V217, +68 −3)
+@@ 早返回 @@
+-  if (!sbOpen) return null;
++  if (!sbOpen) return &lt;RailSidebar …/&gt;;   // 52px 图标栏，hidden md:flex
+@@ :355 @@ +function RailSidebar(…) 整块（对照截图：展开/＋/对话/工作台/终端/知识库/进化/用量/审计/后端/账号）
+@@ 收起按钮 @@ + localStorage.setItem("hmm_sb","0")（显式操作才持久化；手机自动收起不写）
+完整补丁见 patches/Sidebar.tsx.v216-to-v217.diff</pre>
+        </div>
+        <div class="wc-diff" id="d2" hidden>
+          <div class="wc-diff-head">
+            <span>frontend-next/components/ArtifactPanel.tsx — 入口 + 落盘</span>
+            <button class="wc-btn ghost" type="button" data-wc-copy="#raw2" style="padding:3px 9px;font-size:10.5px">复制 diff</button>
+          </div>
+          <div class="wc-diff-body">
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 108 头部新增「画布讲解」按钮（非画布产物可见）@@</span></div>
+            <div class="dl add"><span class="ln">108</span><span class="tx">{artifact.type !== "html" &amp;&amp; ( &lt;button onClick={…set({ <mark class="wc-mark">pendingPrompt</mark>: `用 work-canvas 技能…` })}&gt;… )}</span></div>
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 首开合并服务端历史（新增 effect，折叠）@@</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx"><mark class="wc-mark">getCanvasVersions</mark>(convId, filename).then(r =&gt; { …按 ts 去重合并进本地缓存… })</span></div>
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 快照真正新增时静默落盘 @@</span></div>
+            <div class="dl ctx"><span class="ln"></span><span class="tx">  CANVAS_VERSIONS.set(filename, list);</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">  if (convId) <mark class="wc-mark">saveCanvasVersion</mark>(convId, filename, previewHtml).catch(() =&gt; {});   // 失败不拦预览</span></div>
+          </div>
+          <pre id="raw2" hidden>--- a/frontend-next/components/ArtifactPanel.tsx  (V216)
++++ b/frontend-next/components/ArtifactPanel.tsx  (V217, +52 −5)
+@@ :108 @@ + 非画布产物头部「画布讲解」按钮 → pendingPrompt 回填（不代发）
+@@ CanvasPreview @@ + convId 推导（与本文件其他预览同法，从 download_url 取）
++ 首开 GET canvas-versions 合并历史（CANVAS_SEEDED 防重复拉取）
++ 快照新增时 PUT 落盘（服务端尾版去重；网络失败静默，本地缓存照常）
+完整补丁见 patches/ArtifactPanel.tsx.v216-to-v217.diff</pre>
+        </div>
+        <div class="wc-diff" id="d3" hidden>
+          <div class="wc-diff-head">
+            <span>frontend-next/components/ChatArea.tsx — composer 入口</span>
+            <button class="wc-btn ghost" type="button" data-wc-copy="#raw3" style="padding:3px 9px;font-size:10.5px">复制 diff</button>
+          </div>
+          <div class="wc-diff-body">
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 1058 工具条新增「画布」chip（「深度检索」右侧）@@</span></div>
+            <div class="dl add"><span class="ln">1058</span><span class="tx">&lt;button onClick={() =&gt; { setText(v =&gt; v.trim() ? v + "\n\n（另外：" + tpl + "）" : <mark class="wc-mark">tpl</mark>); textRef.current?.focus(); }}&gt;</span></div>
+            <div class="dl add"><span class="ln">1065</span><span class="tx">  &lt;LayoutTemplate size={11} /&gt; 画布</span></div>
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 730 头部展开按钮：桌面让位给图标栏，手机保留 @@</span></div>
+            <div class="dl del"><span class="ln"></span><span class="tx">className="p-1.5 rounded-lg …"</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">className="p-1.5 rounded-lg … <mark class="wc-mark">md:hidden</mark>"</span></div>
+          </div>
+          <pre id="raw3" hidden>--- a/frontend-next/components/ChatArea.tsx  (V216)
++++ b/frontend-next/components/ChatArea.tsx  (V217, +15 −2)
+@@ :1058 @@ +「画布」chip：空输入→插模板；有内容→追加"（另外：…）"；聚焦输入框
+@@ :730 @@ 展开按钮 + md:hidden（≥768 由图标栏承担展开职责）
++ import LayoutTemplate
+完整补丁见 patches/ChatArea.tsx.v216-to-v217.diff</pre>
+        </div>
+        <div class="wc-diff" id="d4" hidden>
+          <div class="wc-diff-head">
+            <span>hashmm/api/routes/conversations.py — 落盘端点</span>
+            <button class="wc-btn ghost" type="button" data-wc-copy="#raw4" style="padding:3px 9px;font-size:10.5px">复制 diff</button>
+          </div>
+          <div class="wc-diff-body">
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ 535 / 550 新增两端点（+55 行）@@</span></div>
+            <div class="dl add"><span class="ln">535</span><span class="tx">@router.get("/conversations/{conv_id}/files/{filename}/<mark class="wc-mark">canvas-versions</mark>")</span></div>
+            <div class="dl add"><span class="ln">550</span><span class="tx">@router.put("/conversations/{conv_id}/files/{filename}/canvas-versions")</span></div>
+            <div class="dl ctx"><span class="ln"></span><span class="tx">同 require_conv_access 鉴权 · 同 conv_files_dir · 同 basename 防穿越（与 preview 逐行同范式）</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">侧车 <mark class="wc-mark">.wc-versions/&lt;文件名&gt;.json</mark> · 尾版去重 · ≤10 版滚动 · 2MB 上限 · 原子替换写</span></div>
+          </div>
+          <pre id="raw4" hidden>--- a/hashmm/api/routes/conversations.py  (V216)
++++ b/hashmm/api/routes/conversations.py  (V217, +55 −0)
+@@ :535 GET / :550 PUT canvas-versions @@
+存放：会话工作区隐藏侧车 .wc-versions/&lt;文件名&gt;.json（list_conv_files 只列顶层 is_file() 项，目录天然不进用户文件列表）
+py_compile 通过；完整补丁见 patches/conversations.py.v216-to-v217.diff</pre>
+        </div>
+        <div class="wc-diff" id="d5" hidden>
+          <div class="wc-diff-head">
+            <span>lib/api.ts + lib/store.ts — 胶水与记忆</span>
+            <button class="wc-btn ghost" type="button" data-wc-copy="#raw5" style="padding:3px 9px;font-size:10.5px">复制 diff</button>
+          </div>
+          <div class="wc-diff-body">
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ api.ts：落盘读写函数（+9）@@</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">export async function <mark class="wc-mark">getCanvasVersions</mark>(convId, filename) / <mark class="wc-mark">saveCanvasVersion</mark>(convId, filename, html)</span></div>
+            <div class="dl hunk"><span class="ln"></span><span class="tx">@@ store.ts init：恢复显式收起形态（+9 −1）@@</span></div>
+            <div class="dl add"><span class="ln"></span><span class="tx">if (window.innerWidth &gt;= 768) sbOpen = localStorage.getItem("<mark class="wc-mark">hmm_sb</mark>") !== "0";   // 手机不读不写，行为隔离</span></div>
+          </div>
+          <pre id="raw5" hidden>--- lib/api.ts (+9) · lib/store.ts (+9 −1)
+api.ts：canvas-versions GET/PUT 封装，与 previewFile 同 headers/_fetch 链路
+store.ts init：≥768px 才读 hmm_sb（App.tsx 手机自动收起不写该键，桌面偏好不被污染）
+补丁见 patches/api.ts.v216-to-v217.diff · patches/store.ts.v216-to-v217.diff</pre>
+        </div>
+        <div class="wc-legend">
+          <span><span class="sq" style="background:color-mix(in srgb,var(--success) 10%,transparent)"></span>新增行</span>
+          <span><span class="sq" style="background:color-mix(in srgb,var(--error) 10%,transparent)"></span>删除行</span>
+          <span><span class="dot mod" style="width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--warning)"></span>修改的文件</span>
+          <span><mark class="wc-mark" style="padding:0 4px">词</mark> 行内真正变化的词</span>
+          <span><span class="cnt" style="--heat:1">改·N</span> 同文件改动次数（fanbox 公式 0.4+0.12n）</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wc-section">
+    <div class="wc-section-title">图标栏 —— 对照你给的截图逐项落位</div>
+    <div class="wc-card" style="padding:0;overflow:hidden">
+      <table class="wc-table">
+        <thead><tr><th>位置</th><th>内容</th><th>点击行为</th></tr></thead>
+        <tbody>
+          <tr><td>顶</td><td>展开 · ＋新对话（圆形）· 对话记录</td><td>展开侧栏 / 开新会话 / 展开看列表（列表需要宽度，诚实交互）</td></tr>
+          <tr><td>中</td><td>工作台 · 终端 · 知识库 · 自我进化 · 用量 · 审计 · 后端连接</td><td>一图标直达对应视图；当前项主色高亮；runner 掉线在审计/后端图标上有角标</td></tr>
+          <tr><td>底</td><td>账号首字圆标（如"陌"）</td><td>展开侧栏进完整账号菜单</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="wc-callout info"><span class="ic"></span><div>悬停显名称；<strong>显式收起会被记住</strong>（<code>hmm_sb</code>，下次启动保持图标栏）；手机宽度（&lt;768px）图标栏不出现、沿用原头部展开按钮——<strong>App（V213）WebView 行为零影响</strong>。桌面/终端/知识库等条目按运行环境与权限自动隐藏，与展开态同一套判定。</div></div>
+  </div>
+
+  <div class="wc-section">
+    <div class="wc-section-title">落盘链路（按你拍板：previewFile 同链路）</div>
+    <div class="wc-card" style="padding:0;overflow:hidden">
+      <table class="wc-table">
+        <thead><tr><th>#</th><th>步骤</th><th>细节</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>画布成品变化</td><td>本地快照入史（≤10 版，模块级缓存跨重挂载存活）</td></tr>
+          <tr><td>2</td><td>静默 PUT</td><td><code>…/files/{名}/canvas-versions</code> · 服务端尾版去重 · 2MB 上限 · 失败不拦预览</td></tr>
+          <tr><td>3</td><td>服务端侧车</td><td>工作区 <code>.wc-versions/&lt;文件名&gt;.json</code> · 临时文件 + <code>os.replace</code> 原子写</td></tr>
+          <tr><td>4</td><td>下次打开</td><td>GET 合并历史（按 ts 去重）→ v1…vN 从上次续上</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="wc-callout warning"><span class="ic"></span><div><strong>红线核对：</strong>同 <code>require_conv_access</code> 鉴权、同 <code>conv_files_dir</code> 目录、同 basename 防穿越；侧车是隐藏目录，<code>list_conv_files</code> 只列顶层文件——用户文件视图零污染，"非破坏"不破；画布 iframe 内仍禁 localStorage，落盘全在宿主/服务端侧。</div></div>
+  </div>
+
+  <div class="wc-section">
+    <div class="wc-section-title">验证清单（按"没跑过的不说已测试"红线）</div>
+    <div class="wc-card">
+      <div class="wc-progress"><div class="bar"><i class="good" style="width:90%"></i></div><span class="pct">9 / 10</span></div>
+      <details class="wc-details" style="margin-top:12px">
+        <summary>已验证 9 项 + 死代码确权清单（点开）</summary>
+        <div class="bd">
+          1) conversations.py 过 <code>py_compile</code>；2) 括号校验：4 文件全平衡，ChatArea 本轮<strong>净差 0/0/0</strong>（基线即有 −3/−1 的正则字面量噪音，产线一直可编译）；
+          3) 6 份 v216-to-v217 补丁均可干净正/反向应用（<code>git apply --check</code> 双向）；4) 三入口全走既有 pendingPrompt / setText，零新协议（grep 佐证）；
+          5) 桥三消息 wc:ready/theme/prompt 未动；6) 落盘端点与 preview 同鉴权同防穿越（逐行核对）；7) 侧车不进文件列表（iterdir + is_file 顶层过滤）；
+          8) 图标栏 hidden md:flex、store 只在 ≥768 读 hmm_sb——移动端/App 行为隔离；9) 本页装配零残留标记、零外链、画布内零 localStorage 真实调用。
+          <br><br><strong>死代码确权（全树零引用，删除待你拍板）：</strong>AdminDashboard · ArtifactRenderer · CitationPanel · ConvFilePanel · MermaidBlock · QualityReportPanel · RetrievalDebugPanel · desktop/FilesView（已被 workbench 别名顶替，DesktopPanel:69 佐证）。
+          导航可达性另核过：15 个 desktopView 视图全部有侧栏入口（Sidebar 用变量批量设值，首轮字面 grep 曾误报），无失联视图；技能包 work-canvas 由 get_skill_pack_manager 首用播种（skill_packs.py:509），「自我进化」页有"补种内置包"按钮兜底。
+        </div>
+      </details>
+      <div class="wc-callout warning" style="margin-top:10px"><span class="ic"></span><div><strong>未验证 1 项：</strong>TSX 未经 next build（本环境无 node_modules、无外网），新引入的 lucide 图标名（LayoutTemplate / PanelLeftOpen）也以该步编译为最终校验。报红按对应单文件补丁反向还原即可，互不牵连。</div></div>
+    </div>
+  </div>
+
+  <div class="wc-tweaks">
+    <span class="lbl">主色</span>
+    <button class="wc-swatch on" type="button" data-wc-accent="#2563eb" style="background:#2563eb" aria-label="蓝"></button>
+    <button class="wc-swatch" type="button" data-wc-accent="#7c3aed" style="background:#7c3aed" aria-label="紫"></button>
+    <button class="wc-swatch" type="button" data-wc-accent="#059669" style="background:#059669" aria-label="绿"></button>
+    <button class="wc-swatch" type="button" data-wc-accent="#d97706" style="background:#d97706" aria-label="橙"></button>
+    <button class="wc-swatch" type="button" data-wc-accent="#e11d48" style="background:#e11d48" aria-label="红"></button>
+    <span class="lbl">密度</span>
+    <span class="wc-seg">
+      <button type="button" class="on" data-wc-density="cozy">舒适</button>
+      <button type="button" data-wc-density="compact">紧凑</button>
+    </span>
+    <span class="lbl">字号</span>
+    <input type="range" min="12" max="16" step="1" value="13" data-wc-fontsize aria-label="字号">
+    <span class="lbl" data-wc-fontsize-out>13px</span>
+    <span class="lbl" style="margin-left:auto">在右栏打开时，顶部还有宿主级工具条（主色/字号/v1…vN 版本，现已跨会话）</span>
+  </div>
+
+  <form class="wc-composer" data-wc-composer>
+    <div class="wc-section-title">发回 agent</div>
+    <textarea placeholder="给 agent 的指令…" aria-label="给 agent 的指令"></textarea>
+    <div class="wc-chips">
+      <button class="wc-chip" type="button" data-text="确认合入 V217 全部改动，我去跑 build-all.bat 第 3a 步验证编译，结果发你。">合入全部</button>
+      <button class="wc-chip" type="button" data-text="8 个死组件确认删除，下一轮清掉并出 diff。">批准清死代码</button>
+      <button class="wc-chip" type="button" data-text="解释：图标栏在手机上为什么隐藏？App 端要触发画布走哪个入口？">要解释</button>
+    </div>
+    <button class="wc-btn primary" type="submit">发送到输入框</button>
+    <div class="wc-sent">已回填到聊天输入框，请确认后发送。</div>
+    <div class="wc-paste">未检测到宿主，请复制后粘贴给 agent：<code></code></div>
+  </form>
+
+  <div class="wc-footer">
+    由 HashMM agent（Claude）生成 · 2026-07-03 · work-canvas 技能包 V217<br>
+    单文件自包含 · 可离线打开 · 非破坏（本页产出均为可复制文本）
+  </div>
+
+</div>
+<script>
+[[PASTE canvas.js]]
+</script>
+</body>
+</html>

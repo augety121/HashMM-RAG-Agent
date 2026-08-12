@@ -217,7 +217,8 @@ def run(a):
     subprocess.run(pip_args, check=True, env=env)
 
     # verify, same bar as backendmgr
-    subprocess.run([pyexe, "-c", "import fastapi, uvicorn, numpy, multipart"],
+    subprocess.run([pyexe, "-c",
+                    "import cryptography,fastapi,multipart,numpy,uvicorn,yaml"],
                    check=True, env=env)
 
     # 5. slim + stamp

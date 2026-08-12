@@ -1,7 +1,11 @@
 package com.hashmm.app.data.remote
 
 /** 客户端正在生成回复的某个对话。 */
-data class ActiveChat(val convId: String, val title: String)
+data class ActiveChat(
+    val convId: String,
+    val title: String,
+    val status: String = "active",
+)
 
 /** 客户端的后台任务（如 RAG 解析/索引）。 */
 data class JobInfo(

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Trash2, Copy, Edit2, Save, X, Zap, FileText, Code, BookOpen, Search, Pencil, MessageSquare, BarChart3, Sparkles } from "lucide-react";
+import { Plus, Trash2, Copy, Edit2, Save, X, Zap, FileText, Code, BookOpen, Search, Pencil, MessageSquare, BarChart3, Sparkles, AlertCircle, RefreshCw } from "lucide-react";
 import { sortTemplates, type TemplateRec, type TemplateSort } from "@/lib/templateSort";
 
 interface Template {
@@ -57,9 +57,19 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+async function templateRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, { ...init, headers: { ...authHeaders(), ...(init.headers || {}) } });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || payload.error || `服务返回 ${response.status}`);
+  return payload as T;
+}
+
 export function TemplatesTab() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastVerifiedAt, setLastVerifiedAt] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState("");
   const [catFilter, setCatFilter] = useState("");
   const [editing, setEditing] = useState<Template | null>(null);
@@ -70,61 +80,73 @@ export function TemplatesTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const url = catFilter ? `/api/admin/templates?category=${catFilter}` : "/api/admin/templates";
-      const res = await fetch(url, { headers: authHeaders() });
-      const data = await res.json();
+      const data = await templateRequest<{ templates?: Template[] }>("/api/admin/templates");
       setTemplates(data.templates || []);
-    } catch { setTemplates([]); }
-    setLoading(false);
-  }, [catFilter]);
+      setLastVerifiedAt(Date.now());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模板列表读取失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
   async function handleCreate() {
-    if (!form.name.trim() || !form.prompt.trim()) return;
+    if (!form.name.trim() || !form.prompt.trim() || saving) return;
+    setSaving(true); setError(null);
     try {
       let vars: string[] = [];
       if (form.variables.trim()) {
         vars = form.variables.split(",").map(v => v.trim()).filter(Boolean);
       }
-      await fetch("/api/admin/templates", {
+      const receipt = await templateRequest<{ ok?: boolean; id?: string }>("/api/admin/templates", {
         method: "POST",
-        headers: authHeaders(),
         body: JSON.stringify({ name: form.name, category: form.category, prompt: form.prompt, variables: vars }),
       });
+      if (!receipt.ok || !receipt.id) throw new Error("服务器未返回创建回执");
       setCreating(false);
       setForm({ name: "", category: "general", prompt: "", variables: "" });
-      load();
-    } catch {}
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模板创建失败");
+    } finally { setSaving(false); }
   }
 
   async function handleUpdate() {
-    if (!editing || !form.name.trim() || !form.prompt.trim()) return;
+    if (!editing || !form.name.trim() || !form.prompt.trim() || saving) return;
+    setSaving(true); setError(null);
     try {
-      // Delete and recreate (simple approach — backend has no PATCH)
-      await fetch(`/api/admin/templates/${editing.id}`, { method: "DELETE", headers: authHeaders() });
       let vars: string[] = [];
       if (form.variables.trim()) {
         vars = form.variables.split(",").map(v => v.trim()).filter(Boolean);
       }
-      await fetch("/api/admin/templates", {
-        method: "POST",
-        headers: authHeaders(),
+      const receipt = await templateRequest<{ ok?: boolean; id?: string }>(`/api/admin/templates/${encodeURIComponent(editing.id)}`, {
+        method: "PATCH",
         body: JSON.stringify({ name: form.name, category: form.category, prompt: form.prompt, variables: vars }),
       });
+      if (!receipt.ok || receipt.id !== editing.id) throw new Error("服务器未确认原模板已更新");
       setEditing(null);
       setForm({ name: "", category: "general", prompt: "", variables: "" });
-      load();
-    } catch {}
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模板更新失败；原模板保持不变");
+    } finally { setSaving(false); }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("确定删除此模板？")) return;
+    if (saving) return;
+    setSaving(true); setError(null);
     try {
-      await fetch(`/api/admin/templates/${id}`, { method: "DELETE", headers: authHeaders() });
-      load();
-    } catch {}
+      const receipt = await templateRequest<{ ok?: boolean; id?: string }>(`/api/admin/templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!receipt.ok || receipt.id !== id) throw new Error("服务器未确认删除");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模板删除失败");
+    } finally { setSaving(false); }
   }
 
   function startEdit(t: Template) {
@@ -140,11 +162,10 @@ export function TemplatesTab() {
   }
 
   const filtered = templates.filter(t =>
-    !filter || t.name.toLowerCase().includes(filter.toLowerCase()) || t.prompt.toLowerCase().includes(filter.toLowerCase())
+    (!catFilter || t.category === catFilter) &&
+    (!filter || t.name.toLowerCase().includes(filter.toLowerCase()) || t.prompt.toLowerCase().includes(filter.toLowerCase()))
   );
   const shown = useMemo(() => sortTemplates(filtered as TemplateRec[], sortBy) as Template[], [filtered, sortBy]);
-
-  const categories = [...new Set(templates.map(t => t.category))];
 
   return (
     <div className="space-y-4">
@@ -154,12 +175,21 @@ export function TemplatesTab() {
           <h3 className="text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>提示词模板</h3>
           <p className="text-[12px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{templates.length} 个模板</p>
         </div>
-        <button onClick={() => { setCreating(true); setEditing(null); setForm({ name: "", category: "general", prompt: "", variables: "" }); }}
+        <button disabled={saving} onClick={() => { setCreating(true); setEditing(null); setForm({ name: "", category: "general", prompt: "", variables: "" }); }}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium text-white"
           style={{ background: "var(--accent)" }}>
           <Plus size={14} /> 新建模板
         </button>
       </div>
+
+      {error && (
+        <div className="flex items-start gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(180,35,24,.06)", border: "1px solid rgba(180,35,24,.16)" }}>
+          <AlertCircle size={15} className="mt-0.5 flex-shrink-0" style={{ color: "#b42318" }} />
+          <div className="flex-1 min-w-0"><div className="text-[12px] font-medium" style={{ color: "#b42318" }}>{error}</div><div className="text-[10.5px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{templates.length ? "已有列表为最近一次成功结果，不会用空列表覆盖。" : "当前没有取得可验证的模板列表。"}</div></div>
+          <button onClick={load} disabled={loading} className="inline-flex items-center gap-1 text-[11px]" style={{ color: "var(--accent)" }}><RefreshCw size={12} />重试</button>
+        </div>
+      )}
+      {lastVerifiedAt && !error && <div className="text-[10px] -mt-2" style={{ color: "var(--text-tertiary)" }}>本次已验证 · {new Date(lastVerifiedAt).toLocaleTimeString()}</div>}
 
       {/* Filter bar */}
       <div className="flex gap-2">
@@ -223,10 +253,10 @@ export function TemplatesTab() {
             <div className="flex justify-end gap-2">
               <button onClick={() => { setCreating(false); setEditing(null); }}
                 className="px-3 py-1.5 rounded-lg text-[12px]" style={{ color: "var(--text-secondary)" }}>取消</button>
-              <button onClick={editing ? handleUpdate : handleCreate}
+              <button disabled={saving} onClick={editing ? handleUpdate : handleCreate}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium text-white"
                 style={{ background: "var(--accent)" }}>
-                <Save size={13} /> {editing ? "保存" : "创建"}
+                <Save size={13} /> {saving ? "等待回执…" : editing ? "保存" : "创建"}
               </button>
             </div>
           </div>
@@ -236,7 +266,7 @@ export function TemplatesTab() {
       {/* Template list */}
       {loading ? (
         <div className="text-center py-8 text-[13px]" style={{ color: "var(--text-tertiary)" }}>加载中...</div>
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && !(error && templates.length === 0) ? (
         <div className="text-center py-8 text-[13px]" style={{ color: "var(--text-tertiary)" }}>
           {templates.length === 0 ? "暂无模板，点击上方按钮创建" : "没有匹配的模板"}
         </div>
@@ -256,7 +286,7 @@ export function TemplatesTab() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>{t.name}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium"
                         style={{ background: color + "15", color }}>{CATEGORY_LABELS[t.category] || t.category}</span>
                     </div>
                     <p className="text-[11px] mt-1 line-clamp-2" style={{ color: "var(--text-tertiary)" }}>

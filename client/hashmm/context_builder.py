@@ -102,9 +102,21 @@ class TokenBudgetBuilder:
             hist_budget = budget["history"]
             hist_tokens_used = 0
 
+            checkpoint = next((h for h in history
+                               if h.get("role") == "system" and
+                               str(h.get("content") or "").startswith(
+                                   "[会话压缩检查点 / durable context checkpoint]")), None)
+            dialogue = [h for h in history if h is not checkpoint]
+            if checkpoint:
+                cp = _truncate_to_tokens(str(checkpoint.get("content") or ""),
+                                         max(300, hist_budget // 2))
+                if cp:
+                    messages.append({"role": "system", "content": cp})
+                    hist_tokens_used += _estimate_tokens(cp)
+
             # Always keep last 2 turns
-            recent = history[-4:] if len(history) > 4 else history
-            older = history[:-4] if len(history) > 4 else []
+            recent = dialogue[-4:] if len(dialogue) > 4 else dialogue
+            older = dialogue[:-4] if len(dialogue) > 4 else []
 
             # Add older history (compressed)
             if older:

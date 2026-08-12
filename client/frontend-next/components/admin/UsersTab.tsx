@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import type { User } from "@/lib/types";
 import * as api from "@/lib/api";
 import { listAllProfiles } from "@/lib/supabase";
-import { Plus, Trash2, Loader2, LogOut, Search } from "lucide-react";
+import { Plus, Trash2, Loader2, LogOut, Search, RefreshCw, Info } from "lucide-react";
 import { Badge } from "./shared";
 import { filterUsers, sortUsers, userRoleCounts, type RoleFilter, type UserSort } from "@/lib/userFilter";
 
@@ -17,6 +17,8 @@ export function UsersTab() {
   const [form, setForm] = useState({ username: "", password: "", display_name: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingDirectory, setLoadingDirectory] = useState(true);
+  const [directoryNotice, setDirectoryNotice] = useState("");
   // V103.90 搜索 / 角色筛选 / 排序
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
@@ -27,12 +29,23 @@ export function UsersTab() {
   // 合并「后端本地用户」与「Supabase 全部用户」：Supabase 是统一身份源，全部列出；
   // 后端里也存在的用户保留增删改/下线操作，仅存在 Supabase 的标注为「Supabase 账号」。
   const load = useCallback(async () => {
+    setLoadingDirectory(true);
+    setDirectoryNotice("");
     let backend: User[] = [];
-    try { backend = await api.listUsers(); } catch (_e) { /* 后端不可达 */ }
+    let backendLoaded = false;
+    try { backend = await api.listUsers(); backendLoaded = true; } catch (_e) { /* 状态在页面内显式呈现 */ }
     let sbRows: Awaited<ReturnType<typeof listAllProfiles>> = null;
     try { const tok = typeof window !== "undefined" ? localStorage.getItem("hmm_token") : null; if (tok) sbRows = await listAllProfiles(tok); } catch (_e) { /* 非管理员/未部署 RPC */ }
 
-    if (!sbRows) { setUsers(backend); setMeta({}); return; }
+    if (!sbRows) {
+      setUsers(backend);
+      setMeta({});
+      setDirectoryNotice(backendLoaded
+        ? "已显示 HashMM 服务中的成员；Supabase 团队目录暂未同步，请检查当前管理员会话或 list_all_profiles 函数。"
+        : "HashMM 服务和 Supabase 团队目录均未读取成功，请检查服务连接与管理员权限后重试。");
+      setLoadingDirectory(false);
+      return;
+    }
 
     const matchBackend = (email: string, username: string): User | undefined =>
       backend.find(b => b.username === email || b.username === username || b.username === (email.split("@")[0] || ""));
@@ -58,6 +71,10 @@ export function UsersTab() {
       if (!merged.some(u => u.id === b.id)) { merged.push(b); m[b.id] = { supabaseOnly: false }; }
     }
     setUsers(merged); setMeta(m);
+    if (!backendLoaded) {
+      setDirectoryNotice("已显示 Supabase 团队成员；HashMM 服务暂时不可达，本地账号操作将在服务恢复后可用。");
+    }
+    setLoadingDirectory(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -88,13 +105,31 @@ export function UsersTab() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h4 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>用户管理</h4>
-        <button onClick={() => setShowAdd(!showAdd)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white"
-          style={{ background: "var(--accent)" }}>
-          <Plus size={14} /> 添加用户
-        </button>
+        <div>
+          <h4 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>团队成员</h4>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>桌面端与 App 使用同一份 Supabase 成员目录</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={load} disabled={loadingDirectory} title="重新读取成员目录"
+            className="p-2 rounded-lg transition-colors disabled:opacity-50"
+            style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
+            {loadingDirectory ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          </button>
+          <button onClick={() => setShowAdd(!showAdd)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white"
+            style={{ background: "var(--accent)" }}>
+            <Plus size={14} /> 添加成员
+          </button>
+        </div>
       </div>
+
+      {directoryNotice && (
+        <div className="mb-3 px-3 py-2.5 rounded-xl flex items-start gap-2 text-[11px] leading-relaxed"
+          style={{ color: "var(--text-secondary)", background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
+          <Info size={14} className="mt-0.5 flex-shrink-0" />
+          <span>{directoryNotice}</span>
+        </div>
+      )}
 
       {showAdd && (
         <div className="mb-4 p-4 rounded-xl space-y-2.5 anim-fade-up" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
@@ -173,7 +208,7 @@ export function UsersTab() {
           </div>
           );
         })}
-        {shown.length === 0 && <div className="text-center py-12 text-sm" style={{ color: "var(--text-tertiary)" }}>{users.length ? "没有符合条件的用户" : "暂无用户"}</div>}
+        {shown.length === 0 && <div className="text-center py-12 text-sm" style={{ color: "var(--text-tertiary)" }}>{loadingDirectory ? "正在读取成员目录…" : users.length ? "没有符合条件的成员" : "没有读取到成员，请按上方提示检查后重试"}</div>}
       </div>
     </div>
   );

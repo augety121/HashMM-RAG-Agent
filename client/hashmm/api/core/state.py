@@ -92,25 +92,28 @@ class SemanticCache:
         self.max_size = max_size
         self.entries: list[dict] = []
 
-    def lookup(self, q_emb: np.ndarray) -> dict | None:
+    def lookup(self, q_emb: np.ndarray, scope: str = "") -> dict | None:
         if not self.entries:
             return None
         q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-9)
         best_sim, best_entry = 0.0, None
         for e in self.entries:
+            if str(e.get("scope") or "") != str(scope or ""):
+                continue
             sim = float(np.dot(q_norm.flatten(), e["emb"].flatten()))
             if sim > best_sim:
                 best_sim, best_entry = sim, e
         return best_entry if best_sim >= self.threshold else None
 
     def store(self, q_emb: np.ndarray, query: str,
-              answer: str, sources: list) -> None:
+              answer: str, sources: list, scope: str = "") -> None:
         q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-9)
         self.entries.append({
             "emb": q_norm.flatten(),
             "query": query,
             "answer": answer,
             "sources": sources,
+            "scope": str(scope or ""),
             "ts": time.time(),
         })
         if len(self.entries) > self.max_size:
@@ -195,6 +198,16 @@ class PersistentMemory:
 
     def get_or_create_session(self, sid: str, title: str = "",
                               user_id: str = "") -> dict:
+        existing = self.sessions.get(sid)
+        if (existing is not None and user_id
+                and str(existing.get("user_id") or "") != str(user_id)):
+            # The database owner check is authoritative.  If an old in-memory
+            # session survives after its DB row was removed/recreated, never
+            # carry that previous account's history or profile into the new
+            # owner's conversation.
+            self.history.pop(sid, None)
+            self.profiles.pop(sid, None)
+            self.sessions.pop(sid, None)
         if sid not in self.sessions:
             self.sessions[sid] = {
                 "title": title[:30],

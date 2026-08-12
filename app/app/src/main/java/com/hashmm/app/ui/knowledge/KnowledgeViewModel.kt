@@ -39,7 +39,7 @@ class KnowledgeViewModel @Inject constructor(
                 loading = false,
                 stats = s,
                 documents = docs,
-                error = if (s == null) "未连到客户端后端 —— 请到「我的 → 客户端连接」填写地址（如 ）" else null,
+                error = if (s == null) "未连到客户端后端 —— 请到「我的 → 客户端连接」填写地址（如 111.115.7.14:20014）" else null,
             )
         }
     }

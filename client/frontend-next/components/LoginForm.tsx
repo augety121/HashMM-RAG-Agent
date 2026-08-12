@@ -4,7 +4,8 @@
  *  Supabase 启用后：强制只用 Supabase 账号登录，完全停用 admin / 本地账号入口。 */
 import { useState, useEffect } from "react";
 import HashMascot from "./HashMascot";
-import { login, register } from "@/lib/api";
+import { diagnoseBackendSession, login, register } from "@/lib/api";
+import { useStore } from "@/lib/store";
 import { saveAuth } from "@/lib/store";
 import { signInWithSupabase, signUpWithSupabase, verifySignupOtp, resendSignupOtp, getSupabaseConfig } from "@/lib/supabase";
 import { isDesktop } from "@/lib/desktop";
@@ -22,10 +23,37 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
   const [otp, setOtp] = useState("");
   const isDesktopEnv = isDesktop();
   const [supabaseEnabled, setSupabaseEnabled] = useState(false);
+  const backendOnline = useStore(s => s.backendOnline);
   useEffect(() => { getSupabaseConfig().then((c) => setSupabaseEnabled(!!c.enabled)).catch(() => {}); }, []);
 
   // Supabase 启用后强制只用 Supabase 登录（admin / 本地账号一律停用）
   const supabaseOnly = supabaseEnabled;
+
+  async function commitSupabaseSession(
+    session: { access_token: string; refresh_token: string; email: string; role: string },
+    fallbackUsername: string,
+  ) {
+    const diagnostic = await diagnoseBackendSession(session.access_token);
+    if (diagnostic.status === "rejected") {
+      const trace = diagnostic.requestId ? `（请求 ${diagnostic.requestId}）` : "";
+      if (diagnostic.code === "project-mismatch") {
+        throw new Error(`账号所属身份项目与服务器不一致，请管理员统一 Supabase 项目后重试${trace}`);
+      }
+      if (diagnostic.code === "identity-contract-invalid") {
+        throw new Error(`服务器统一身份配置不完整，请管理员检查生产环境配置${trace}`);
+      }
+      throw new Error(`服务器拒绝了当前会话，请重新登录；若仍失败请把请求编号交给管理员${trace}`);
+    }
+    saveAuth(
+      session.access_token,
+      {
+        username: session.email || fallbackUsername,
+        display_name: session.email,
+        role: session.role,
+      } as never,
+      session.refresh_token,
+    );
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,11 +67,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
         if (mode === "register") {
           const up = await signUpWithSupabase(username.trim(), password);
           if (up.session) {
-            saveAuth(
-              up.session.access_token,
-              { username: up.session.email || username, display_name: up.session.email, role: up.session.role } as never,
-              up.session.refresh_token,
-            );
+            await commitSupabaseSession(up.session, username);
             onSuccess?.();
           } else {
             // 需邮箱 6 位验证码：进入验证码输入步骤
@@ -53,11 +77,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
         } else {
           // 角色（admin/user）从返回的 JWT 的 app_metadata.role 解析，管理员可见「管理后台」。
           const r = await signInWithSupabase(username.trim(), password);
-          saveAuth(
-            r.access_token,
-            { username: r.email || username, display_name: r.email, role: r.role } as never,
-            r.refresh_token,
-          );
+          await commitSupabaseSession(r, username);
           onSuccess?.();
         }
       } else {
@@ -84,11 +104,7 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
     setError(""); setLoading(true);
     try {
       const r = await verifySignupOtp(username.trim(), otp.trim());
-      saveAuth(
-        r.access_token,
-        { username: r.email || username, display_name: r.email, role: r.role } as never,
-        r.refresh_token,
-      );
+      await commitSupabaseSession(r, username);
       onSuccess?.();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "验证失败");
@@ -101,11 +117,16 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
 
   return (
     <div className="w-full max-w-[340px] flex flex-col items-center">
-      <div className="mb-4"><HashMascot size={68} /></div>
+      <div className="mb-4"><HashMascot size={76} /></div>
       <h1 className="text-[22px] font-bold tracking-tight mb-1" style={{ color: "var(--text-primary)" }}>HashMM</h1>
       <p className="text-[12px] mb-7" style={{ color: "var(--text-tertiary)" }}>
-        {supabaseOnly ? "用 Supabase 账号登录（与 App 通用）" : "企业级 RAG + 自我进化 Agent · 本地优先"}
+        {supabaseOnly ? "登录账号，随时随地同步你的对话与知识库" : "企业级 RAG + 自我进化 Agent · 本地优先"}
       </p>
+      {backendOnline === false && (
+        <p className="text-[11.5px] -mt-5 mb-6 px-3 py-1.5 rounded-lg" style={{ background: "#FEF3C7", color: "#92400E" }}>
+          后端未连接：<b>Supabase 云端账号可正常登录</b>（历史可离线查看）；本地账号需先启动后端。
+        </p>
+      )}
 
       {awaitingOtp ? (
         <div className="w-full flex flex-col gap-3">

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HashMMSetup VERSION 1.6.0 LANGUAGES CXX)
+project(HashMMSetup VERSION 17.0.2 LANGUAGES CXX)
 
 # ── HashMM 原生安装器（C++/Qt6 Widgets）──────────────────────────────────────
 # 对标微信/Marvis 的原生安装器：无 Electron 冷启动，点开即现窗口、启动瞬时。
@@ -18,6 +18,13 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+set(HASHMM_VERSION_RESOURCE "")
+if (WIN32)
+    enable_language(RC)
+    configure_file(version.rc.in "${CMAKE_BINARY_DIR}/hashmm-version.rc" @ONLY)
+    set(HASHMM_VERSION_RESOURCE "${CMAKE_BINARY_DIR}/hashmm-version.rc")
+endif()
+
 # Widgets（UI）+ Concurrent（后台拷贝线程 QtConcurrent::run）
 find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
 
@@ -34,9 +41,11 @@ add_executable(HashMM-Setup WIN32
     UninstallWindow.h
     wechat_style.h           # V102: 安装/卸载共用样式
     resources.qrc
+    ${HASHMM_VERSION_RESOURCE}
 )
 
 target_link_libraries(HashMM-Setup PRIVATE Qt6::Widgets Qt6::Concurrent)
+target_compile_definitions(HashMM-Setup PRIVATE HASHMM_SETUP_VERSION="${PROJECT_VERSION}")
 
 # Windows 上链接 Shell/Ole/Advapi（快捷方式 / 注册表）
 if (WIN32)

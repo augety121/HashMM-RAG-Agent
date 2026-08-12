@@ -1,4 +1,8 @@
-# HashMM 架构总览（V99）
+# HashMM 架构总览（V2600）
+
+> 当前版本的统一事件、Provider 路由、跨端协议和发布边界以
+> `docs/HASHMM_V2600_VERIFIED_WORK_KERNEL_SPEC.md` 与
+> `hashmm/release-manifest.json` 为准；下文保留各阶段模块演进说明。
 
 > 本地优先的企业级 RAG-Agent 工作台。三端一体：Python 后端（检索/Agent/知识图谱）、
 > Next.js 前端（静态导出，桌面与 web 同一套代码）、Electron 桌面端（壳层网关 +

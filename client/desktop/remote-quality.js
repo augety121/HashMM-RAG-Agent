@@ -146,8 +146,52 @@ function extractStats(reportEntries) {
   return out;
 }
 
+function _boundedNumber(value, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * 将一次 RTCStats 采样和自适应决策压成可跨 IPC 展示的有界事实。
+ * 不携带候选地址、SDP、设备标识或原始 RTCStats，避免把网络身份信息暴露给普通 renderer。
+ */
+function buildQualityTelemetry(stats, decision, meta) {
+  const s = stats || {};
+  const d = decision || {};
+  const m = meta || {};
+  const rttMs = _boundedNumber(s.rttMs, 0, 60000);
+  const packetLossPct = _boundedNumber(s.packetLossPct, 0, 100);
+  const availableOutgoingBitrateKbps = _boundedNumber(s.availableOutgoingBitrateKbps, 0, 100000000);
+  const framesPerSecond = _boundedNumber(s.framesPerSecond, 0, 1000);
+  const hasMeasurement = [rttMs, packetLossPct, availableOutgoingBitrateKbps, framesPerSecond]
+    .some(v => v !== null);
+
+  let grade = "unknown", label = "等待测量";
+  if (hasMeasurement) {
+    const poor = (packetLossPct !== null && packetLossPct >= _LOSS_BAD) || (rttMs !== null && rttMs >= _RTT_BAD);
+    const fair = (packetLossPct !== null && packetLossPct >= _LOSS_GOOD) || (rttMs !== null && rttMs >= _RTT_GOOD);
+    grade = poor ? "poor" : fair ? "fair" : "good";
+    label = poor ? "连接受限" : fair ? "连接一般" : "连接良好";
+  }
+
+  return {
+    schema: "hashmm.remote-quality.v1",
+    sampledAt: _boundedNumber(m.sampledAt == null ? Date.now() : m.sampledAt, 0, 9007199254740991),
+    mode: ["lan", "account", "manual"].includes(String(m.mode || "")) ? String(m.mode) : "unknown",
+    generation: Math.trunc(_boundedNumber(m.generation, 0, 1000000000) || 0),
+    tierIndex: Math.trunc(_boundedNumber(d.tierIndex, 0, TIERS.length - 1) || 0),
+    tierName: String(d.name || tier(d.tierIndex).name).slice(0, 24),
+    direction: ["up", "down", "hold"].includes(String(d.direction)) ? String(d.direction) : "hold",
+    reason: String(d.reason || "").slice(0, 160),
+    autoAdjusted: !!d.changed,
+    health: { grade, label },
+    metrics: { rttMs, packetLossPct, availableOutgoingBitrateKbps, framesPerSecond },
+  };
+}
+
 module.exports = {
   TIERS, DEFAULT_TIER, tierCount, clampTier, tier,
   shouldDisableH265Decode, chooseCodecPreference,
-  adaptQuality, extractStats,
+  adaptQuality, extractStats, buildQualityTelemetry,
 };

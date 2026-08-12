@@ -8,7 +8,10 @@ retrieval aid (it improves the embedding and the BM25 term profile).
 
 Three modes, chosen by env ``HASHMM_CONTEXTUAL_RETRIEVAL``:
 
-  - ``off`` (default): index the raw chunk text. **Zero behavior change** — this
+  - ``off``: index the raw chunk text. (V271 起默认改为 ``enriched``——零成本的
+    标题+章节路径前置，正是资料 5.4.1「短文本全局信息增强」的做法；老索引不受影响，
+    重建索引后全量生效。)
+  - 旧默认说明：index the raw chunk text. **Zero behavior change** — this
     is exactly what the pipeline did before, so enabling Phase 70 is opt-in.
   - ``enriched``: deterministically prepend the document title + section path
     (the chunker's ``search_text``). **No LLM, free, no latency/cost.** This was
@@ -47,7 +50,7 @@ _PROMPT = (
 
 def mode() -> str:
     """Current contextual-retrieval mode (env-driven, defaults to 'off')."""
-    m = os.environ.get("HASHMM_CONTEXTUAL_RETRIEVAL", "off").strip().lower()
+    m = os.environ.get("HASHMM_CONTEXTUAL_RETRIEVAL", "enriched").strip().lower()
     return m if m in _VALID_MODES else "off"
 
 

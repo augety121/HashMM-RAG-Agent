@@ -35,4 +35,16 @@ object AppModule {
         install(Postgrest)               // 云端同步数据读取
         install(Realtime)                // 任务进度实时推送
     }
+
+    /**
+     * V308：LiveStreamSource 绑定到 ChatLiveRepository。
+     * LiveChatManager 现在依赖【接口】而非具体类 —— 生产走真实 Repository，单测注入 Fake。
+     * （此前 LiveChatManager 直接依赖具体类，导致单测无法注入依赖、只能测 StringBuilder，
+     *   两个真实并发竞态长期无人发现。）
+     */
+    @Provides
+    @Singleton
+    fun provideLiveStreamSource(
+        repo: com.hashmm.app.data.remote.ChatLiveRepository,
+    ): com.hashmm.app.data.remote.LiveStreamSource = repo
 }

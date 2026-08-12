@@ -30,24 +30,35 @@ def run_agentic_chat(query: str,
                      generate_fn: Callable,
                      llm_fn: Callable | None = None,
                      worker_fn: Callable | None = None,
-                     synth_fn: Callable | None = None) -> dict:
+                     synth_fn: Callable | None = None,
+                     execution_scope: dict | None = None) -> dict:
     """Compose the agentic-RAG flow. Returns {answer, sources, trace, intent,
     effort, corrected}. Never raises — always returns a best-effort dict."""
     intent = classify_query(query or "")
     eff = effort_level(query or "")
     trace: list = [{"node": "plan", "detail": f"intent={intent} effort={eff}"}]
     answer, sources, corrected = "", [], False
+    errors: list[dict] = []
     try:
         use_sub = subagents_enabled() and eff >= 2 and synth_fn is not None
         if use_sub:
-            o = orchestrate(query, search_fn, synth_fn, worker_fn=worker_fn, llm_fn=llm_fn)
+            o = orchestrate(
+                query, search_fn, synth_fn,
+                worker_fn=worker_fn,
+                llm_fn=llm_fn,
+                execution_scope=execution_scope,
+            )
             answer, sources = o.get("answer", ""), o.get("sources", [])
+            errors.extend(item for item in (o.get("errors") or []) if isinstance(item, dict))
+            admission = o.get("mesh_admission") or {}
             trace.append({"node": "subagents",
-                          "detail": f"{o.get('n_subagents', 0)} 个子代理：" + " / ".join(o.get("subqueries", []))})
+                          "detail": f"{o.get('n_subagents', 0)} 个子代理：" + " / ".join(o.get("subqueries", [])),
+                          "mesh_admission": admission})
         else:
             r = run_agentic_rag(query, search_fn, generate_fn, llm_fn)
             answer, sources = r.get("answer", ""), r.get("sources", [])
             corrected = bool(r.get("corrected"))
+            errors.extend(item for item in (r.get("errors") or []) if isinstance(item, dict))
             for step in r.get("trace", []):
                 trace.append({"node": "agentic", "detail": str(step)})
 
@@ -60,7 +71,18 @@ def run_agentic_chat(query: str,
                               "detail": f"iters={opt.get('iters')} score={opt.get('score')}"})
             except Exception as e:
                 log_suppressed(logger, e)
+                errors.append({
+                    "stage": "evaluator_optimizer",
+                    "type": type(e).__name__,
+                    "message": str(e)[:240],
+                })
     except Exception as e:
         log_suppressed(logger, e)
+        errors.append({
+            "stage": "orchestrator",
+            "type": type(e).__name__,
+            "message": str(e)[:240],
+        })
     return {"answer": answer, "sources": sources, "trace": trace,
-            "intent": intent, "effort": eff, "corrected": corrected}
+            "intent": intent, "effort": eff, "corrected": corrected,
+            "errors": errors}

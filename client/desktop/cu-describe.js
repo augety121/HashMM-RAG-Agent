@@ -3,7 +3,7 @@
  *
  * CU 后端已经很完整（validateAction 出带 risk/confirm/reason 的 plan、guard 链 allow/confirm/deny、
  * ActionRecorder 记录每步动作与结果）。缺的是**让用户看见 agent 在干什么**——把机器味的
- * {type:"left_click", px:320, py:450} 翻成人话「🖱 左键点击 (320,450)」并配风险徽章，
+ * {type:"left_click", px:320, py:450} 翻成人话「左键点击 (320,450)」并配风险徽章，
  * 驱动一个 in-app 的"操作记录/动作流"面板。
  *
  * 纯函数、不抛异常、字段名容错（px/x、scrollDir/scroll_direction 都认），便于沙箱单测。
@@ -46,24 +46,25 @@ function describeAction(a) {
   let risk = a.risk === "danger" ? "danger" : (a.write || a.risk === "write") ? "write" : "read";
 
   switch (type) {
-    case "screenshot": icon = "📷"; text = "截屏（观察当前画面）"; risk = "read"; break;
-    case "cursor_position": icon = "📍"; text = "读取光标位置"; risk = "read"; break;
-    case "mouse_move": icon = "🖱"; text = `移动鼠标到 ${_xy(a)}`; risk = "read"; break;
-    case "left_click": icon = "🖱"; text = `左键点击 ${_xy(a)}`; break;
-    case "right_click": icon = "🖱"; text = `右键点击 ${_xy(a)}`; break;
-    case "middle_click": icon = "🖱"; text = `中键点击 ${_xy(a)}`; break;
-    case "double_click": icon = "🖱"; text = `双击 ${_xy(a)}`; break;
-    case "left_click_drag": icon = "🖱"; text = `拖拽 ${_xy(a)} → ${_xy2(a)}`; break;
-    case "type": icon = "⌨"; text = `输入文本「${_clip(a.text, 40)}」`; break;
-    case "key": icon = "⌨"; text = `按键 ${_keys(a)}`; break;
+    case "screenshot": icon = "VIEW"; text = "截屏（观察当前画面）"; risk = "read"; break;
+    case "cursor_position": icon = "POINT"; text = "读取光标位置"; risk = "read"; break;
+    case "mouse_move": icon = "MOUSE"; text = `移动鼠标到 ${_xy(a)}`; risk = "read"; break;
+    case "left_click": icon = "MOUSE"; text = `左键点击 ${_xy(a)}`; break;
+    case "right_click": icon = "MOUSE"; text = `右键点击 ${_xy(a)}`; break;
+    case "middle_click": icon = "MOUSE"; text = `中键点击 ${_xy(a)}`; break;
+    case "double_click": icon = "MOUSE"; text = `双击 ${_xy(a)}`; break;
+    case "left_click_drag": icon = "MOUSE"; text = `拖拽 ${_xy(a)} → ${_xy2(a)}`; break;
+    case "type": icon = "KEY"; text = `输入文本「${_clip(a.text, 40)}」`; break;
+    case "key": icon = "KEY"; text = `按键 ${_keys(a)}`; break;
     case "scroll": {
       const dir = a.scrollDir || a.scroll_direction || "";
       const amt = a.scrollAmt != null ? a.scrollAmt : a.scroll_amount;
       const dirCn = { up: "上", down: "下", left: "左", right: "右" }[dir] || dir;
-      icon = "🖱"; text = `滚动${dirCn ? "（" + dirCn + (amt ? " " + amt : "") + "）" : ""} ${_xy(a)}`.trim();
+      icon = "MOUSE"; text = `滚动${dirCn ? "（" + dirCn + (amt ? " " + amt : "") + "）" : ""} ${_xy(a)}`.trim();
       break;
     }
-    case "wait": icon = "⏳"; text = `等待${a.ms ? " " + a.ms + "ms" : ""}`; risk = "read"; break;
+    case "wait": icon = "WAIT"; text = `等待${a.ms ? " " + a.ms + "ms" : ""}`; risk = "read"; break;
+    case "open_url": icon = "WEB"; text = `打开网址「${_clip(a.url, 50)}」`; break;
     case "run_command": case "shell": case "bash": {
       const cmd = a.command || a.cmd || a.text || "";
       icon = "⌘"; text = `执行命令：${_clip(cmd, 60)}`;
@@ -71,7 +72,7 @@ function describeAction(a) {
       break;
     }
     case "write_file": case "edit_file": {
-      icon = "📝"; text = `写入文件${a.path ? "：" + _clip(a.path, 50) : ""}`;
+      icon = "FILE"; text = `写入文件${a.path ? "：" + _clip(a.path, 50) : ""}`;
       risk = a.risk === "danger" ? "danger" : "write";
       break;
     }

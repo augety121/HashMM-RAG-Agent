@@ -9,11 +9,15 @@
  *   工具调用 → [ReadOnlyGuard] → [ShellDangerGuard] → [FileWriteGuard]
  *            → [GuiPolicyGuard] → 裁决（allow / confirm / deny）
  *
- * 设计原则（与后端一致）：
+ * 设计原则（V306 修订 —— 安全守卫 fail-closed）：
  * - 守卫只【读】请求做判定，不执行副作用；
  * - 守卫顺序即语义（先 deny 类，后 confirm 类）；
- * - 任一守卫异常绝不放大为拒绝（harness 故障不能拦正常操作）——异常即视为放行，
- *   交由后续守卫/执行层兜底；
+ * - 守卫异常的裁决按工具风险分级（对标后端 tool_pipeline 的失效策略）：
+ *     · 写类工具（run_shell / write_file / computer 的写动作）→ 异常即【拒绝】。
+ *       对拥有 Shell、文件写入、鼠标键盘能力的 Agent，策略层故障时放行等于无门禁
+ *       （fail-open），这是 V305 审计判定的 P0（DESK-P0-01），本版改为 fail-closed。
+ *     · 只读工具（read_file / screenshot / mouse_move 等）→ 异常交由后续守卫/执行层，
+ *       harness 故障不拦无副作用的读操作（保持旧行为，避免故障放大为全面瘫痪）。
  * - 纯逻辑、依赖注入（assessCommand / validateAction / applyPolicy 注入）→
  *   tests-node 直接冒烟，不依赖 electron。
  *
@@ -34,7 +38,18 @@
 function createGuardChain(deps) {
   const { assessCommand, validateAction, applyPolicy, describeAction } = deps;
 
-  // 各守卫返回 null=放行（交下一个），或裁决对象=终止链。异常一律当放行。
+  // 写类工具集合：守卫异常时必须 fail-closed 的对象。
+  // computer 的只读动作（plan.write === false，如 screenshot / mouse_move）不算写类；
+  // computer 无 plan（无法证明只读）按写类从严处理。
+  const WRITE_CLASS = { run_shell: 1, write_file: 1, computer: 1 };
+  function isWriteClass(ctx) {
+    if (!WRITE_CLASS[ctx.name]) return false;
+    if (ctx.name === "computer" && ctx.plan && ctx.plan.write === false) return false;
+    return true;
+  }
+
+  // 各守卫返回 null=放行（交下一个），或裁决对象=终止链。
+  // 异常：写类工具 → 立即 deny（fail-closed）；只读工具 → 当放行交下一个守卫。
   const guards = [
     // 1. 只读模式：任何写工具直接拒绝（最高优先级，先于一切 confirm）
     function readOnlyGuard(ctx) {
@@ -98,7 +113,19 @@ function createGuardChain(deps) {
     const ctx = { name: req.name, args: req.args || {}, plan: req.plan || null, policy: req.policy || {} };
     for (const g of guards) {
       let r = null;
-      try { r = g(ctx); } catch (_e) { r = null; }   // 守卫异常 = 放行
+      try {
+        r = g(ctx);
+      } catch (e) {
+        // fail-closed：写类工具在守卫异常时拒绝——策略层故障不能成为放行理由。
+        if (isWriteClass(ctx)) {
+          return {
+            decision: "deny",
+            failClosed: true,
+            reason: `安全守卫异常，已按 fail-closed 拒绝写类操作（${g.name || "guard"}: ${(e && e.message) || e}）`,
+          };
+        }
+        r = null;   // 只读工具：守卫故障不拦无副作用操作，交下一个守卫
+      }
       if (r) return r;
     }
     return { decision: "allow", reason: "" };

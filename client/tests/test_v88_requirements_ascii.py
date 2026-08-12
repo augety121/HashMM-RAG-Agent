@@ -25,13 +25,17 @@ def test_requirements_core_ascii_and_packages():
     raw = _check_ascii("requirements.txt").decode("ascii")
     pkgs = {ln.split("#")[0].strip().split(">=")[0].split("[")[0].lower()
             for ln in raw.splitlines() if ln.split("#")[0].strip()}
-    for must in ("fastapi", "uvicorn", "numpy", "faiss-cpu", "openai", "pyjwt", "python-multipart"):
+    for must in (
+        "fastapi", "uvicorn", "numpy", "faiss-cpu", "openai", "pyjwt",
+        "python-multipart", "python-pptx", "python-docx", "openpyxl",
+    ):
         assert must in pkgs, f"requirements.txt 缺核心包 {must}（本地模式会装不全）"
 
 
 def test_requirements_optional_ascii():
     raw = _check_ascii("requirements-optional.txt").decode("ascii")
-    assert "python-pptx" in raw and "beautifulsoup4" in raw
+    assert "beautifulsoup4" in raw
+    assert "python-pptx" not in raw
 
 
 if __name__ == "__main__":

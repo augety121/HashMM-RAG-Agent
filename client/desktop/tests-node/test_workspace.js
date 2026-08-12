@@ -3,36 +3,38 @@
  */
 "use strict";
 const assert = require("assert");
+const path = require("path");
 const W = require("../storage/workspace");
 
 let pass = 0;
 const ok = (n) => { pass++; console.log("  ✔ " + n); };
 
-// 1. 默认数据根 = 安装目录下的「HashMM Files」
+// 1-3. 路径拼接（V312：平台化——win32 与 POSIX 形态均用显式注入验证。
+//       旧版硬编码 path.win32，Linux 上把数据写进 CWD 的字面量反斜杠目录）
 {
-  const root = W.defaultDataRoot("C:\\Users\\me\\AppData\\Local\\Programs\\HashMM");
+  const w32 = path.win32;
+  const root = W.defaultDataRoot("C:\\Users\\me\\AppData\\Local\\Programs\\HashMM", w32);
   assert.strictEqual(root, "C:\\Users\\me\\AppData\\Local\\Programs\\HashMM\\HashMM Files");
-}
-ok("默认数据根落在安装目录内的「HashMM Files」");
-
-// 2. 生效根：默认 vs 自定义
-{
-  const def = W.resolveDataRoot({ installDir: "D:\\Apps\\HashMM", configuredPath: "" });
+  const def = W.resolveDataRoot({ installDir: "D:\\Apps\\HashMM", configuredPath: "", pathImpl: w32 });
   assert.strictEqual(def, "D:\\Apps\\HashMM\\HashMM Files", "未配置 → 安装目录内默认");
   const custom = W.resolveDataRoot({ installDir: "D:\\Apps\\HashMM", configuredPath: "E:\\MyData\\HashMM\\" });
   assert.strictEqual(custom, "E:\\MyData\\HashMM", "配置了 → 用自定义（去尾斜杠）");
+  const r = "D:\\Apps\\HashMM\\HashMM Files";
+  assert.strictEqual(W.downloadsDir(r, w32), r + "\\Downloads");
+  assert.strictEqual(W.notesDir(r, w32), r + "\\Notes");
+  assert.deepStrictEqual(W.allDirs(r, w32), [r, r + "\\Downloads", r + "\\Documents", r + "\\Notes"]);
 }
-ok("生效根：默认在安装目录 / 配置后用自定义路径");
-
-// 3. 子目录（下载/文档/笔记）
+ok("Windows 形态（显式注入 win32）：默认根/生效根/子目录/allDirs");
 {
-  const root = "D:\\Apps\\HashMM\\HashMM Files";
-  assert.strictEqual(W.downloadsDir(root), root + "\\Downloads");
-  assert.strictEqual(W.documentsDir(root), root + "\\Documents");
-  assert.strictEqual(W.notesDir(root), root + "\\Notes");
-  assert.deepStrictEqual(W.allDirs(root), [root, root + "\\Downloads", root + "\\Documents", root + "\\Notes"]);
+  // POSIX 规则显式注入，确保测试结果不依赖执行测试的宿主平台。
+  const posix = path.posix;
+  const root = W.defaultDataRoot("/opt/hashmm", posix);
+  assert.strictEqual(root, "/opt/hashmm/HashMM Files");
+  assert.strictEqual(W.downloadsDir(root, posix), root + "/Downloads");
+  assert.strictEqual(W.resolveDataRoot({ installDir: "/opt/hashmm", configuredPath: "/data/hm/", pathImpl: posix }), "/data/hm");
+  assert.strictEqual(W.configPath("/opt/hashmm", posix), "/opt/hashmm/.hashmm-storage.json");
 }
-ok("子目录：Downloads/Documents/Notes + allDirs");
+ok("POSIX 形态（显式注入 posix）：默认根/子目录/生效根/配置文件路径");
 
 // 4. 文件名净化：非法字符 / 控制字符 / 首尾点空格 / 保留名 / 空 / 超长
 {
@@ -61,15 +63,23 @@ ok("文件名净化：非法字符/控制字符/首尾点空格/保留名/空/�
 }
 ok("防覆盖去重：碰撞追加 (n) + 不冲突保留原名 + 先净化");
 
-// 6. 数据目录校验
+// 6. 数据目录校验（V312：平台感知——第二参显式指定平台，两套规则都锁）
 {
-  assert.strictEqual(W.validateDataDir("D:\\MyData\\HashMM").ok, true);
-  assert.strictEqual(W.validateDataDir("").ok, false, "空");
-  assert.strictEqual(W.validateDataDir("HashMM").ok, false, "非绝对路径");
-  assert.strictEqual(W.validateDataDir("D:\\").ok, false, "盘根");
-  assert.strictEqual(W.validateDataDir("C:\\Windows\\System32").ok, false, "Windows 目录内");
-  assert.strictEqual(W.validateDataDir("C:\\Program Files").ok, false, "Program Files 根");
+  // Windows 规则组
+  assert.strictEqual(W.validateDataDir("D:\\MyData\\HashMM", "win32").ok, true);
+  assert.strictEqual(W.validateDataDir("", "win32").ok, false, "空");
+  assert.strictEqual(W.validateDataDir("HashMM", "win32").ok, false, "非绝对路径");
+  assert.strictEqual(W.validateDataDir("D:\\", "win32").ok, false, "盘根");
+  assert.strictEqual(W.validateDataDir("C:\\Windows\\System32", "win32").ok, false, "Windows 目录内");
+  assert.strictEqual(W.validateDataDir("C:\\Program Files", "win32").ok, false, "Program Files 根");
+  // POSIX 规则组（修复前：合法绝对路径全被拒、盘符形态反被放行 → mkdir 出字面量垃圾目录）
+  assert.strictEqual(W.validateDataDir("/data/hashmm", "linux").ok, true, "POSIX 合法绝对路径");
+  assert.strictEqual(W.validateDataDir("C:\\HashMMData", "linux").ok, false, "POSIX 上盘符形态必须拒（垃圾目录元凶）");
+  assert.strictEqual(W.validateDataDir("relative/x", "linux").ok, false, "POSIX 相对路径拒");
+  assert.strictEqual(W.validateDataDir("/", "linux").ok, false, "根目录拒");
+  assert.strictEqual(W.validateDataDir("/etc/hashmm", "linux").ok, false, "系统目录拒");
+  assert.strictEqual(W.validateDataDir("/usr", "darwin").ok, false, "macOS 同 POSIX 规则");
 }
-ok("数据目录校验：合法/空/相对路径/盘根/系统目录");
+ok("数据目录校验：Windows 规则组 + POSIX 规则组（平台感知）");
 
 console.log(`\ntest_workspace: ${pass} 项全部通过`);

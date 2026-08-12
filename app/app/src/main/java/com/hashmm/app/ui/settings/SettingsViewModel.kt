@@ -36,8 +36,29 @@ class SettingsViewModel @Inject constructor(
     // ── 头像（经后端中转，登录后自动拉取）──
     private val _avatar = MutableStateFlow<ImageBitmap?>(null)
     val avatar: StateFlow<ImageBitmap?> = _avatar.asStateFlow()
+    private val _displayName = MutableStateFlow("")
+    val displayName: StateFlow<String> = _displayName.asStateFlow()
 
-    init { refreshAvatar() }
+    private var identityOwner: String? = null
+
+    init {
+        viewModelScope.launch {
+            auth.isLoggedIn.collect { loggedIn ->
+                val owner = auth.currentUserId()
+                if (!loggedIn || owner == null) {
+                    identityOwner = null
+                    _avatar.value = null
+                    _displayName.value = ""
+                } else if (owner != identityOwner) {
+                    identityOwner = owner
+                    _avatar.value = null
+                    _displayName.value = ""
+                    refreshAvatar()
+                    refreshDisplayName()
+                }
+            }
+        }
+    }
 
     fun refreshAvatar() {
         val id = auth.currentUserId() ?: return
@@ -59,6 +80,23 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val ok = avatarRepo.upload(bytes)
             if (ok) refreshAvatar()
+            onResult(ok)
+        }
+    }
+
+    // ── 昵称（profiles.display_name，与桌面端个人信息互通）──
+    fun refreshDisplayName() {
+        viewModelScope.launch {
+            avatarRepo.loadDisplayName()?.let { _displayName.value = it }
+        }
+    }
+
+    fun saveDisplayName(name: String, onResult: (Boolean) -> Unit) {
+        val n = name.trim()
+        if (n.isBlank()) { onResult(false); return }
+        viewModelScope.launch {
+            val ok = avatarRepo.saveDisplayName(n)
+            if (ok) _displayName.value = n
             onResult(ok)
         }
     }

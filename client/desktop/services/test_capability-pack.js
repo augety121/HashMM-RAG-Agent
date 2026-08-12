@@ -4,7 +4,7 @@
 "use strict";
 const assert = require("assert");
 const crypto = require("crypto");
-const { CapabilityPackManager, sha256Hex, verifySha256, parseManifest } =
+const { CapabilityPackManager, sha256Hex, verifySha256, parseManifest, validatePackSource } =
   require("./capability-pack.js");
 
 let passed = 0;
@@ -41,6 +41,15 @@ function makeFakeFs() {
   assert.strictEqual(verifySha256(buf, "").ok, true);          // 空 -> 跳过
   assert.strictEqual(verifySha256(buf, "").skipped, true);
   ok("sha256Hex + verifySha256 (match / mismatch / skip)");
+})();
+
+// ---- 1b) 下载源策略：远程必须 HTTPS + 64位 SHA；loopback 可用于本机调试 ----
+(function () {
+  assert.strictEqual(validatePackSource({ url: "http://127.0.0.1:17680/a.zip", sha256: "" }).ok, true);
+  assert.strictEqual(validatePackSource({ url: "http://cdn.example/a.zip", sha256: "0".repeat(64) }).ok, false);
+  assert.strictEqual(validatePackSource({ url: "https://cdn.example/a.zip", sha256: "" }).ok, false);
+  assert.strictEqual(validatePackSource({ url: "https://cdn.example/a.zip", sha256: "a".repeat(64) }).ok, true);
+  ok("能力包源策略（远程 HTTPS + SHA-256，loopback 调试例外）");
 })();
 
 // ---- 2) 清单合并 ----

@@ -1,6 +1,7 @@
 package com.hashmm.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -29,6 +31,7 @@ import androidx.compose.ui.unit.sp
 fun ScreenHeader(
     title: String,
     onBack: () -> Unit,
+    subtitle: String = "",
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
@@ -37,7 +40,7 @@ fun ScreenHeader(
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .padding(start = 4.dp, end = 8.dp)
-            .heightIn(min = 56.dp),
+            .heightIn(min = if (subtitle.isBlank()) 56.dp else 68.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) {
@@ -47,13 +50,25 @@ fun ScreenHeader(
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
-        Text(
-            title,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f).padding(start = 2.dp),
-        )
+        Column(Modifier.weight(1f).padding(start = 2.dp, top = 6.dp, bottom = 6.dp)) {
+            Text(
+                title,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         actions()
     }
 }

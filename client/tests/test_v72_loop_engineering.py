@@ -301,7 +301,7 @@ def test_bench_by_category_aggregation():
         {"id": "c", "category": "Y", "status": "PASS", "failures": [], "elapsed_s": 1},
     ]
     orig_run, orig_caps = ab.run_task, ab._detect_capabilities
-    ab.run_task = lambda task, llm_fn: fake.pop(0)
+    ab.run_task = lambda task, llm_fn, **kwargs: fake.pop(0)  # V308: **kwargs 兼容 mem/inject_hints/record
     ab._detect_capabilities = lambda llm_fn: {"llm"}
     try:
         t = ab.Task
@@ -399,7 +399,9 @@ def test_user_memory_lifecycle(tmp_path):
         um.remember("u1", "回答风格", "简短")
         assert um.recall("u1") == {"代码注释语言": "中文注释", "回答风格": "简短"}
         blk = um.inject_block("u1")
-        assert "用户长期偏好" in blk and "中文注释" in blk
+        # V308：实现的注入块标题是「## 用户长期记忆」+ 分类「用户偏好」，
+        # 原断言的「用户长期偏好」是过时/拼写不符的字面量。改为断言真实存在的锚点。
+        assert "用户长期记忆" in blk and "中文注释" in blk
         assert um.forget("u1", "回答风格")["removed"] is True
         assert "回答风格" not in um.recall("u1")
         # 容量淘汰：塞满后再加，最旧的被挤掉

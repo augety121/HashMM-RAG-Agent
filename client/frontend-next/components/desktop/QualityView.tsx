@@ -7,9 +7,10 @@
  * 视觉全部走 PanelKit（StatCard / PageHeader / Card / Badge / StateView），与其它面板统一。
  */
 import { useEffect, useState, useCallback } from "react";
-import { Activity, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Wrench, Gauge, DollarSign, Target, Cloud, Bug, Network } from "lucide-react";
+import { Activity, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Wrench, Gauge, DollarSign, Target, Cloud, Bug, Network, MessageSquare } from "lucide-react";
 import { metricsDashboard, kgStats, rebuildCommunities, rebuildIndex } from "@/lib/api";
 import { PanelShell, PageHeader, Card, CardHeader, StatCard, CardGrid, Button, Badge, StateView, SectionTitle } from "./ui/PanelKit";
+import { insertContextIntoChat } from "@/lib/contextInsert";
 
 const ms = (v: any) => (typeof v === "number" ? Math.round(v) : "—");
 const usd = (v: any) => (typeof v === "number" ? `$${v < 0.01 ? v.toFixed(5) : v.toFixed(4)}` : "—");
@@ -67,6 +68,16 @@ export function QualityView() {
   const insuf = rq.insufficient_rate;
   const needComm = typeof communities === "number" && communities === 0 && typeof entities === "number" && entities >= 5;
   const needIndex = typeof insuf === "number" && insuf >= 0.3;
+  const sendQualityToChat = () => insertContextIntoChat("quality", "RAG 质量与 SLO 快照", {
+    latency: lat,
+    cost,
+    retrieval_quality: rq,
+    slo: { ...slo, breaches: breaches.map(breachLabel) },
+    llm_routing: routing,
+    errors,
+    knowledge_graph: kg,
+    deterministic_recommendations: { rebuild_communities: needComm, rebuild_index: needIndex },
+  }, "请分析我带回的 RAG 质量与 SLO 快照：先定位最可能的瓶颈和证据，再按收益/风险排序给改进方案；不要把缺失指标猜成具体数字。", "quality-dashboard");
 
   const QAResult = ({ s }: { s?: { status: string; msg?: string } }) => {
     if (!s) return null;
@@ -79,7 +90,7 @@ export function QualityView() {
     <PanelShell>
       <PageHeader icon={Activity} title="质量看板"
         subtitle="延迟 · 成本 · 检索质量 · SLO · 路由省钱 —— 来自后端可观测聚合，无流量时多为「—」"
-        actions={<Button icon={RefreshCw} busy={busy} onClick={load} size="sm">刷新</Button>} />
+        actions={<><Button variant="primary" icon={MessageSquare} onClick={sendQualityToChat} size="sm">带指标回 Chat</Button><Button icon={RefreshCw} busy={busy} onClick={load} size="sm">刷新</Button></>} />
 
       {d === undefined ? <StateView kind="loading" message="读取看板中…" /> : (<>
         <div className="flex items-center gap-2 mb-5 px-4 py-3 rounded-2xl text-[12.5px] font-medium"

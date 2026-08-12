@@ -16,19 +16,20 @@ const PAD_X = 14;
 const DOT_R = 5;
 const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"];
 
-export function GitGraphView() {
-  const [cwd, setCwd] = useState("");
+export function GitGraphView({ workspaceDir }: { workspaceDir?: string }) {
+  const [cwd, setCwd] = useState(workspaceDir || "");
   const [rows, setRows] = useState<LaidOutCommit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (override?: string) => {
     const L = getLocal();
     if (!L || !(L as any).gitLog) { setError("Git 接口不可用（需重装含本版的桌面端）"); return; }
     setLoading(true); setError("");
     try {
-      const r: any = await (L as any).gitLog(cwd || undefined, 400);
+      const target = typeof override === "string" ? override : cwd;
+      const r: any = await (L as any).gitLog(target || undefined, 400);
       if (!r || !r.ok) {
         const raw = (r && r.error) || "git log 失败";
         setError(/not a git repository/i.test(raw)
@@ -46,7 +47,11 @@ export function GitGraphView() {
     finally { setLoading(false); }
   }, [cwd]);
 
-  useEffect(() => { load(); }, []);   // 首次加载（默认 cwd = 后端进程目录）
+  useEffect(() => {
+    const next = workspaceDir || "";
+    setCwd(next);
+    load(next);
+  }, [workspaceDir]);
 
   // 绘制 Canvas（泳道 + 连线 + 节点）
   useEffect(() => {
@@ -113,7 +118,7 @@ export function GitGraphView() {
           onKeyDown={(e) => { if (e.key === "Enter") load(); }}
           className="ml-2 flex-1 max-w-md px-2.5 py-1 rounded-lg text-[12px] bg-transparent outline-none"
           style={{ border: "1px solid var(--border)", color: "var(--text-primary)" }} />
-        <button onClick={load} disabled={loading} title="刷新"
+        <button onClick={() => load()} disabled={loading} title="刷新"
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] transition-colors hover:bg-[var(--bg-tertiary)]"
           style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
           {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} 刷新

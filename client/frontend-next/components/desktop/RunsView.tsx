@@ -6,12 +6,12 @@
  */
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { ScrollText, RefreshCw, CheckCircle2, AlertTriangle, Clock, Play, ChevronRight, Search } from "lucide-react";
-import { listRuns } from "@/lib/api";
+import { listMyRuns } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { PanelShell, PageHeader, Card, Button, Badge, StateView, StatCard, CardGrid, SectionTitle, inputClass, inputStyle } from "./ui/PanelKit";
 import { filterRuns, runSummary, distinctStopReasons, runTokens, type RunStatusFilter, type RunRec } from "@/lib/runStats";
 
-type Run = { ts?: string; query?: string; status?: string; elapsed_s?: number; iterations?: number; stop_reason?: string; events?: any[]; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number } };
+type Run = { ts?: string | number; query?: string; title?: string; status?: string; elapsed_s?: number; elapsed_ms?: number; iterations?: number; stop_reason?: string; events?: any[]; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; tokens?: number; conv_id?: string; conv_title?: string; run_id?: string; task_type?: string; execution_mode?: string; model?: string; failed_checks?: string[] };
 
 function stopTone(reason: string): { tone: "neutral" | "success" | "warning" | "error"; label: string } {
   const r = reason || "";
@@ -36,7 +36,7 @@ export function RunsView() {
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const d = await listRuns(50).catch(() => null);
+      const d = await listMyRuns(50).catch(() => null);
       if (d === null) { setDenied(true); setData({}); }
       else { setDenied(false); setData(d || {}); }
     } finally { setBusy(false); }
@@ -44,8 +44,13 @@ export function RunsView() {
   useEffect(() => { load(); }, [load]);
 
   const d = data || {};
-  const runs: Run[] = Array.isArray(d.runs) ? d.runs : [];
-  const traceOn = d.enabled === true;
+  const runs: Run[] = Array.isArray(d.runs) ? d.runs.map((r: Run) => ({
+    ...r,
+    query: r.query || r.title,
+    elapsed_s: r.elapsed_s ?? (typeof r.elapsed_ms === "number" ? r.elapsed_ms / 1000 : undefined),
+    usage: r.usage || (typeof r.tokens === "number" ? { total_tokens: r.tokens } : undefined),
+  })) : [];
+  const traceOn = d.source === "message_run_manifest" || d.enabled === true;
   // V103.90 筛选 + 汇总
   const stopReasons = useMemo(() => distinctStopReasons(runs as RunRec[]), [runs]);
   const filtered = useMemo(() => filterRuns(runs as RunRec[], { query, status: statusFilter, stopReason }) as Run[], [runs, query, statusFilter, stopReason]);
@@ -54,14 +59,14 @@ export function RunsView() {
   return (
     <PanelShell>
       <PageHeader icon={ScrollText} title="运行轨迹"
-        subtitle="每次 Agent 运行的停止理由 · 迭代轮数 · 耗时 · 用量 —— 事后回放与故障定位"
+        subtitle="当前账号 Chat 的持久化运行清单 · 停止理由 · 模型 · 耗时 · 用量"
         actions={<Button icon={RefreshCw} busy={busy} size="sm" onClick={load}>刷新</Button>} />
 
-      {denied && <StateView kind="empty" icon={ScrollText} message="此面板需要管理员权限，或后端未连接。" />}
+      {denied && <StateView kind="empty" icon={ScrollText} message="当前登录凭据未通过校验，或后端尚未升级到持久化运行清单接口。" />}
 
       {!denied && data !== undefined && (<>
         <div className="flex items-center gap-2 flex-wrap mb-4">
-          <Badge tone={traceOn ? "success" : "neutral"}>遥测 {traceOn ? "已开启" : "未开启"}</Badge>
+          <Badge tone={traceOn ? "success" : "neutral"}>{d.source === "message_run_manifest" ? "Chat 清单" : "运行遥测"}</Badge>
           <Badge tone="neutral" mono>共 {runs.length} 条</Badge>
         </div>
 
@@ -94,11 +99,7 @@ export function RunsView() {
           </div>
         </>)}
 
-        {!traceOn && runs.length === 0 && (
-          <StateView kind="empty" icon={ScrollText} title="运行遥测未开启"
-            message={<>开启后，每次 Agent 运行都会落一条结构化记录（工具序列 / 停止理由 / 耗时 / 用量），可在此回放排障。<br />设环境变量 <span className="font-mono" style={{ color: "var(--text-secondary)" }}>HASHMM_AGENT_TRACE=1</span> 即可开启，记录落盘到 <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{d.dir || "logs/agent_runs"}</span>。</>} />
-        )}
-        {runs.length === 0 && traceOn && <StateView kind="empty" icon={ScrollText} title="还没有运行记录" message="遥测已开启，但还没有运行记录。去对话里跑一次 Agent 任务，这里就会出现可回放的轨迹。" />}
+        {runs.length === 0 && <StateView kind="empty" icon={ScrollText} title="还没有持久化运行记录" message="在 Chat 中完成一次问答或长任务后，Assistant 消息携带的 run manifest 会出现在这里；不会用演示数据填充。" />}
         {runs.length > 0 && filtered.length === 0 && <StateView kind="empty" icon={Search} message="没有符合筛选条件的运行记录。" />}
 
         {filtered.length > 0 && (
@@ -118,12 +119,17 @@ export function RunsView() {
                         {typeof r.iterations === "number" && <span>{r.iterations} 轮</span>}
                         {typeof r.elapsed_s === "number" && <span className="inline-flex items-center gap-0.5"><Clock size={10} />{r.elapsed_s}s</span>}
                         {tokens > 0 && <span className="font-mono">{tokens.toLocaleString()} tok</span>}
+                        {r.model && <span className="font-mono">{r.model}</span>}
+                        {r.execution_mode && <span>{r.execution_mode}</span>}
                         {Array.isArray(r.events) && r.events.length > 0 && <span>{r.events.length} 步</span>}
                         {r.ts && <span className="font-mono">{r.ts}</span>}
                       </div>
                     </div>
-                    <button onClick={() => { if (r.query) set({ desktopView: null as never, pendingPrompt: r.query }); }} disabled={!r.query} title="复跑：把这个问题填回聊天框，审一眼即可重发"
-                      className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-colors hover:bg-[var(--bg-tertiary)] flex-shrink-0" style={{ color: "var(--text-secondary)" }}><Play size={11} /> 复跑</button>
+                    <button onClick={() => {
+                      if (r.conv_id) set({ desktopView: null as never, adminOpen: false, sid: r.conv_id });
+                      else if (r.query) set({ desktopView: null as never, adminOpen: false, pendingPrompt: r.query });
+                    }} disabled={!r.conv_id && !r.query} title={r.conv_id ? "回到产生这条运行的 Chat" : "把问题填回聊天框"}
+                      className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-colors hover:bg-[var(--bg-tertiary)] flex-shrink-0" style={{ color: "var(--text-secondary)" }}><Play size={11} /> {r.conv_id ? "打开 Chat" : "复跑"}</button>
                     {Array.isArray(r.events) && r.events.length > 0 && (
                       <button onClick={() => setExpanded(expanded === i ? null : i)} title="排障：展开看每一步" aria-label="展开运行步骤"
                         className="p-1 rounded transition-colors hover:bg-[var(--bg-tertiary)] flex-shrink-0">

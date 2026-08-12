@@ -34,7 +34,8 @@ logger = get_logger("hashmm.api.mcp_server")
 
 router = APIRouter(prefix="/mcp", tags=["mcp-server"])
 
-_PROTOCOL_VERSION = "2024-11-05"
+_SUPPORTED_PROTOCOLS = ("2025-11-25", "2024-11-05")
+_PROTOCOL_VERSION = _SUPPORTED_PROTOCOLS[0]
 
 
 def server_enabled() -> bool:
@@ -74,6 +75,8 @@ _TOOLS = [
             },
             "required": ["query"],
         },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False,
+                        "idempotentHint": True, "openWorldHint": False},
     },
     {
         "name": "kg_query",
@@ -87,11 +90,15 @@ _TOOLS = [
             },
             "required": ["query"],
         },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False,
+                        "idempotentHint": True, "openWorldHint": False},
     },
     {
         "name": "corpus_stats",
         "description": "返回 HashMM 当前语料与知识图谱的规模概览（文档/分块/实体/关系数量）。",
         "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False,
+                        "idempotentHint": True, "openWorldHint": False},
     },
 ]
 
@@ -171,8 +178,10 @@ def _rpc_error(req_id, code: int, message: str) -> dict:
 
 def _handle(method: str, params: dict, req_id) -> dict:
     if method == "initialize":
+        requested = str((params or {}).get("protocolVersion") or "")
+        negotiated = requested if requested in _SUPPORTED_PROTOCOLS else _PROTOCOL_VERSION
         return _rpc_result(req_id, {
-            "protocolVersion": _PROTOCOL_VERSION,
+            "protocolVersion": negotiated,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "hashmm", "version": "17.0"},
         })
@@ -218,6 +227,8 @@ async def mcp_endpoint(request: Request):
     if isinstance(body, list):
         return JSONResponse([_handle(m.get("method", ""), m.get("params", {}), m.get("id"))
                              for m in body])
+    if body.get("method") in ("notifications/initialized", "initialized") and "id" not in body:
+        return JSONResponse(content=None, status_code=202)
     return JSONResponse(_handle(body.get("method", ""), body.get("params", {}), body.get("id")))
 
 
@@ -230,6 +241,7 @@ async def mcp_info(request: Request):
     return JSONResponse({
         "enabled": True,
         "protocolVersion": _PROTOCOL_VERSION,
+        "supportedProtocolVersions": list(_SUPPORTED_PROTOCOLS),
         "transport": "http-jsonrpc",
         "tools": [t["name"] for t in _TOOLS],
         "auth": "Bearer HASHMM_MCP_TOKEN / admin / HASHMM_MCP_PUBLIC=1",

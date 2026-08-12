@@ -171,10 +171,27 @@ class SubAgentOrchestrator:
             })
         # distinct roles, preserving order
         distinct = list(dict.fromkeys(roles_used))
+        from hashmm.agent.mesh import admit_mesh_work
+        requested_mode = "pipeline" if plan.strategy in {"sequential", "single"} else "auto"
+        admission = admit_mesh_work(
+            goal=plan.original_query,
+            roles=[
+                {
+                    "id": task.id,
+                    "role": self.role_for(task.tool_hint),
+                    "task": task.description,
+                }
+                for task in plan.subtasks
+            ],
+            requested_mode=requested_mode,
+            adapter="legacy_orchestrator",
+        )
         return {
             "n_members": len(members),
             "roles": distinct,
             "members": members,
+            "mesh_admission": admission,
+            "resolved_mode": admission["resolved_mode"],
         }
 
     # ── Plan Mode (Claude-Code-style: preview → confirm → execute) ──
@@ -203,14 +220,17 @@ class SubAgentOrchestrator:
                           "generate": "生成文件/文档", "code": "执行代码"}.get(t.tool_hint, t.tool_hint),
             })
         needs = self.plan_needs_confirmation(plan)
+        team = self.team_for_plan(plan)
         return {
             "query": plan.original_query,
             "strategy": plan.strategy,
+            "resolved_mode": team["resolved_mode"],
             "steps": steps,
             "n_steps": len(steps),
             "needs_confirmation": needs,
             "risk": "high" if needs else "low",
-            "team": self.team_for_plan(plan),
+            "team": team,
+            "mesh_admission": team["mesh_admission"],
         }
 
     def execute_plan(
@@ -226,7 +246,17 @@ class SubAgentOrchestrator:
         history = history or []
         accumulated_context = ""
 
+        # 多 Agent 硬约束闸（大厂标准）：子任务上限 + 墙钟时限 + 连续失败终止。默认值见 mas_guard。
+        from hashmm.agent.mas_guard import MasBudget
+        _budget = MasBudget()
+
         for i, task in enumerate(plan.subtasks):
+            # 开始每个子任务前检查硬约束：命中即提前收尾（用已完成的结果），不硬往下跑。
+            _stop, _why = _budget.should_stop(i)
+            if _stop:
+                yield ("mas_stop", {"reason": _why, "completed": i,
+                                    "total": len(plan.subtasks), **_budget.snapshot()})
+                break
             task.status = "running"
             yield ("subtask_start", {"id": task.id, "description": task.description, "step": i + 1, "total": len(plan.subtasks)})
 
@@ -268,6 +298,7 @@ class SubAgentOrchestrator:
                     log_suppressed(logger, _e)
 
             task.elapsed_ms = round((time.time() - t0) * 1000)
+            _budget.record(task.status == "done")   # 登记成败，用于连续失败终止
             # SubagentStop hook: fires when this sub-agent finishes, so a registered
             # hook can aggregate / log / verify the worker's output. No-op when none
             # registered → zero behaviour change. Never raises.
@@ -327,7 +358,7 @@ class SubAgentOrchestrator:
         try:
             from hashmm.api.tool_registry import execute_tool
             result = execute_tool("web_search", {"query": query, "num_results": 3}, {})
-            if result and not result.startswith("Error") and not result.startswith("❌"):
+            if result and not result.startswith("Error") and not result.startswith("❌") and not result.startswith("失败 ·"):
                 return result[:3000]
         except Exception as _e:
             log_suppressed(logger, _e)
@@ -359,12 +390,12 @@ class SubAgentOrchestrator:
 
                 if result.get("ok"):
                     return (
-                        f"✅ {result.get('message', '文件生成成功')}\n"
+                        f"{result.get('message', '文件生成成功')}\n"
                         f"下载链接: {result.get('download_url', '')}\n"
                         f"文件名: {result.get('filename', '')}"
                     )
                 else:
-                    return f"⚠️ 文件生成失败: {result.get('message', '未知错误')}"
+                    return f"文件生成失败：{result.get('message', '未知错误')}"
             except Exception as e:
                 logger.warning(f"Document generation failed: {e}")
                 # Fall through to LLM-based outline

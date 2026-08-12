@@ -1,20 +1,25 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import type { Message } from "@/lib/types";
+import { useEffect, useRef, useState, memo } from "react";
+import type { Message, ToolApprovalRequest } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { openArtifact } from "@/lib/artifact";
 import { TodoCard } from "./TodoCard";
-import { withToken } from "@/lib/api";
+import { cancelOcrJob, decideToolApproval, executeConversationCode, submitMessageFeedback, withToken, ocrJobs, retryOcrJob } from "@/lib/api";
+import type { OcrJob } from "@/lib/api";
+import type { FeedbackReason } from "@/lib/api";
 import { renderMsg, doKatex, relativeTime } from "@/lib/render";
 import { MessageRenderer } from "./MessageRenderer";
 import { SubAgentPanel } from "./SubAgentPanel";
-import { ThinkingPanel } from "./ThinkingPanel";
 import { Copy, Check, ChevronDown, FileText, Image, FileCode, File as FileIcon,
-         RefreshCw, ThumbsUp, ThumbsDown, Pencil, Download, Eye, X, AlertTriangle } from "lucide-react";
+         RefreshCw, ThumbsUp, ThumbsDown, Pencil, Download, Eye, X, AlertTriangle,
+         CircleHelp, CheckCircle2 } from "lucide-react";
 import { AgentLog } from "./AgentLog";
 import { QualityBadgesRow } from "./QualityBadges";
 import { FilePreview } from "./FilePreview";
 import { FileCard } from "./FileCard";
+import HashMascot from "./HashMascot";
+import { GroundingAudit } from "./GroundingAudit";
+import { toPublicAgentTimeline } from "@/lib/publicAgentTimeline";
 
 function fileIconFor(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -33,11 +38,43 @@ function stripClarify(s: string): string {
   return (s || "").replace(/\[\[ASK\]\][\s\S]*?\[\[\/ASK\]\]/g, "").trimEnd();
 }
 
-function UserBubble({ msg, onEdit }: { msg: Message; onEdit?: () => void }) {
+function OcrQueueBadge({ filename, convId }: { filename: string; convId?: string }) {
+  const [job, setJob] = useState<OcrJob | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => void ocrJobs(convId).then(feed => {
+      if (!alive) return;
+      const found = feed.items.find(item => item.filename === filename);
+      if (found) setJob(found);
+    }).catch(() => undefined);
+    refresh();
+    const timer = setInterval(refresh, 3000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [filename, convId]);
+  if (!job) return null;
+  const label = job.status === "succeeded"
+    ? (job.result_state === "partial" ? "OCR 部分可读" : "OCR 已完成")
+    : job.status === "running"
+      ? `OCR ${Math.round((job.progress || 0) * 100)}%`
+      : job.status === "failed" ? "OCR 失败"
+      : job.status === "cancelled" ? "OCR 已取消"
+      : "OCR 排队中";
+  const color = job.status === "succeeded"
+    ? (job.result_state === "partial" ? "var(--warning)" : "var(--success)")
+    : job.status === "failed" ? "var(--danger)" : "var(--warning)";
+  return <span className="inline-flex items-center gap-1 text-[9px]" style={{ color }} title={job.error || job.error_code || label}>
+    {label}
+    {job.status === "failed" || job.status === "cancelled" ? <button className="underline" disabled={busy} onClick={() => { setBusy(true); void retryOcrJob(job.id).then(setJob).finally(() => setBusy(false)); }}>重试</button> : null}
+    {job.status === "queued" || job.status === "running" ? <button className="underline" disabled={busy} onClick={() => { setBusy(true); void cancelOcrJob(job.id).then(setJob).finally(() => setBusy(false)); }}>取消</button> : null}
+  </span>;
+}
+
+function UserBubble({ msg, onEdit, convId }: { msg: Message; onEdit?: () => void; convId?: string }) {
   const lines = msg.content.split("\n");
   const textLines: string[] = [], fileLines: string[] = [];
   for (const line of lines) {
-    if (line.startsWith("📎 ")) fileLines.push(line.slice(2).trim());   // 旧消息兼容（V86 起改为结构化 files，不再写进正文）
+    if (line.startsWith("\u{1F4CE} ")) fileLines.push(line.slice(2).trim());   // 旧消息兼容（V86 起改为结构化 files，不再写进正文）
     else textLines.push(line);
   }
   const text = textLines.join("\n").trim();
@@ -45,7 +82,10 @@ function UserBubble({ msg, onEdit }: { msg: Message; onEdit?: () => void }) {
   const isImgName = (n: string) => ["png","jpg","jpeg","gif","webp","bmp","svg"].includes((n.split(".").pop() || "").toLowerCase());
   const atts = msg.files || [];
   const imgAtts = atts.filter(f => isImgName(f.filename || ""));
-  const chipNames = [...atts.filter(f => !isImgName(f.filename || "")).map(f => f.filename), ...fileLines];
+  const fileChips = [
+    ...atts.filter(f => !isImgName(f.filename || "")).map(f => ({ name: f.filename, file: f })),
+    ...fileLines.map(name => ({ name, file: undefined })),
+  ];
   return (
     <div className="flex justify-end mb-5 anim-fade-up group">
       <div className="max-w-[80%]">
@@ -71,12 +111,26 @@ function UserBubble({ msg, onEdit }: { msg: Message; onEdit?: () => void }) {
             ))}
           </div>
         )}
-        {chipNames.length > 0 && (
+        {fileChips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-1.5 justify-end">
-            {chipNames.map((name, i) => {
+            {fileChips.map(({ name, file }, i) => {
               const { Icon, color } = fileIconFor(name);
-              return <div key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
-                <Icon size={13} style={{ color }} /><span className="truncate max-w-[150px] font-medium" style={{ color: "var(--text-primary)" }}>{name}</span>
+              const state = file?.parse_state;
+              const pages = Number(file?.page_count || 0);
+              const readable = Number(file?.readable_pages || 0);
+              const failed = Array.isArray(file?.failed_pages) ? file.failed_pages.length : 0;
+              const stateText = state === "ready"
+                ? (pages ? `${readable}/${pages} 页可读` : "可读取")
+                : state === "partial" ? `${readable}/${pages || readable + failed} 页可读${failed ? `，${failed} 页失败` : ""}`
+                : state === "needs_ocr" ? "需要 OCR"
+                : state === "encrypted" ? "文件已加密"
+                : state === "corrupted" ? "文件已损坏"
+                : state ? `不可读：${state}` : "";
+              return <div key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }} title={file?.warnings?.join("；") || stateText}>
+                <Icon size={13} style={{ color }} />
+                <span className="truncate max-w-[150px] font-medium" style={{ color: "var(--text-primary)" }}>{name}</span>
+                {stateText && <span className="text-[9px] whitespace-nowrap" style={{ color: state === "ready" ? "var(--success)" : "var(--warning)" }}>{stateText}</span>}
+                {state === "needs_ocr" || state === "partial" ? <OcrQueueBadge filename={name} convId={convId} /> : null}
               </div>;
             })}
           </div>
@@ -88,7 +142,7 @@ function UserBubble({ msg, onEdit }: { msg: Message; onEdit?: () => void }) {
 
 interface Props { msg: Message; index?: number; convId?: string; showRegenerate?: boolean; onRegenerate?: () => void; onEdit?: () => void; onSuggestion?: (text: string) => void; }
 
-export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, onEdit, onSuggestion }: Props) {
+function MsgBubbleImpl({ msg, index, convId, showRegenerate, onRegenerate, onEdit, onSuggestion }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -99,6 +153,52 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
   const sbOpen = useStore(s => s.sbOpen);
   const sid = useStore(s => s.sid);
   const updateMsg = useStore(s => s.updateMsg);
+  const waitingForInput = msg.status === "waiting_input";
+  const inputResolved = msg.status === "resolved";
+  // Legacy in-memory clarify messages had no status. A persisted complete
+  // message must never be resurrected as pending after the user has replied.
+  const inputPending = waitingForInput || (msg.status == null && !!msg.clarify);
+  const inputOptions = msg.clarify?.options?.length ? msg.clarify.options : (msg.suggestions || []);
+  const inputQuestion = msg.clarify?.question || msg.content;
+  const renderedContent = stripClarify(msg.content).trim();
+  const approval = msg.run_manifest?.approval_request;
+  const [approvalStatus, setApprovalStatus] = useState<ToolApprovalRequest["status"] | null>(approval?.status || null);
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalError, setApprovalError] = useState("");
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackReason, setFeedbackReason] = useState<FeedbackReason | "">("");
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
+
+  useEffect(() => {
+    setApprovalStatus(approval?.status || null);
+    setApprovalError("");
+  }, [approval?.request_id, approval?.status]);
+
+  async function actOnApproval(decision: "approve" | "decline") {
+    const targetConv = convId || sid;
+    if (!approval || !targetConv || approvalBusy) return;
+    setApprovalBusy(true); setApprovalError("");
+    try {
+      const response = await decideToolApproval(targetConv, approval.request_id, decision);
+      const next = response.approval_request;
+      setApprovalStatus(next.status);
+      if (typeof index === "number" && sid) {
+        updateMsg(sid, index, {
+          status: next.status === "declined" ? "resolved" : "waiting_approval",
+          run_manifest: { ...msg.run_manifest!, approval_request: next },
+        });
+      }
+      if (decision === "approve" && next.status === "approved" && onSuggestion) {
+        onSuggestion("继续执行已批准的操作。只执行刚才批准的原始工具和参数。")
+      }
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : "审批请求失败");
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
 
   // Citation hover tooltip state
   const [citeTip, setCiteTip] = useState<{x: number; y: number; src: any} | null>(null);
@@ -153,26 +253,22 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
         const btn = document.createElement('button');
         btn.className = 'cb-btn';
         btn.title = '运行代码';
-        btn.innerHTML = '<span style="color:#22c55e;font-size:13px">▶</span>';
+        btn.textContent = '运行';
         btn.onclick = async () => {
           btn.innerHTML = '<span style="color:#f59e0b">…</span>';
           try {
-            const r = await fetch('/api/conversations/' + cid + '/execute', {
-              method: 'POST', headers: {'Content-Type':'application/json'},
-              body: JSON.stringify({code: codeEl.textContent || ''})
-            });
-            const d = await r.json();
+            const d = await executeConversationCode(cid, codeEl.textContent || '');
             let out = block.querySelector('.code-output-content') as HTMLElement | null;
             if (!out) {
               const wrap = document.createElement('div');
-              wrap.innerHTML = '<div class="code-output-header">▶ 输出</div><pre class="code-output-content"></pre>';
+              wrap.innerHTML = '<div class="code-output-header">输出</div><pre class="code-output-content"></pre>';
               block.appendChild(wrap.firstElementChild as HTMLElement);
               block.appendChild(wrap.lastElementChild as HTMLElement);
               out = block.querySelector('.code-output-content') as HTMLElement;
             }
             if (out) out.textContent = d.output || d.error || '(无输出)';
-            btn.innerHTML = '<span style="color:#22c55e">▶</span>';
-          } catch (_e) { btn.innerHTML = '<span style="color:#ef4444">✗</span>'; }
+            btn.textContent = '运行';
+          } catch (_e) { btn.textContent = '失败'; }
         };
         head.appendChild(btn);
       }
@@ -213,64 +309,95 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
     }
   }
 
-  function setFeedback(fb: "up" | "down") {
-    if (sid && index !== undefined) {
-      const current = msg.feedback === fb ? null : fb;
-      updateMsg(sid, index, { feedback: current });
-      // v10.0: Send feedback to server (triggers skill creation + user model update)
-      if (current && convId) {
-        const session = useStore.getState().sessions.find(s => s.id === convId);
-        const userMsgs = session?.messages.filter(m => m.role === "user") || [];
-        const lastQuery = userMsgs[userMsgs.length - 1]?.content || "";
-        const token = useStore.getState().token;
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-        fetch(`/api/conversations/${convId}/messages/${index}/feedback`, {
-          method: "POST", headers,
-          body: JSON.stringify({ feedback: current, message_content: msg.content?.slice(0, 500) || "", query: lastQuery.slice(0, 200) }),
-        }).catch(() => {});
-      }
+  async function persistFeedback(rating: "up" | "down" | "clear", reason: FeedbackReason | "" = "", comment = "") {
+    const targetConv = convId || sid;
+    if (!targetConv || !msg.id || feedbackBusy || typeof index !== "number" || !sid) return;
+    setFeedbackBusy(true); setFeedbackError("");
+    try {
+      const response = await submitMessageFeedback(targetConv, msg.id, rating, reason, comment);
+      updateMsg(sid, index, { feedback: response.feedback_case.rating || null });
+      setFeedbackOpen(false); setFeedbackReason(""); setFeedbackComment("");
+    } catch (error) {
+      setFeedbackError(error instanceof Error ? error.message : "反馈提交失败");
+    } finally {
+      setFeedbackBusy(false);
     }
   }
 
-  if (msg.role === "user") return <UserBubble msg={msg} onEdit={onEdit} />;
+  function setFeedback(fb: "up" | "down") {
+    if (msg.feedback === fb) {
+      persistFeedback("clear");
+    } else if (fb === "up") {
+      persistFeedback("up");
+    } else {
+      setFeedbackError("");
+      setFeedbackOpen(true);
+    }
+  }
 
-  const hasSources = msg.sources && msg.sources.length > 0;
+  if (msg.role === "user") return <UserBubble msg={msg} onEdit={onEdit} convId={convId} />;
+
+  const displaySources = (msg.sources || []).reduce<Array<{ source: NonNullable<typeof msg.sources>[number]; index: number }>>(
+    (rows, source, index) => {
+      const duplicate = rows.some(row =>
+        (row.source.filename || row.source.doc_id || row.source.chunk_id)
+          === (source.filename || source.doc_id || source.chunk_id)
+        && row.source.page === source.page
+      );
+      if (!duplicate) rows.push({ source, index });
+      return rows;
+    },
+    [],
+  );
+  const hasSources = displaySources.length > 0;
 
   return (
     <div className="mb-6 anim-fade-up flex gap-3 group/msg">
-      {/* Assistant avatar */}
-      <div className="w-5 h-5 rounded-md flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0 mt-1"
-        style={{ background: "linear-gradient(135deg, #2563eb, #7c3aed)" }}>H</div>
+      {/* Assistant avatar — V254: 修复"回答图标"问题。此前是紫蓝渐变"H"方块，
+          与全站品牌吉祥物「小哈」（深色头+红天线，见侧栏/首页/登录页）完全脱节，
+          在浅色背景上还显得像个错位的空框。统一换小哈，尺寸对齐首行文字。 */}
+      <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden"
+        style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)" }}>
+        <HashMascot size={20} />
+      </div>
 
       <div className="flex-1 min-w-0 pl-3" style={{ borderLeft: "2px solid var(--accent-light, rgba(37,99,235,0.15))" }}>
-        {/* v29: Thinking panel */}
-        {msg.thinking && (
-          <ThinkingPanel content={msg.thinking} />
-        )}
-
         {/* V50: 任务清单（最终状态随消息持久化） */}
-        {msg.todo && msg.todo.length > 0 && <TodoCard items={msg.todo} />}
+        {(() => {
+          const persistedTodo = msg.run_manifest?.process?.todo || [];
+          const todo = msg.todo?.length ? msg.todo : persistedTodo;
+          return todo.length > 0 ? <TodoCard items={todo} /> : null;
+        })()}
 
         {/* v12: Unified Agent Execution Log — 优先用有序 timeline（思考/工具交错，对标 Claude），
             旧消息无 timeline 时回退到 trace+steps 拼接 */}
         {(() => {
-          const tl = (msg as { timeline?: Array<{ kind: string; node: string; detail: string; tool?: string; status: string; elapsed_ms?: number; id: string }> }).timeline;
-          const hasTimeline = Array.isArray(tl) && tl.length > 0;
+          const transient = (msg as { timeline?: Array<{ kind: string; node: string; detail: string; tool?: string; status: string; elapsed_ms?: number; id: string }> }).timeline;
+          const persisted = msg.run_manifest?.process?.timeline || [];
+           const tl = toPublicAgentTimeline(transient?.length ? transient : persisted);
+           const hasTimeline = Array.isArray(tl) && tl.length > 0;
           const hasLegacy = (msg.steps && msg.steps.length > 0) || (msg.trace && msg.trace.length > 0);
           if (!hasTimeline && !hasLegacy) return null;
-          const steps = hasTimeline
-            ? tl!.map((e, i) => ({ id: e.id || `tl-${i}`, node: e.node, detail: e.detail, tool: e.tool,
-                                   status: (e.status as "done" | "running" | "error") || "done", elapsed_ms: e.elapsed_ms }))
-            : [
+          const legacyTimeline = hasLegacy
+            ? toPublicAgentTimeline([
                 ...(msg.trace || []).map((t: { node: string; detail: string }, i: number) => ({
-                  id: `trace-${i}`, node: t.node, detail: t.detail, status: "done" as const,
+                  id: `trace-${i}`, kind: "node", node: t.node, detail: t.detail, status: "done",
                 })),
-                ...(msg.steps || []).map((s: { tool: string; detail?: string; status?: string; duration_ms?: number }, i: number) => ({
-                  id: `step-${i}`, node: "tool", tool: s.tool, detail: s.detail || "",
-                  status: (s.status as "done" | "running" | "error") || "done", elapsed_ms: s.duration_ms,
+                ...(msg.steps || []).map((s: { tool: string; detail?: string; status?: string; duration_ms?: number; hooks?: import("@/lib/types").HookRun[] }, i: number) => ({
+                  id: `step-${i}`, kind: "tool", node: "tool", tool: s.tool, detail: s.detail || "",
+                  status: s.status || "done", elapsed_ms: s.duration_ms, hooks: s.hooks,
                 })),
-              ];
+              ])
+            : [];
+          const steps = (hasTimeline ? tl! : legacyTimeline).map((e, i) => ({
+            id: e.id || `tl-${i}`,
+            node: e.node,
+            detail: e.detail,
+            tool: e.tool,
+            status: (e.status as "done" | "running" | "error") || "done",
+            elapsed_ms: e.elapsed_ms,
+            hooks: (e as { hooks?: import("@/lib/types").HookRun[] }).hooks,
+          }));
           return (
             <>
               <AgentLog steps={steps} totalElapsed={msg.elapsed_ms} visible={showLog} onToggle={() => setShowLog(v => !v)} />
@@ -293,6 +420,45 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
           <MessageRenderer content={stripClarify(msg.content)}
             convId={convId || msg.files?.[0]?.download_url?.match(/conversations\/([^/]+)/)?.[1] || undefined} />
         </div>
+
+        {msg.stop_reason === "delivery_incomplete" && (
+          <div
+            className="mt-3 rounded-xl px-3.5 py-3 flex items-start justify-between gap-4"
+            style={{
+              background: "color-mix(in srgb, var(--warning) 8%, var(--bg-primary))",
+              border: "1px solid color-mix(in srgb, var(--warning) 35%, var(--border))",
+            }}
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" style={{ color: "var(--warning)" }} />
+              <div className="min-w-0">
+                <div className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                  交付尚未通过完整性检查
+                </div>
+                <div className="mt-0.5 text-[11px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+                  已生成的文件和任务进度已保留。HashMM 不会把缺文件、正文重复或时间与来源未通过校验的结果标成完成。
+                </div>
+              </div>
+            </div>
+            {onSuggestion && (
+              <button
+                type="button"
+                className="h-8 px-3 rounded-lg text-[11px] font-medium flex-shrink-0 transition-colors"
+                style={{ color: "var(--warning)", border: "1px solid color-mix(in srgb, var(--warning) 45%, var(--border))" }}
+                onClick={() => onSuggestion(
+                  "继续完成上一轮未通过的交付。先读取上一轮任务清单和已生成文件，只补齐缺失或未通过校验的交付；不要重新搜索已核验来源，不要重复正文。完成后再次运行确定性交付检查。"
+                )}
+              >
+                继续补齐交付
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Claim-level evidence ledger: this is deliberately separate from the
+            source pills because "a source exists" is not the same as "this claim
+            is supported by that source". */}
+        <GroundingAudit ledger={msg.groundings} />
 
         {/* v12: Inline chart images extracted from code execution output */}
         {msg.content && (() => {
@@ -320,22 +486,22 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
           <div className="mt-3">
             {/* v10.0: Compact source pills (Claude-style) */}
             <div className="flex flex-wrap gap-1.5">
-              {msg.sources!.map((s, i) => {
+              {displaySources.map(({ source: s, index: sourceIndex }) => {
                 const label = s.filename || s.modality || "文档";
                 const page = s.page && s.page > 0 ? ` p.${s.page}` : "";
                 return (
-                  <button key={i}
-                    onClick={() => setSrcOpen(srcOpen === i ? -1 : i)}
+                  <button key={`${s.chunk_id || s.doc_id || label}-${s.page || 0}-${sourceIndex}`}
+                    onClick={() => setSrcOpen(srcOpen === sourceIndex ? -1 : sourceIndex)}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] transition-all hover:shadow-sm"
                     style={{
-                      background: srcOpen === i ? "var(--accent-light)" : "var(--bg-secondary)",
-                      border: `1px solid ${srcOpen === i ? "var(--accent)" : "var(--border)"}`,
-                      color: srcOpen === i ? "var(--accent)" : "var(--text-secondary)",
+                      background: srcOpen === sourceIndex ? "var(--accent-light)" : "var(--bg-secondary)",
+                      border: `1px solid ${srcOpen === sourceIndex ? "var(--accent)" : "var(--border)"}`,
+                      color: srcOpen === sourceIndex ? "var(--accent)" : "var(--text-secondary)",
                     }}>
                     <FileText size={11} />
                     <span className="truncate max-w-[140px] font-medium">{label}{page}</span>
                     {typeof s.score === "number" && s.score > 0 && (
-                      <span className="font-mono text-[9px] opacity-60">{s.score < 1 ? s.score.toFixed(2) : s.score.toFixed(1)}</span>
+                      <span className="font-mono text-[10px] opacity-60">{s.score < 1 ? s.score.toFixed(2) : s.score.toFixed(1)}</span>
                     )}
                   </button>
                 );
@@ -460,24 +626,94 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
           />
         )}
 
-        {/* V103.27: 主动澄清 — 可点选项（点击即作为回答发送，复用 onSuggestion 发送管线） */}
-        {msg.clarify && msg.clarify.options && msg.clarify.options.length > 0 && onSuggestion && (
-          <div className="mt-3 rounded-xl p-3" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
-            <div className="text-[12.5px] mb-2 font-medium" style={{ color: "var(--text-primary)" }}>{msg.clarify.question}</div>
-            <div className="flex flex-wrap gap-1.5">
-              {msg.clarify.options.map((o, i) => (
-                <button key={i} onClick={() => onSuggestion(o)}
-                  className="suggestion-btn px-3 py-1.5 rounded-full text-[11px]"
-                  style={{ background: "var(--bg-primary)", border: "1px solid var(--accent)", color: "var(--accent)" }}>
-                  {o}
-                </button>
-              ))}
+        {/* Durable input request: survives reload and can be answered from either client. */}
+        {(inputPending || inputResolved) && (
+          <div className="mt-3 rounded-xl p-3" style={{
+            background: inputPending ? "var(--accent-light)" : "var(--bg-secondary)",
+            border: `1px solid ${inputPending ? "var(--accent)" : "var(--border)"}`,
+          }}>
+            <div className="flex items-center gap-2">
+              {inputResolved ? <CheckCircle2 size={14} style={{ color: "#15803d" }} /> : <CircleHelp size={14} style={{ color: "var(--accent)" }} />}
+              <div className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                {inputResolved ? "已收到你的补充" : "需要你的输入"}
+              </div>
+              <span className="ml-auto text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                {inputResolved ? "等待已解除" : "任务已安全暂停"}
+              </span>
             </div>
+            {inputQuestion.trim() !== renderedContent && (
+              <div className="text-[12px] mt-2 leading-relaxed" style={{ color: "var(--text-secondary)" }}>{inputQuestion}</div>
+            )}
+            {inputPending && inputOptions.length > 0 && onSuggestion ? (
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {inputOptions.map((option, i) => (
+                  <button key={`${option}-${i}`} onClick={() => onSuggestion(option)}
+                    className="suggestion-btn px-3 py-1.5 rounded-lg text-[11px] font-medium"
+                    style={{ background: "var(--bg-primary)", border: "1px solid var(--accent)", color: "var(--accent)" }}>
+                    {option}
+                  </button>
+                ))}
+              </div>
+            ) : inputPending ? (
+              <div className="text-[11px] mt-2" style={{ color: "var(--text-tertiary)" }}>在下方直接回复，任务会从这里继续。</div>
+            ) : null}
+          </div>
+        )}
+
+        {approval && approvalStatus && (
+          <div className="mt-3 rounded-xl p-3" style={{
+            background: approvalStatus === "pending" || approvalStatus === "approved" ? "var(--accent-light)" : "var(--bg-secondary)",
+            border: `1px solid ${approvalStatus === "pending" || approvalStatus === "approved" ? "var(--accent)" : "var(--border)"}`,
+          }}>
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} style={{ color: approvalStatus === "declined" ? "var(--text-tertiary)" : "var(--accent)" }} />
+              <div className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                {approvalStatus === "pending" ? "需要批准工具操作" :
+                 approvalStatus === "approved" ? "操作已批准，等待继续" :
+                 approvalStatus === "consumed" ? "批准已使用" :
+                 approvalStatus === "declined" ? "操作已拒绝" : "审批已失效"}
+              </div>
+              <span className="ml-auto text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                一次性授权
+              </span>
+            </div>
+            <div className="mt-2 text-[11px]" style={{ color: "var(--text-secondary)" }}>
+              工具 <span className="font-mono font-semibold" style={{ color: "var(--text-primary)" }}>{approval.tool_name}</span>
+              {approval.risk ? ` · 风险级别 ${approval.risk}` : ""}
+            </div>
+            {Object.keys(approval.arguments || {}).length > 0 && (
+              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg p-2 text-[10px] leading-relaxed"
+                style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+                {JSON.stringify(approval.arguments, null, 2)}
+              </pre>
+            )}
+            {approvalError && <div className="mt-2 text-[11px]" style={{ color: "var(--danger, #dc2626)" }}>{approvalError}</div>}
+            {approvalStatus === "pending" && (
+              <div className="mt-2.5 flex gap-2">
+                <button onClick={() => void actOnApproval("decline")} disabled={approvalBusy}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-medium disabled:opacity-50"
+                  style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+                  拒绝
+                </button>
+                <button onClick={() => void actOnApproval("approve")} disabled={approvalBusy || !onSuggestion}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-medium disabled:opacity-50"
+                  style={{ background: "var(--accent)", border: "1px solid var(--accent)", color: "white" }}>
+                  {approvalBusy ? "处理中" : "批准并继续"}
+                </button>
+              </div>
+            )}
+            {approvalStatus === "approved" && onSuggestion && (
+              <button onClick={() => onSuggestion("继续执行已批准的操作。只执行刚才批准的原始工具和参数。")}
+                className="mt-2.5 px-3 py-1.5 rounded-lg text-[11px] font-medium"
+                style={{ background: "var(--accent)", color: "white" }}>
+                继续任务
+              </button>
+            )}
           </div>
         )}
 
         {/* Follow-up suggestions */}
-        {msg.suggestions && msg.suggestions.length > 0 && onSuggestion && (
+        {msg.suggestions && msg.suggestions.length > 0 && onSuggestion && !inputPending && !inputResolved && !approval && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {msg.suggestions.map((s, i) => (
               <button key={i} onClick={() => onSuggestion(s)}
@@ -498,8 +734,8 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
             </span>
           )}
           {msg.tokens && <span className="text-[10px] mr-1 font-mono" style={{ color: "var(--text-tertiary)" }}>{msg.tokens.input}→{msg.tokens.output}t</span>}
-          {msg.sources && msg.sources.length > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-[10px] mr-1" style={{ color: "var(--text-tertiary)" }}><FileText size={10} />{msg.sources.length}源</span>
+          {displaySources.length > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] mr-1" style={{ color: "var(--text-tertiary)" }}><FileText size={10} />{displaySources.length}源</span>
           )}
           <button onClick={copyContent} className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] transition-all hover:bg-[var(--bg-tertiary)]" style={{ color: "var(--text-tertiary)" }}>
             {copied ? <><Check size={11} className="text-green-500" /> 已复制</> : <><Copy size={11} /> 复制</>}
@@ -541,7 +777,86 @@ export function MsgBubble({ msg, index, convId, showRegenerate, onRegenerate, on
             </>
           )}
         </div>
+        {feedbackOpen && (
+          <div className="mt-2 max-w-[620px] rounded-xl p-3"
+            style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div>
+                <div className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>这条回答哪里需要改进？</div>
+                <div className="text-[10.5px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+                  失败原因和本次运行证据会进入待复核队列；不会自动把错误答案当成标准答案。
+                </div>
+              </div>
+              <button onClick={() => setFeedbackOpen(false)} className="p-1 rounded-md hover:bg-[var(--bg-tertiary)]" aria-label="关闭反馈">
+                <X size={13} style={{ color: "var(--text-tertiary)" }} />
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {([
+                ["incorrect", "事实或结论错误"], ["unsupported", "证据不足"],
+                ["retrieval_miss", "漏掉应有资料"], ["wrong_tool", "工具调用错误"],
+                ["incomplete", "任务未完成"], ["instruction_miss", "没有遵守要求"],
+                ["unsafe", "安全或隐私风险"], ["too_slow", "太慢或步骤过多"],
+                ["other", "其他问题"],
+              ] as Array<[FeedbackReason, string]>).map(([code, label]) => (
+                <button key={code} onClick={() => setFeedbackReason(code)}
+                  className="px-2.5 py-1.5 rounded-lg text-[11px] transition-colors"
+                  style={{
+                    color: feedbackReason === code ? "var(--accent)" : "var(--text-secondary)",
+                    background: feedbackReason === code ? "var(--accent-light)" : "var(--bg-tertiary)",
+                    border: `1px solid ${feedbackReason === code ? "var(--accent)" : "var(--border)"}`,
+                  }}>{label}</button>
+              ))}
+            </div>
+            <textarea value={feedbackComment} onChange={e => setFeedbackComment(e.target.value.slice(0, 1000))}
+              placeholder="可选：具体指出错在哪里，便于复现和修复"
+              className="w-full mt-2 rounded-lg px-2.5 py-2 text-[11px] resize-y min-h-[58px] outline-none"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }} />
+            {feedbackError && <div className="text-[10.5px] mt-1" style={{ color: "var(--error)" }}>{feedbackError}</div>}
+            <div className="flex justify-end gap-2 mt-2">
+              <button onClick={() => setFeedbackOpen(false)} className="px-3 py-1.5 rounded-lg text-[11px]"
+                style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}>取消</button>
+              <button onClick={() => feedbackReason && persistFeedback("down", feedbackReason, feedbackComment)}
+                disabled={!feedbackReason || feedbackBusy}
+                className="px-3 py-1.5 rounded-lg text-[11px] text-white disabled:opacity-40"
+                style={{ background: "var(--accent)" }}>{feedbackBusy ? "提交中…" : "提交并进入复核"}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// V306 性能：用 React.memo 包裹，切断"每个流式 token 触发顶层 setState → 40 条已渲染气泡
+// 全部重渲染"这条主卡顿链。窗口里的历史消息是不可变的（msg 内容/来源/文件不变），
+// 只要这些没变就跳过重渲染——流式期间正在生成的那条走 ChatArea 里独立的流式气泡，
+// 与这些历史气泡互不影响。
+// 比较器**刻意忽略函数型 props**（onRegenerate/onEdit/onSuggestion 每次父渲染都是新引用，
+// 但它们按行绑定、行为稳定；纳入比较会使 memo 永远失效，失去意义）。
+function _msgEqual(a: Props, b: Props): boolean {
+  if (a.index !== b.index || a.convId !== b.convId || a.showRegenerate !== b.showRegenerate) return false;
+  const x = a.msg, y = b.msg;
+  if (x === y) return true;
+  if (!x || !y) return false;
+  return (
+    x.id === y.id &&
+    x.role === y.role &&
+    x.content === y.content &&
+    x.feedback === y.feedback &&
+    (x.thinking || "") === (y.thinking || "") &&
+    (x.sources?.length || 0) === (y.sources?.length || 0) &&
+    x.groundings?.status === y.groundings?.status &&
+    (x.groundings?.supported_claims || 0) === (y.groundings?.supported_claims || 0) &&
+    (x.groundings?.total_factual_claims || 0) === (y.groundings?.total_factual_claims || 0) &&
+    (x.files?.length || 0) === (y.files?.length || 0) &&
+    (x.steps?.length || 0) === (y.steps?.length || 0) &&
+    (x.timeline?.length || 0) === (y.timeline?.length || 0) &&
+    (x.run_manifest?.process?.timeline?.length || 0) === (y.run_manifest?.process?.timeline?.length || 0) &&
+    (x.run_manifest?.process?.todo?.length || 0) === (y.run_manifest?.process?.todo?.length || 0) &&
+    x.run_manifest?.process?.completion_status === y.run_manifest?.process?.completion_status &&
+    (x.suggestions?.length || 0) === (y.suggestions?.length || 0)
+  );
+}
+
+export const MsgBubble = memo(MsgBubbleImpl, _msgEqual);

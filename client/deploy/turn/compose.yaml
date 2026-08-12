@@ -1,0 +1,24 @@
+services:
+  coturn:
+    # Pin this to an audited coturn tag or digest in deploy/turn/.env.
+    image: ${HASHMM_COTURN_IMAGE:?Set HASHMM_COTURN_IMAGE to a pinned coturn image tag or digest}
+    container_name: hashmm-coturn
+    restart: unless-stopped
+    network_mode: host
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ./runtime/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ${HASHMM_TURN_CERT_DIR:?Set HASHMM_TURN_CERT_DIR}:/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+      - /var/lib/coturn:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+

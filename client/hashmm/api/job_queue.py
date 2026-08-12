@@ -57,11 +57,16 @@ class JobQueue:
         return min(self.max_backoff, self.base_backoff * (2 ** attempt))
 
     def submit(self, kind: str, worker: Callable[..., Awaitable[Any]], *,
-               total: int = 0, retries: int | None = None) -> str:
+               total: int = 0, retries: int | None = None,
+               owner_id: str = "system", project_id: str = "",
+               work_run_id: str = "") -> str:
         """Create a tracked job and schedule it under the concurrency cap.
         Returns the job_id immediately. ``worker(progress_cb)`` is the same
         convention as jobs.run_job."""
-        job_id = jobs.create_job(kind, total)
+        job_id = jobs.create_job(
+            kind, total, owner_id=owner_id, project_id=project_id,
+            work_run_id=work_run_id,
+        )
         self._submitted += 1
         task = asyncio.create_task(self._run(job_id, worker, retries))
         self._tasks.add(task)
@@ -87,7 +92,7 @@ class JobQueue:
                         last_err = e
                         if i < attempts - 1:
                             self._retries += 1
-                            jobs.update_job(job_id, message=f"重试中 {i + 1}/{retries}…")
+                            jobs.update_job(job_id, status="retrying", message=f"重试中 {i + 1}/{retries}…")
                             try:
                                 await asyncio.sleep(self._backoff(i))
                             except Exception:

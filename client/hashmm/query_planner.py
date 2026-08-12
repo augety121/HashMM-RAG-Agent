@@ -203,7 +203,7 @@ class QueryPlanner:
         return plan
 
 
-def execute_plan(plan: ExecutionPlan, pipeline) -> list[dict]:
+def execute_plan(plan: ExecutionPlan, pipeline, *, filters: dict | None = None) -> list[dict]:
     """Execute a retrieval plan and merge results.
 
     Args:
@@ -217,7 +217,10 @@ def execute_plan(plan: ExecutionPlan, pipeline) -> list[dict]:
     seen_texts = set()
 
     for step in plan.steps:
-        response = pipeline.search(step.query, top_k=3)
+        if filters:
+            response = pipeline.search(step.query, top_k=3, filters=filters)
+        else:
+            response = pipeline.search(step.query, top_k=3)
         for r in response.results:
             text_key = r.text[:100]
             if text_key in seen_texts:

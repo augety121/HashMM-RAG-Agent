@@ -27,11 +27,9 @@
     border-radius:20px; padding:36px 34px 28px;
     box-shadow:0 16px 48px rgba(0,0,0,.07);
   }
-  .logo { width:52px; height:52px; border-radius:14px; margin:0 auto 16px;
-    background:linear-gradient(135deg,#8B6CFF,#6A3FF5);
-    display:flex; align-items:center; justify-content:center;
-    color:#fff; font-size:26px; font-weight:800;
-    box-shadow:0 6px 20px rgba(124,92,252,.35); }
+  .logo { width:64px; height:64px; margin:0 auto 16px;
+    background:url("./assets/brand/hashmm-app-tile.svg") center/contain no-repeat;
+    filter:drop-shadow(0 6px 16px rgba(24,25,28,.14)); }
   h1 { margin:0 0 4px; font-size:18px; font-weight:700; text-align:center; }
   p.sub { margin:0 0 20px; font-size:12.5px; color:var(--text-tertiary);
     text-align:center; line-height:1.7; }
@@ -140,11 +138,11 @@
 <body>
   <div class="dragbar"></div>
   <div class="card">
-    <div class="logo">H</div>
+    <div class="logo" role="img" aria-label="HashMM Observer"></div>
     <h1>连接 HashMM 后端</h1>
     <p class="sub">填入后端 API 地址，进入完整工作台<br>（对话 / 检索 / 知识图谱 / Agent / 文件 / 终端）</p>
     <div id="recentList"></div>
-    <input id="url" placeholder="后端地址，如 " autofocus />
+    <input id="url" placeholder="后端地址，如 111.115.7.14:20014" autofocus />
     <input id="token" type="password" placeholder="访问令牌（可选）" />
     <div style="display:flex;gap:8px">
       <button class="go" id="btnConnect" style="flex:1">连接</button>
@@ -186,8 +184,8 @@
       <span style="font-size:10px;color:var(--text-tertiary)">Key 只存本机 · 请求直达服务商</span>
       <button class="mini" id="btnKB" data-i18n="ui.btnKB">知识库</button>
       <button class="mini" id="btnCfg" data-i18n="ui.btnConfig">配置</button>
-      <button class="mini" id="btnSettings" data-i18n="ui.btnSettings">⚙ 设置</button>
-      <button class="mini" id="btnHistory" data-i18n="ui.btnHistory">📚 历史</button>
+      <button class="mini" id="btnSettings" data-i18n="ui.btnSettings">设置</button>
+      <button class="mini" id="btnHistory" data-i18n="ui.btnHistory">历史</button>
       <button class="mini" id="btnBack" data-i18n="ui.btnBack">← 连接后端</button>
     </div>
     <!-- V103.90 设置面板（主题/字号/行为 + 配置导入导出）-->
@@ -251,15 +249,15 @@
       <label id="localLlmLabel" style="display:none;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary)" title="用你自训的模型（GGUF）在本机作答——配合本地知识库，文档与问答数据一字不出设备（企业级私有模式）。需装本地推理运行时并放好模型文件。">
         <input type="checkbox" id="localLlmUse" style="width:auto;margin:0" /> 本地模型
       </label>
-      <button class="mini" id="localLlmSetup" title="本地模型安装向导：硬件 / 运行时 / 模型文件 一步步检查">🧩 本地模型设置</button>
+      <button class="mini" id="localLlmSetup" title="本地模型安装向导：硬件 / 运行时 / 模型文件 一步步检查">本地模型设置</button>
       <button class="mini" id="kbAdd">＋ 添加文件夹</button>
-      <button class="mini" id="kbManage">⚙ 管理</button>
+      <button class="mini" id="kbManage">管理</button>
       <button class="mini" id="kbClear">清空</button>
       <button class="mini" id="semBtn" title="ONNX 本地小模型语义检索（可选）">语义检索</button>
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);margin-left:4px" title="开启后 Agent 可在你的电脑上执行命令/读写文件（危险操作会弹确认）">
         <input type="checkbox" id="cuToggle" style="width:auto;margin:0" /> 电脑操控
       </label>
-      <button class="mini" id="cuLogBtn" title="查看 Agent 在你电脑上做过的每一步操作（可视化审计）">🛡 操作记录</button>
+      <button class="mini" id="cuLogBtn" title="查看 Agent 在你电脑上做过的每一步操作（可视化审计）">操作记录</button>
     </div>
     <!-- V103.90 Computer Use 操作记录/安全面板（深做：动作流可视化 + 风险徽章 + 安全级别） -->
     <div id="cuPanel" style="display:none;flex-direction:column;gap:8px;padding:10px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
@@ -280,7 +278,7 @@
     <!-- V103.90 本地模型安装向导面板（硬件/运行时/模型文件 逐步检查 + 指引） -->
     <div id="localLlmPanel" style="display:none;flex-direction:column;gap:8px;padding:10px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
       <div style="display:flex;align-items:center;gap:10px">
-        <div style="font-size:12px;color:var(--text-primary);flex:1">🧩 本地模型安装向导<span id="llSetupSummary" style="font-size:11px;color:var(--text-tertiary);margin-left:8px"></span></div>
+        <div style="font-size:12px;color:var(--text-primary);flex:1">本地模型安装向导<span id="llSetupSummary" style="font-size:11px;color:var(--text-tertiary);margin-left:8px"></span></div>
         <button class="mini" id="llSetupRefresh">重新检查</button>
         <button class="mini" id="llSetupClose">收起</button>
       </div>
@@ -297,7 +295,7 @@
       <div id="kbProg" style="display:none;font-size:11px;color:var(--accent)"></div>
       <div id="kbFolders" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto"></div>
       <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:8px">
-        <div style="font-size:11px;color:var(--text-tertiary)">🔍 搜索预览（不调用大模型，直接看知识库会召回什么）</div>
+        <div style="font-size:11px;color:var(--text-tertiary)">搜索预览（不调用大模型，直接看知识库会召回什么）</div>
         <div style="display:flex;gap:6px">
           <input id="kbSearchIn" placeholder="输入问题，回车预览召回的切片" style="flex:1;font-size:12px" />
           <button class="mini" id="kbSearchBtn">搜索</button>
@@ -327,7 +325,7 @@
       <span id="chatSearchCount" style="font-size:11px;color:var(--text-tertiary);min-width:48px;text-align:center;">0/0</span>
       <button class="mini" id="chatSearchPrev" title="上一个 (Shift+Enter)">↑</button>
       <button class="mini" id="chatSearchNext" title="下一个 (Enter)">↓</button>
-      <button class="mini" id="chatSearchClose" title="关闭 (Esc)">✕</button>
+      <button class="mini" id="chatSearchClose" title="关闭 (Esc)">×</button>
     </div>
     <div class="chat-msgs" id="chatMsgs">
       <div class="m-row"><div class="m-role">提示</div>
@@ -336,10 +334,10 @@
     </div>
     <div id="attachStrip"></div>
     <div id="chatToolbar" style="display:none;gap:8px;padding:4px 14px 0;align-items:center">
-      <button class="mini" id="chatRegen" data-i18n="ui.regenerate" title="用上一个问题重新生成回答">↻ 重新生成</button>
-      <button class="mini" id="chatClear" data-i18n="ui.clear" title="清空当前对话">🗑 清空对话</button>
+      <button class="mini" id="chatRegen" data-i18n="ui.regenerate" title="用上一个问题重新生成回答">重新生成</button>
+      <button class="mini" id="chatClear" data-i18n="ui.clear" title="清空当前对话">清空对话</button>
       <div style="position:relative;">
-        <button class="mini" id="btnExportChat" data-i18n="ui.export" title="导出当前对话">⬇ 导出</button>
+        <button class="mini" id="btnExportChat" data-i18n="ui.export" title="导出当前对话">导出</button>
         <div id="exportMenu" style="display:none;position:absolute;top:100%;left:0;margin-top:2px;background:var(--bg-primary);border:1px solid var(--border);border-radius:7px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:20;overflow:hidden;min-width:130px;">
           <div class="exportOpt" data-fmt="md" data-i18n="ui.exportMd" style="padding:8px 12px;font-size:12px;cursor:pointer;color:var(--text-primary);">Markdown (.md)</div>
           <div class="exportOpt" data-fmt="pdf" data-i18n="ui.exportPdf" style="padding:8px 12px;font-size:12px;cursor:pointer;color:var(--text-primary);border-top:1px solid var(--border);">PDF (.pdf)</div>
@@ -418,7 +416,7 @@
   }
   function showBackendInfo(d) {
     const el = $("backendInfo"); const t = backendInfoText(d);
-    if (t) { el.style.display = "block"; el.textContent = "🛰 " + t; } else { el.style.display = "none"; }
+    if (t) { el.style.display = "block"; el.textContent = t; } else { el.style.display = "none"; }
   }
   function normalizeUrl(raw) {
     let u = String(raw || "").trim().replace(/\s+/g, "");
@@ -455,8 +453,8 @@
     $("btnTest").disabled = true; setConn("正在测试 " + v.normalized + " …", "info");
     try {
       const p = await D.probe(v.normalized);
-      if (p && p.ok) { setConn("✓ 后端可达（" + p.ms + "ms）", "ok"); showBackendInfo(p.detail); }
-      else { const f = friendlyConnError(p); setConn("✗ " + f.msg + (f.hint ? "　—　" + f.hint : ""), "err"); $("backendInfo").style.display = "none"; }
+      if (p && p.ok) { setConn("后端可达（" + p.ms + "ms）", "ok"); showBackendInfo(p.detail); }
+      else { const f = friendlyConnError(p); setConn(f.msg + (f.hint ? "　—　" + f.hint : ""), "err"); $("backendInfo").style.display = "none"; }
     } catch (e) { setConn("测试出错：" + (e && e.message || e), "err"); }
     $("btnTest").disabled = false;
   }
@@ -472,11 +470,11 @@
         '<span class="recent-tok" title="已保存令牌" style="font-size:10px;color:var(--text-tertiary)"></span>' +
         '<span class="recent-time" style="font-size:10px;color:var(--text-tertiary)"></span>' +
         '<span class="recent-ms">…</span>' +
-        '<span class="recent-del" title="从列表移除" style="cursor:pointer;color:var(--text-tertiary);padding:0 2px">✕</span>';
+        '<span class="recent-del" title="从列表移除" style="cursor:pointer;color:var(--text-tertiary);padding:0 2px">×</span>';
       row.querySelector(".recent-url").textContent = r.url.replace(/^https?:\/\//, "");
-      row.querySelector(".recent-tok").textContent = r.token ? "🔑" : "";
+      row.querySelector(".recent-tok").textContent = r.token ? "已授权" : "";
       row.querySelector(".recent-time").textContent = relTime(r.ts);
-      // 点 url 区域连接；点 ✕ 移除（阻止冒泡）
+      // 点 url 区域连接；点关闭字符移除（阻止冒泡）
       row.querySelector(".recent-url").addEventListener("click", () => connectTo(r.url, r.token || ""));
       row.querySelector(".recent-del").addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -540,8 +538,8 @@
         if (bundled) { stat("内置运行时已就绪（无需安装任何环境）· 点「启动并进入」", "ok"); return; }
         if (!det.ok) { stat(det.error, "err"); return; }
         stat(cfg.envReady
-          ? `Python ${det.version} ✓ · 环境已就绪，点「启动并进入」`
-          : `Python ${det.version} ✓ · 首次使用请先「初始化环境」（约 2-5 分钟）`, cfg.envReady ? "ok" : "info");
+          ? `Python ${det.version} · 环境已就绪，点「启动并进入」`
+          : `Python ${det.version} · 首次使用请先「初始化环境」（约 2-5 分钟）`, cfg.envReady ? "ok" : "info");
       } catch (e) { if (!opt.keepStat) stat("检测失败：" + (e && e.message || e), "err"); }
     }
     refresh();
@@ -554,7 +552,7 @@
       let failed = false;
       try {
         const r = await B.setup({ python: $("lbPy").value.trim(), mirror: $("lbMirror").value.trim() });
-        if (r.ok) stat("环境就绪 ✓ 现在可以「启动并进入」", "ok");
+        if (r.ok) stat("环境就绪，现在可以「启动并进入」", "ok");
         else { failed = true; stat(r.error || "初始化失败", "err"); }
       } catch (e) { failed = true; stat("初始化出错：" + (e && e.message || e), "err"); }
       $("lbSetup").disabled = false; busy = false;
@@ -645,21 +643,21 @@
     const _val = window.hashmmValidate;
     if (_val) {
       const v = _val.llmConfig({ base, key, model }, { keyRequired: true, modelRequired: false });
-      if (!v.ok) { const first = v.errors.base || v.errors.key || v.errors.model; showLlmTest("error", "✗ " + first); return; }
+      if (!v.ok) { const first = v.errors.base || v.errors.key || v.errors.model; showLlmTest("error", first); return; }
     }
     $("llmTest").disabled = true;
     showLlmTest("info", "正在测试 " + base + " …");
     let r;
     try { r = await LLMB.testConnection({ baseUrl: base, apiKey: key, model }); }
-    catch (e) { showLlmTest("error", "✗ 测试出错：" + (e && e.message || e)); $("llmTest").disabled = false; return; }
+    catch (e) { showLlmTest("error", "测试出错：" + (e && e.message || e)); $("llmTest").disabled = false; return; }
     $("llmTest").disabled = false;
-    if (!r) { showLlmTest("error", "✗ 测试无响应"); return; }
+    if (!r) { showLlmTest("error", "测试无响应"); return; }
     // 填充模型下拉（datalist），方便用户直接选
     const dl = $("llmModelList"); dl.innerHTML = "";
     for (const m of (r.models || []).slice(0, 200)) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
     let hint = r.hint || "";
     if ((r.models || []).length && !r.modelFound) hint = (hint ? hint + "　" : "") + "可用模型：" + r.models.slice(0, 8).join("、") + (r.models.length > 8 ? " …" : "");
-    showLlmTest(r.level || (r.ok ? "ok" : "error"), r.message || (r.ok ? "✓ 连通" : "✗ 失败"), hint);
+    showLlmTest(r.level || (r.ok ? "ok" : "error"), r.message || (r.ok ? "连通" : "失败"), hint);
   }
   if ($("llmTest")) $("llmTest").addEventListener("click", testLlmConn);
 
@@ -682,7 +680,7 @@
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);font-size:12px";
       const badge = `<span style="font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid ${cuTone(d.tone)};color:${cuTone(d.tone)};white-space:nowrap">${d.riskLabel}</span>`;
-      const resultIcon = d.ok ? '<span style="color:var(--success)">✓</span>' : `<span style="color:var(--danger)" title="${String(d.error || "").replace(/"/g, "&quot;")}">✗</span>`;
+      const resultIcon = d.ok ? '<span style="color:var(--success)">通过</span>' : `<span style="color:var(--danger)" title="${String(d.error || "").replace(/"/g, "&quot;")}">失败</span>`;
       row.innerHTML =
         `<span style="font-size:14px">${d.icon}</span>` +
         `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary)">${String(d.text).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</span>` +
@@ -710,7 +708,7 @@
   // ── V103.90 本地模型安装向导（硬件/运行时/模型文件 逐步检查）──
   const LLMW = window.hashmmLLM;
   function llStepColor(state) { return ({ ok: "var(--success)", warn: "var(--accent)", todo: "var(--text-tertiary)", blocked: "var(--danger)" })[state] || "var(--text-secondary)"; }
-  function llStepIcon(state) { return ({ ok: "✓", warn: "⚠", todo: "○", blocked: "✕" })[state] || "○"; }
+  function llStepIcon(state) { return ({ ok: "通过", warn: "注意", todo: "待办", blocked: "阻塞" })[state] || "待办"; }
   async function renderLlSetup() {
     if (!LLMW || !LLMW.localStatus || $("localLlmPanel").style.display === "none") return;
     let st; try { st = await LLMW.localStatus(); } catch (_) { return; }
@@ -753,13 +751,13 @@
   async function testVisConn() {
     const LB = window.hashmmLLM; if (!LB || !LB.testConnection) { showVisTest("info", "当前版本不支持测试"); return; }
     const base = $("visBase").value.trim(), key = $("visKey").value.trim(), model = $("visModel").value.trim();
-    if (!base) { showVisTest("error", "✗ 请先填写视觉模型 Base URL"); return; }
+    if (!base) { showVisTest("error", "请先填写视觉模型 Base URL"); return; }
     const _val = window.hashmmValidate;
-    if (_val) { const v = _val.backendUrl(base); if (!v.ok) { showVisTest("error", "✗ " + v.reason); return; } }
+    if (_val) { const v = _val.backendUrl(base); if (!v.ok) { showVisTest("error", v.reason); return; } }
     $("visTest").disabled = true; showVisTest("info", "正在测试视觉端点 " + base + " …");
-    let r; try { r = await LB.testConnection({ baseUrl: base, apiKey: key, model }); } catch (e) { showVisTest("error", "✗ 测试出错：" + (e && e.message || e)); $("visTest").disabled = false; return; }
+    let r; try { r = await LB.testConnection({ baseUrl: base, apiKey: key, model }); } catch (e) { showVisTest("error", "测试出错：" + (e && e.message || e)); $("visTest").disabled = false; return; }
     $("visTest").disabled = false;
-    if (!r) { showVisTest("error", "✗ 无响应"); return; }
+    if (!r) { showVisTest("error", "无响应"); return; }
     const dl = $("visModelList"); if (dl) { dl.innerHTML = ""; for (const m of (r.models || []).slice(0, 200)) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); } }
     let hint = r.hint || "";
     if ((r.models || []).length && !r.modelFound) hint = (hint ? hint + "　" : "") + "可用模型：" + r.models.slice(0, 8).join("、");
@@ -860,9 +858,9 @@
     });
     let r;
     try { r = await RAG.pickAndIngest(); } finally { off(); }
-    if (r && r.ok) setKbProg(`✓ 已摄取 ${r.ingested.files} 文件 / ${r.ingested.chunks} 切片${r.ingested.skipped ? `（跳过 ${r.ingested.skipped} 个：二进制/超大）` : ""}`);
+    if (r && r.ok) setKbProg(`已摄取 ${r.ingested.files} 文件 / ${r.ingested.chunks} 切片${r.ingested.skipped ? `（跳过 ${r.ingested.skipped} 个：二进制/超大）` : ""}`);
     else if (r && r.canceled) setKbProg("");
-    else setKbProg("✗ 摄取失败");
+    else setKbProg("摄取失败");
     setTimeout(() => setKbProg(""), 4000);
     refreshKB(); renderKBPanel();
   }
@@ -887,11 +885,11 @@
       card.style.cssText = "display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary)";
       card.innerHTML =
         `<div style="flex:1;min-width:0">
-           <div style="font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${f.folder.replace(/"/g, "&quot;")}">📁 ${shortPath(f.folder)}</div>
+           <div style="font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${f.folder.replace(/"/g, "&quot;")}">${shortPath(f.folder)}</div>
            <div style="font-size:10px;color:var(--text-tertiary)">${f.files} 文件 · ${f.chunks} 切片 · ${fmtBytes(f.size)}</div>
          </div>
          <button class="mini kbSync" data-folder="${f.folder.replace(/"/g, "&quot;")}" title="重扫该文件夹：只重摄新增/改动的文件、清掉已删除的（增量同步，快）">↻ 同步</button>
-         <button class="mini kbRemove" data-folder="${f.folder.replace(/"/g, "&quot;")}" title="从知识库移除该文件夹（不删你磁盘上的原文件）">✕ 移除</button>`;
+         <button class="mini kbRemove" data-folder="${f.folder.replace(/"/g, "&quot;")}" title="从知识库移除该文件夹（不删你磁盘上的原文件）">移除</button>`;
       box.appendChild(card);
     }
     if (ungrouped) {
@@ -906,8 +904,8 @@
       setKbProg("正在同步：" + shortPath(folder));
       const off = RAG.onProgress((m) => { const pct = m.total ? Math.round((m.done / m.total) * 100) : 0; setKbProg(`同步中 ${pct}%（${m.done}/${m.total}）· ${m.current || ""}`); });
       let res; try { res = await RAG.sync(folder); } finally { off(); }
-      if (res && res.ok) { const x = res.summary; setKbProg(`✓ 同步完成：新增 ${x.added} · 改动 ${x.changed} · 删除 ${x.removed} · 未变 ${x.unchanged}`); }
-      else setKbProg("✗ 同步失败：" + ((res && res.error) || ""));
+      if (res && res.ok) { const x = res.summary; setKbProg(`同步完成：新增 ${x.added} · 改动 ${x.changed} · 删除 ${x.removed} · 未变 ${x.unchanged}`); }
+      else setKbProg("同步失败：" + ((res && res.error) || ""));
       setTimeout(() => setKbProg(""), 5000);
       refreshKB(); renderKBPanel();
     }));
@@ -915,7 +913,7 @@
       const folder = btn.getAttribute("data-folder");
       if (!confirm(`从知识库移除文件夹「${shortPath(folder)}」？\n（只移除索引，不会删除你磁盘上的原文件）`)) return;
       const res = await RAG.removeFolder(folder);
-      if (res && res.ok) setKbProg(`✓ 已移除 ${res.removed.files} 文件 / ${res.removed.chunks} 切片`);
+      if (res && res.ok) setKbProg(`已移除 ${res.removed.files} 文件 / ${res.removed.chunks} 切片`);
       setTimeout(() => setKbProg(""), 3000);
       refreshKB(); renderKBPanel();
     }));
@@ -941,7 +939,7 @@
       const fileName = String(it.file || "").split(/[\\/]/).pop();
       card.innerHTML =
         `<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-tertiary)">
-           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${String(it.file || "").replace(/"/g, "&quot;")}">📄 ${fileName}</span>
+           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${String(it.file || "").replace(/"/g, "&quot;")}">${fileName}</span>
            <span>score ${it.score}</span>
          </div>
          <div style="font-size:11px;color:var(--text-secondary);margin-top:3px;max-height:60px;overflow:hidden">${String(it.text || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])).slice(0, 300)}</div>`;
@@ -968,7 +966,7 @@
     const status = { deviceOk: d.ok, memGB: d.memGB, cores: d.cores, ortInstalled: d.ortInstalled, modelDownloaded: d.modelDownloaded, enabled: d.enabled, vectors: d.vectors || 0, kbChunks };
     const steps = SEMB.steps(status);
     const colors = { ok: "var(--success)", warn: "var(--accent)", todo: "var(--text-tertiary)", blocked: "var(--danger)" };
-    const icons = { ok: "✓", warn: "⚠", todo: "○", blocked: "✕" };
+    const icons = { ok: "通过", warn: "注意", todo: "待办", blocked: "阻塞" };
     const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
     box.innerHTML = "";
     steps.forEach((s, i) => {
@@ -1104,7 +1102,7 @@
     // V103.90 文本/代码文件卡片
     const AT = window.hashmmAttach;
     pendingFiles.forEach((f, i) => {
-      const lbl = AT ? AT.label({ name: f.name, size: f.size }) : { short: f.name, size: "", icon: "📄" };
+      const lbl = AT ? AT.label({ name: f.name, size: f.size }) : { short: f.name, size: "", icon: "FILE" };
       const d = document.createElement("div");
       d.style.cssText = "position:relative;display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--bg-secondary);max-width:180px;";
       d.innerHTML = `<span style="font-size:16px;">${lbl.icon}</span><div style="min-width:0;"><div style="font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${lbl.short}</div><div style="font-size:10px;color:var(--text-tertiary);">${lbl.size}</div></div>`;
@@ -1262,7 +1260,7 @@
             if (disp.subQuestions && disp.subQuestions.length) {
               const sq = document.createElement("div");
               sq.style.cssText = "margin-top:6px;font-size:11px;color:var(--text-secondary)";
-              sq.innerHTML = "🔭 检索路径：" + disp.subQuestions.map(q => String(q).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))).join(" → ");
+              sq.innerHTML = "检索路径：" + disp.subQuestions.map(q => String(q).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))).join(" → ");
               bodyEl.appendChild(sq);
             }
             // 编号来源卡片（可展开看片段）
@@ -1360,7 +1358,7 @@
     const CU = window.hashmmCU;
     const cuOn = $("cuToggle") && $("cuToggle").checked && CU;
     if (cuOn) {
-      // ── Computer Use 循环：LLM↔工具多轮，直到无 tool_calls ──
+      // ── Computer Use 循环：LLM 与工具多轮交互，直到无 tool_calls ──
       if (offDelta) { offDelta(); offDelta = null; }
       bodyEl.textContent = "思考中…";
       const tools = await CU.tools(hasVision);
@@ -1566,9 +1564,9 @@
       const visionCfg = (function () { try { return JSON.parse(localStorage.getItem("hashmm_vision_cfg") || "{}"); } catch (_) { return {}; } })();
       const json = CIO.buildExportString({ mainConfig: main, llmCfg, visionCfg, preferences: _prefs }, { includeSecrets });
       const r = await CIO.exportToFile(json, includeSecrets ? "hashmm-config-backup.json" : "hashmm-config-share.json");
-      if (r && r.ok) cfgIOMsg("✓ 已导出到 " + r.path, "ok");
-      else if (!(r && r.canceled)) cfgIOMsg("✗ 导出失败：" + ((r && r.error) || ""), "err");
-    } catch (e) { cfgIOMsg("✗ 导出出错：" + (e && e.message || e), "err"); }
+      if (r && r.ok) cfgIOMsg("已导出到 " + r.path, "ok");
+      else if (!(r && r.canceled)) cfgIOMsg("导出失败：" + ((r && r.error) || ""), "err");
+    } catch (e) { cfgIOMsg("导出出错：" + (e && e.message || e), "err"); }
   }
   if ($("cfgExportFull")) $("cfgExportFull").addEventListener("click", () => doExport(true));
   if ($("cfgExportSafe")) $("cfgExportSafe").addEventListener("click", () => doExport(false));
@@ -1576,9 +1574,9 @@
     if (!CIO) return;
     try {
       const r = await CIO.importFromFile();
-      if (!r || !r.ok) { if (!(r && r.canceled)) cfgIOMsg("✗ 读取失败：" + ((r && r.error) || ""), "err"); return; }
+      if (!r || !r.ok) { if (!(r && r.canceled)) cfgIOMsg("读取失败：" + ((r && r.error) || ""), "err"); return; }
       const parsed = CIO.parseImport(r.content);
-      if (!parsed.ok) { cfgIOMsg("✗ " + (parsed.errors || []).join("；"), "err"); return; }
+      if (!parsed.ok) { cfgIOMsg((parsed.errors || []).join("；"), "err"); return; }
       const warn = (parsed.warnings || []).length ? "\n注意：" + parsed.warnings.join("；") : "";
       if (!confirm("导入这份配置？将覆盖当前后端列表与模型配置。" + warn)) return;
       const split = CIO.splitForApply(parsed.data);
@@ -1586,8 +1584,8 @@
       try { localStorage.setItem("hashmm_llm_cfg", JSON.stringify(split.llmCfg || {})); } catch (_) {}
       try { localStorage.setItem("hashmm_vision_cfg", JSON.stringify(split.visionCfg || {})); } catch (_) {}
       if (split.preferences && Object.keys(split.preferences).length) applyPrefs(split.preferences);
-      cfgIOMsg("✓ 导入成功，部分设置在重新连接后生效", "ok");
-    } catch (e) { cfgIOMsg("✗ 导入出错：" + (e && e.message || e), "err"); }
+      cfgIOMsg("导入成功，部分设置在重新连接后生效", "ok");
+    } catch (e) { cfgIOMsg("导入出错：" + (e && e.message || e), "err"); }
   });
 
   // —— 对话历史持久化 ——
@@ -1612,7 +1610,7 @@
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);" + (c.id === _convId ? "border-color:var(--accent);" : "");
       const when = new Date(c.updatedAt || 0); const wd = `${when.getMonth() + 1}/${when.getDate()} ${("0" + when.getHours()).slice(-2)}:${("0" + when.getMinutes()).slice(-2)}`;
-      row.innerHTML = `<div style="flex:1;min-width:0;cursor:pointer;"><div style="font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.title)}</div><div style="font-size:10px;color:var(--text-tertiary);">${c.count} 条 · ${wd}</div></div><span class="histDel" style="cursor:pointer;color:var(--text-tertiary);padding:0 4px;">✕</span>`;
+      row.innerHTML = `<div style="flex:1;min-width:0;cursor:pointer;"><div style="font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.title)}</div><div style="font-size:10px;color:var(--text-tertiary);">${c.count} 条 · ${wd}</div></div><span class="histDel" style="cursor:pointer;color:var(--text-tertiary);padding:0 4px;">×</span>`;
       row.querySelector("div").addEventListener("click", () => loadConv(c.id));
       row.querySelector(".histDel").addEventListener("click", async (e) => { e.stopPropagation(); _convList = CONV.remove(_convList, c.id); if (c.id === _convId) _convId = null; try { await CONV.save(CONV.serialize(_convList)); } catch (_) {} renderHist(); });
       box.appendChild(row);
@@ -1688,6 +1686,58 @@
   function notifyAssistant(text) { try { const NT = window.hashmmNotify; if (NT) NT.assistantDone(text || ""); } catch (_) {} }
   if ($("prefNotify")) $("prefNotify").addEventListener("change", () => { try { const NT = window.hashmmNotify; if (NT) NT.setEnabled($("prefNotify").checked); } catch (_) {} });
 
+  // ═══ V300 第二期：任务检查点 / 回滚面板 ═══
+  async function showCheckpointPanel() {
+    const CK = window.hashmmCheckpoint;
+    if (!CK) return;
+    let data;
+    try { data = await CK.list(); } catch (_e) { data = { items: [] }; }
+    const items = (data && data.items) || [];
+    const old = document.getElementById("ckptOverlay");
+    if (old) old.remove();
+    const ov = document.createElement("div");
+    ov.id = "ckptOverlay";
+    ov.style.cssText = "position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const rows = items.length ? items.map((it) => {
+        const when = new Date(it.createdAt).toLocaleString();
+        const badge = it.restored ? "已回滚" : (it.reversible ? "可回滚" : "不可回滚");
+        const btn = (it.reversible && !it.restored)
+          ? `<button data-ck="${esc(it.id)}" class="ckptRewind" style="padding:5px 12px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;font-size:12.5px;">回滚到此</button>`
+          : `<span style="font-size:11.5px;color:var(--text-tertiary);">${badge}</span>`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.summary)}</div>
+            <div style="font-size:11px;color:var(--text-tertiary);">${esc(when)} · ${it.fileCount} 个文件 · ${badge}</div>
+          </div>${btn}</div>`;
+      }).join("")
+      : `<div style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px;">本次会话还没有检查点。<br>当 Agent 写文件或执行删除/移动类命令时，会在这里出现可回滚的检查点。</div>`;
+    ov.innerHTML = `<div style="width:min(560px,92vw);max-height:80vh;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:16px;padding:18px;">
+        <div style="display:flex;align-items:center;margin-bottom:12px;">
+          <div style="flex:1;font-size:15px;font-weight:600;color:var(--text-primary);">任务检查点</div>
+          <button id="ckptClose" style="border:none;background:transparent;color:var(--text-tertiary);font-size:20px;cursor:pointer;">×</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">回滚会用检查点里的快照覆盖当前文件（新建的文件会被删除），执行前会再确认一次。</div>
+        ${rows}
+      </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+    const closeBtn = document.getElementById("ckptClose");
+    if (closeBtn) closeBtn.addEventListener("click", () => ov.remove());
+    ov.querySelectorAll(".ckptRewind").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const id = b.getAttribute("data-ck");
+        b.disabled = true; b.textContent = "回滚中…";
+        try {
+          const r = await CK.rewind(null, id);
+          if (r && r.ok) { b.textContent = "已回滚"; setTimeout(() => showCheckpointPanel(), 600); }
+          else if (r && r.canceled) { b.disabled = false; b.textContent = "回滚到此"; }
+          else { b.textContent = "回滚失败"; }
+        } catch (_e) { b.textContent = "回滚失败"; }
+      });
+    });
+  }
+
   // ═══ V103.90 命令面板（Ctrl/⌘+K）═══
   const CMD = window.hashmmCmd;
   const clickEl = (id) => { const el = $(id); if (el) el.click(); };
@@ -1702,6 +1752,7 @@
     { id: "regen", title: "重新生成", keywords: ["regenerate", "重新", "重生成"], action: () => clickEl("chatRegen"), when: () => !!lastUserText },
     { id: "shot", title: "截图标注", keywords: ["screenshot", "截图", "标注"], action: () => clickEl("shotBtn") },
     { id: "theme", title: "切换深色 / 浅色主题", keywords: ["theme", "dark", "light", "主题", "深色", "浅色"], action: () => { const t = _prefs.theme === "light" ? "dark" : "light"; onPrefChange("theme", t); } },
+    { id: "ckpt", title: "任务检查点 / 回滚", keywords: ["checkpoint", "rewind", "检查点", "回滚", "撤销", "还原"], action: () => showCheckpointPanel(), when: () => !!window.hashmmCheckpoint },
   ];
   let _cmdSel = 0, _cmdResults = [];
   function renderCmdList() {
@@ -1760,7 +1811,7 @@
       const active = t.id === _tabState.activeId;
       const tab = document.createElement("div");
       tab.style.cssText = "display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px 7px 0 0;cursor:pointer;font-size:12px;max-width:160px;white-space:nowrap;border:1px solid var(--border);border-bottom:" + (active ? "1px solid var(--bg-primary)" : "1px solid var(--border)") + ";background:" + (active ? "var(--bg-primary)" : "var(--bg-secondary)") + ";color:" + (active ? "var(--text-primary)" : "var(--text-secondary)") + ";";
-      tab.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;">${esc(t.title)}</span><span class="tabClose" style="flex:0 0 auto;opacity:.6;padding:0 2px;">✕</span>`;
+      tab.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;">${esc(t.title)}</span><span class="tabClose" style="flex:0 0 auto;opacity:.6;padding:0 2px;">×</span>`;
       tab.querySelector("span").addEventListener("click", () => switchTab(t.id));
       tab.addEventListener("click", (ev) => { if (!ev.target.classList.contains("tabClose")) switchTab(t.id); });
       tab.querySelector(".tabClose").addEventListener("click", (ev) => { ev.stopPropagation(); closeTabUI(t.id); });
@@ -1824,7 +1875,7 @@
     let body = `<h1>${esc(conv.title)}</h1>`;
     for (const m of conv.messages) {
       if (!m || !m.role || m.role === "system") continue;
-      const who = m.role === "user" ? "🧑 你" : "🤖 助手";
+      const who = m.role === "user" ? "你" : "助手";
       const text = typeof m.content === "string" ? m.content : (Array.isArray(m.content) ? (m.content.find(p => p && p.type === "text") || {}).text || "[多模态消息]" : "");
       const rendered = (MD && MD.render) ? MD.render(text) : "<p>" + esc(text) + "</p>";
       body += `<div class="msg ${m.role}"><div class="who">${who}</div><div class="content">${rendered}</div></div>`;
@@ -1846,16 +1897,16 @@
     try {
       if (fmt === "md") {
         const r = await EXP.saveText(EXP.toMarkdown(conv), EXP.filename(conv.title, "md"));
-        if (r && r.ok) cfgIOMsgFlash("✓ 已导出 Markdown 到 " + r.path);
+        if (r && r.ok) cfgIOMsgFlash("已导出 Markdown 到 " + r.path);
       } else if (fmt === "txt") {
         const r = await EXP.saveText(EXP.toPlainText(conv), EXP.filename(conv.title, "txt"));
-        if (r && r.ok) cfgIOMsgFlash("✓ 已导出文本到 " + r.path);
+        if (r && r.ok) cfgIOMsgFlash("已导出文本到 " + r.path);
       } else if (fmt === "pdf") {
         const r = await EXP.savePdf(buildExportHtml(conv), EXP.filename(conv.title, "pdf"));
-        if (r && r.ok) cfgIOMsgFlash("✓ 已导出 PDF 到 " + r.path);
-        else if (r && !r.canceled) cfgIOMsgFlash("✗ PDF 导出失败：" + ((r && r.error) || ""));
+        if (r && r.ok) cfgIOMsgFlash("已导出 PDF 到 " + r.path);
+        else if (r && !r.canceled) cfgIOMsgFlash("PDF 导出失败：" + ((r && r.error) || ""));
       }
-    } catch (e) { cfgIOMsgFlash("✗ 导出出错：" + (e && e.message || e)); }
+    } catch (e) { cfgIOMsgFlash("导出出错：" + (e && e.message || e)); }
   }
   // 轻量提示（复用一个短暂浮条）
   let _flashTimer = null;
@@ -1934,6 +1985,122 @@
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleDroppedFiles(e.dataTransfer.files);
     });
   })();
+</script>
+<script>
+/* Cockpit 记忆面板（自包含、纯附加；无桥接则不出现，全程 try/catch 不影响其它 UI） */
+(function(){
+  try {
+    if (!window.hashmmMemory) return;
+    var M = window.hashmmMemory;
+    function el(tag, css, txt){ var d=document.createElement(tag); if(css) d.style.cssText=css; if(txt!=null) d.textContent=txt; return d; }
+    function mini(txt, on){ var b=el("button", "font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border,#ccc);background:var(--bg,#fff);color:var(--text-primary,#222);cursor:pointer", txt); b.onclick=on; return b; }
+    var btn = el("button", "position:fixed;right:16px;bottom:16px;z-index:99998;font-size:12px;padding:7px 12px;border-radius:18px;border:1px solid var(--border,#ccc);background:var(--bg-secondary,#fff);color:var(--text-primary,#222);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)", "记忆");
+    btn.title = "查看/编辑助理记住的设置、常用目录、偏好（与手机端同一份记忆）";
+    var panel = el("div", "position:fixed;right:16px;bottom:58px;z-index:99998;width:340px;max-height:62vh;overflow:auto;display:none;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--border,#ccc);border-radius:12px;background:var(--bg-secondary,#fff);color:var(--text-primary,#222);box-shadow:0 6px 24px rgba(0,0,0,.28);font-size:12px");
+    document.body.appendChild(btn); document.body.appendChild(panel);
+    function sect(t){ return el("div", "margin-top:6px;font-weight:600;color:var(--text-secondary,#666)", t); }
+    function lineRow(){ return el("div", "display:flex;align-items:center;gap:6px;padding:2px 0"); }
+    function engLabel(v){ return v==="bing"?"必应":v==="google"?"谷歌":v==="baidu"?"百度":"未指定"; }
+    function render(data){
+      data = data || {};
+      panel.innerHTML="";
+      var head = el("div", "display:flex;align-items:center;gap:8px");
+      head.appendChild(el("b", "flex:1", "助理记忆"));
+      head.appendChild(mini("刷新", load));
+      head.appendChild(mini("收起", function(){ panel.style.display="none"; }));
+      panel.appendChild(head);
+      var f = data.fields || {};
+      panel.appendChild(sect("设置"));
+      // 默认搜索引擎：下拉
+      var se = lineRow();
+      se.appendChild(el("span", "color:var(--text-secondary,#666)", "默认搜索："));
+      var sel = el("select", "font-size:12px;padding:2px 6px");
+      [["","不指定"],["bing","必应"],["google","谷歌"],["baidu","百度"]].forEach(function(o){ var op=el("option",null,o[1]); op.value=o[0]; if((f.searchEngine||"")===o[0]) op.selected=true; sel.appendChild(op); });
+      sel.onchange=function(){ M.setField("searchEngine", sel.value).then(function(r){ if(r&&r.ok) render(r.data); }); };
+      se.appendChild(sel);
+      panel.appendChild(se);
+      // 下载目录
+      var dd = lineRow();
+      dd.appendChild(el("span", "color:var(--text-secondary,#666)", "下载目录："));
+      dd.appendChild(el("span", "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", f.downloadDir || "未设置"));
+      dd.appendChild(mini("选目录", function(){ if(M.pickDir) M.pickDir().then(function(r){ if(r&&r.ok) render(r.data); }); }));
+      if (f.downloadDir) dd.appendChild(mini("清除", function(){ M.setField("downloadDir","").then(function(r){ if(r&&r.ok) render(r.data); }); }));
+      panel.appendChild(dd);
+      // 称呼
+      if (f.name){ var nm=lineRow(); nm.appendChild(el("span","color:var(--text-secondary,#666)","称呼：")); nm.appendChild(el("span","flex:1",f.name)); nm.appendChild(mini("清除", function(){ M.setField("name","").then(function(r){ if(r&&r.ok) render(r.data); }); })); panel.appendChild(nm); }
+      // 常用目录
+      panel.appendChild(sect("常用目录"));
+      var dirs = data.dirs || [];
+      if (!dirs.length) panel.appendChild(el("div","color:var(--text-tertiary,#999)","（还没学到，多用几次取文件就会记住）"));
+      dirs.forEach(function(d){ var r2=lineRow(); r2.appendChild(el("span","flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",(d.path||""))); r2.appendChild(el("span","color:var(--text-tertiary,#999)","×"+(d.count||0))); r2.appendChild(mini("忘记", function(){ M.forgetDir(d.path).then(function(r){ if(r&&r.ok) render(r.data); }); })); panel.appendChild(r2); });
+      // 偏好
+      var prefs = data.prefs || [];
+      if (prefs.length){ panel.appendChild(sect("偏好/备注")); prefs.forEach(function(pf){ var r3=lineRow(); r3.appendChild(el("span","flex:1",pf)); r3.appendChild(mini("忘记", function(){ M.forgetPref(pf).then(function(r){ if(r&&r.ok) render(r.data); }); })); panel.appendChild(r3); }); }
+      // 最近
+      var recent = data.recent || [];
+      if (recent.length){ panel.appendChild(sect("最近任务")); recent.slice(0,6).forEach(function(x){ panel.appendChild(el("div","color:var(--text-tertiary,#999)","· "+x)); }); }
+      // 清空
+      var clr = mini("清空全部记忆", function(){ M.clear().then(function(r){ if(r&&r.ok) render(r.data); }); });
+      clr.style.marginTop="8px"; clr.style.color="var(--danger,#c00)"; panel.appendChild(clr);
+    }
+    function load(){ M.get().then(function(r){ render((r&&r.data)||{}); }).catch(function(){ render({}); }); }
+    btn.onclick=function(){ if(panel.style.display==="none"||!panel.style.display){ panel.style.display="flex"; load(); } else { panel.style.display="none"; } };
+  } catch(e) { /* 任何异常都不影响 Cockpit 其它功能 */ }
+})();
+</script>
+<script>
+/* Cockpit 任务面板（自包含、纯附加）：看并行/序列进度、取消、直接发起；无桥接不出现，try/catch 不影响其它 UI */
+(function(){
+  try {
+    if (!window.hashmmTasks) return;
+    var T = window.hashmmTasks;
+    function el(tag, css, txt){ var d=document.createElement(tag); if(css) d.style.cssText=css; if(txt!=null) d.textContent=txt; return d; }
+    function mini(txt, on){ var b=el("button", "font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border,#ccc);background:var(--bg,#fff);color:var(--text-primary,#222);cursor:pointer", txt); b.onclick=on; return b; }
+    var btn = el("button", "position:fixed;right:96px;bottom:16px;z-index:99998;font-size:12px;padding:7px 12px;border-radius:18px;border:1px solid var(--border,#ccc);background:var(--bg-secondary,#fff);color:var(--text-primary,#222);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)", "任务");
+    btn.title = "并行/序列任务进度（与手机端同源），可取消，也可直接发起";
+    var panel = el("div", "position:fixed;right:96px;bottom:58px;z-index:99998;width:360px;max-height:62vh;overflow:auto;display:none;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--border,#ccc);border-radius:12px;background:var(--bg-secondary,#fff);color:var(--text-primary,#222);box-shadow:0 6px 24px rgba(0,0,0,.28);font-size:12px");
+    document.body.appendChild(btn); document.body.appendChild(panel);
+    function statusColor(s){ return s==="done"?"#16a34a":s==="failed"?"#dc2626":s==="paused"?"#d97706":s==="running"?"#2563eb":"#9ca3af"; }
+    function statusWord(s){ return s==="done"?"已完成":s==="running"?"进行中":s==="failed"?"失败":s==="paused"?"待确认":s==="canceled"?"已取消":"等待"; }
+    function dot(s){
+      var d=el("span","display:inline-block;flex:0 0 auto;width:9px;height:9px;border-radius:50%");
+      if(s==="running"){ d.style.cssText="display:inline-block;flex:0 0 auto;width:11px;height:11px;border:1.6px solid #2563eb;border-top-color:transparent;border-radius:50%;animation:hmspin .8s linear infinite"; }
+      else if(s==="pending"){ d.style.background="transparent"; d.style.border="1.5px solid #9ca3af"; }
+      else { d.style.background=statusColor(s); }
+      return d;
+    }
+    try { if(!document.getElementById("hmspin-style")){ var st=document.createElement("style"); st.id="hmspin-style"; st.textContent="@keyframes hmspin{to{transform:rotate(360deg)}}"; document.head.appendChild(st); } } catch(e){}
+    function render(list){
+      list = list || [];
+      panel.innerHTML="";
+      var head = el("div", "display:flex;align-items:center;gap:8px");
+      head.appendChild(el("b", "flex:1", "任务进度"));
+      head.appendChild(mini("收起", function(){ panel.style.display="none"; }));
+      panel.appendChild(head);
+      var bar = el("div", "display:flex;gap:6px;flex-wrap:wrap;padding:2px 0");
+      bar.appendChild(mini("浏览器查", function(){ var g=prompt("让电脑用浏览器查什么？（落到最近的对话，手机也能看到）"); if(g&&g.trim()) T.dispatch("agent", g.trim()).then(function(r){ if(!r||!r.ok) alert((r&&r.error)||"发起失败"); }); }));
+      bar.appendChild(mini("多步操作", function(){ var g=prompt("让电脑做的一串操作（如：整理下载文件夹）？"); if(g&&g.trim()) T.dispatch("seq", g.trim()).then(function(r){ if(!r||!r.ok) alert((r&&r.error)||"发起失败"); }); }));
+      panel.appendChild(bar);
+      panel.appendChild(el("div", "height:1px;background:var(--border,#eee);margin:4px 0"));
+      if(!list.length){ panel.appendChild(el("div", "color:var(--text-tertiary,#999)", "暂无运行中的任务（手机或上面发起后这里实时显示）")); return; }
+      list.forEach(function(task){
+        var card = el("div", "border:1px solid var(--border,#eee);border-radius:8px;padding:8px;margin:4px 0");
+        card.appendChild(el("div", "font-weight:600;margin-bottom:6px;color:var(--text-secondary,#666)", task.title||"任务"));
+        (task.items||[]).forEach(function(it){
+          var row = el("div", "display:flex;align-items:center;gap:0;padding:2px 0");
+          row.appendChild(dot(it.s));
+          row.appendChild(el("span", "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px", it.l||""));
+          row.appendChild(el("span", "font-size:11px;margin-left:6px;color:"+statusColor(it.s), statusWord(it.s)));
+          if(it.s==="running"||it.s==="pending"||it.s==="paused"){ var cb=mini("取消", function(){ T.cancel(task.rid+":"+it.i); }); cb.style.marginLeft="6px"; row.appendChild(cb); }
+          card.appendChild(row);
+        });
+        panel.appendChild(card);
+      });
+    }
+    try { T.onUpdate(render); } catch(e) {}
+    btn.onclick=function(){ if(panel.style.display==="none"||!panel.style.display){ panel.style.display="flex"; T.get().then(function(r){ render((r&&r.tasks)||[]); }).catch(function(){ render([]); }); } else { panel.style.display="none"; } };
+  } catch(e) { /* 不影响 Cockpit 其它功能 */ }
+})();
 </script>
 </body>
 </html>

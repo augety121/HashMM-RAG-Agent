@@ -67,4 +67,12 @@ const st2 = Q.extractStats([{ type: "remote-inbound-rtp", roundTripTime: 0.3, fr
 const decided = Q.adaptQuality(st2, 3);
 ok("差网络解析后触发降档", decided.direction === "down");
 
+console.log("=== 有界跨端质量事实 ===");
+const telemetry = Q.buildQualityTelemetry(st2, decided, { mode: "account", generation: 7, sampledAt: 1234 });
+ok("质量事实 schema 稳定", telemetry.schema === "hashmm.remote-quality.v1");
+ok("质量事实保留代次但不含原始 RTCStats", telemetry.generation === 7 && !("report" in telemetry));
+ok("差网络明确标为受限", telemetry.health.grade === "poor" && telemetry.health.label === "连接受限");
+ok("非法/无穷指标被清空", Q.buildQualityTelemetry({ rttMs: Infinity, packetLossPct: -8 }, {}, {}).metrics.rttMs === null);
+ok("遥测不暴露候选地址或 SDP", !JSON.stringify(telemetry).includes("candidate") && !JSON.stringify(telemetry).includes("sdp"));
+
 console.log("\n结果：PASS=" + pass + (process.exitCode ? "  有失败" : "  全部通过"));

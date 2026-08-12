@@ -8,10 +8,10 @@ export interface MatchRange { start: number; end: number; }
 export interface MsgHit { msgIndex: number; count: number; snippet: string; }
 export interface SearchResult { totalMatches: number; hits: MsgHit[]; flat: Array<{ msgIndex: number; matchIndex: number }>; }
 
-/** 取消息纯文本（content 始终是 string，但去掉附件占位行 "📎 …" 更干净）。 */
+/** 取消息纯文本（content 始终是 string，但去掉旧附件占位行更干净）。 */
 function msgText(m: Message): string {
   const c = typeof m?.content === "string" ? m.content : "";
-  return c.split("\n").filter((l) => !l.startsWith("📎 ")).join("\n");
+  return c.split("\n").filter((l) => !l.startsWith("\u{1F4CE} ")).join("\n");
 }
 
 /** 在 text 里找 query 的所有出现（大小写不敏感，不重叠）。 */

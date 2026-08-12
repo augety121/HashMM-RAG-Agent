@@ -75,34 +75,34 @@ function buildVerdict(r) {
 
   if (!r.reachable) {
     const n = classifyNetKind(r.netKind, r.netCode);
-    return { ok: false, level: "error", message: "✗ " + n.message, hint: n.hint, models: [], modelFound: false };
+    return { ok: false, level: "error", message: n.message, hint: n.hint, models: [], modelFound: false };
   }
   const status = Number(r.status) || 0;
   if (status >= 400) {
     const s = classifyHttpStatus(status);
-    return { ok: false, level: s.level, message: "✗ " + s.message, hint: s.hint, models, modelFound: false };
+    return { ok: false, level: s.level, message: s.message, hint: s.hint, models, modelFound: false };
   }
   // 2xx：能连、key 基本有效（/models 通常需要鉴权）
   if (r.parseFailed || !models.length) {
     // 连通且鉴权过，但没列出模型（有些自建服务 /models 返回非标准）——不算失败，给提示
     return {
       ok: true, level: "warn",
-      message: "✓ 已连通、鉴权通过，但未能列出模型清单",
+      message: "已连通、鉴权通过，但未能列出模型清单",
       hint: "该服务的 /models 返回非标准格式，模型名是否正确需以实际调用为准",
       models, modelFound: false,
     };
   }
   if (wanted) {
     const found = models.some(m => m === wanted);
-    if (found) return { ok: true, level: "ok", message: `✓ 连通正常，模型「${wanted}」可用`, hint: "", models, modelFound: true };
+    if (found) return { ok: true, level: "ok", message: `连通正常，模型「${wanted}」可用`, hint: "", models, modelFound: true };
     return {
       ok: true, level: "warn",
-      message: `✓ 连通正常，但模型「${wanted}」不在端点清单里`,
+      message: `连通正常，但模型「${wanted}」不在端点清单里`,
       hint: "请从下方可用模型中选择，或确认模型名拼写",
       models, modelFound: false,
     };
   }
-  return { ok: true, level: "ok", message: `✓ 连通正常，发现 ${models.length} 个可用模型`, hint: "", models, modelFound: false };
+  return { ok: true, level: "ok", message: `连通正常，发现 ${models.length} 个可用模型`, hint: "", models, modelFound: false };
 }
 
 module.exports = { parseModelsResponse, classifyHttpStatus, classifyNetKind, buildVerdict };
