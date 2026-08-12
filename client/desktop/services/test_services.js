@@ -222,7 +222,7 @@ const ok = (n) => { pass++; console.log("  ✔ " + n); };
   {
     const BS = require("./backend-service");
     const norm = (s) => s.replace(/[\\/]+/g, "/");
-    // 默认：安装目录下 local-backend（修"解析文档跑 C 盘"）
+    // runtime home 仍在安装目录 local-backend；ProjectVault 由独立服务管理。
     const d1 = BS.resolveBackendHome({ installDir: "D:\\hashmm", userDataDir: "C:\\u\\AppData\\Roaming\\HashMM" });
     assert.strictEqual(norm(d1), "D:/hashmm/local-backend", "默认落安装目录");
     // 配置优先（原样返回，不拼接）
@@ -234,7 +234,17 @@ const ok = (n) => { pass++; console.log("  ✔ " + n); };
   }
   ok("后端数据目录：默认安装位置 / 配置优先 / 空配置回默认 / 兜底 userData");
 
-  // 9c. 心跳判定：后端忙(超时)不算掉线，只有连接被拒(真下线)连续达阈值才弹横幅
+  // 9c. ProjectVault 默认必须跟随用户选择的安装目录，绝不写死 C 盘。
+  {
+    const PV = require("./project-vault");
+    const norm = (s) => s.replace(/[\\/]+/g, "/");
+    assert.strictEqual(norm(PV.resolveProjectVault({ installDir: "D:\\hashmm" })), "D:/hashmm/HashMM Data");
+    assert.strictEqual(PV.resolveProjectVault({ configuredDir: "E:\\HashMM-Vault", installDir: "D:\\hashmm" }),
+      require("path").resolve("E:\\HashMM-Vault"));
+  }
+  ok("ProjectVault：默认位于安装目录 HashMM Data / 用户配置优先");
+
+    // 9d. 心跳判定：后端忙(超时)不算掉线，只有连接被拒(真下线)连续达阈值才弹横幅
   {
     const H = require("./health-util");
     // 归类

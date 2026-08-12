@@ -3,16 +3,17 @@ import com.hashmm.app.ui.components.ScreenHeader
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,7 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.hypot
 import kotlin.math.min
@@ -43,7 +44,7 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
 
     Scaffold(
         topBar = {
-            ScreenHeader(title = "知识图谱", onBack = onBack) {
+            ScreenHeader(title = "知识图谱", subtitle = "实体 · 关系 · 社区 · 图谱检索", onBack = onBack) {
                 IconButton(onClick = { scale = 1f; offset = Offset.Zero; selected = null; query = ""; viewModel.load() }) { Icon(Icons.Outlined.Refresh, contentDescription = "刷新") }
             }
         },
@@ -52,10 +53,22 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
         Column(Modifier.fillMaxSize().padding(padding)) {
             // stats
             val g = ui.graph
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatChip("实体", g.entities, Modifier.weight(1f))
-                StatChip("关系", g.relations, Modifier.weight(1f))
-                StatChip("社区", g.communities, Modifier.weight(1f))
+            // V244：三个描边小卡合并为一张三格概览白卡（与工作台子页 StatTriple 同语言）
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val cells = listOf("实体" to g.entities, "关系" to g.relations, "社区" to g.communities)
+                    cells.forEachIndexed { i, (label, v) ->
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("$v", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface, letterSpacing = (-0.5).sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (i < cells.size - 1) Box(Modifier.width(1.dp).height(26.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
+                    }
+                }
             }
 
             // 选中节点的邻居集合（高亮用）
@@ -71,16 +84,32 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
                 else g.nodes.filter { it.label.contains(query, ignoreCase = true) }.take(8)
             }
             if (g.nodes.isNotEmpty()) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    placeholder = { Text("搜索实体…") },
-                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                    singleLine = true,
-                )
+                // V245：M3 描边输入框 → 白色圆角搜索条（与全 App 输入语言一致）
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Search, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Box(Modifier.weight(1f)) {
+                            if (query.isEmpty()) Text("搜索实体…", fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = query, onValueChange = { query = it }, singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurface),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.onSurface),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (query.isNotEmpty()) Text("清除", fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.clickable { query = "" })
+                    }
+                }
                 if (matches.isNotEmpty()) {
-                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
                         Column {
                             matches.forEach { node ->
                                 Text(
@@ -97,13 +126,25 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
                 }
             }
 
-            Box(Modifier.fillMaxSize().padding(horizontal = 12.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface)) {
+            Box(Modifier.fillMaxSize().padding(horizontal = 16.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surface)) {
                 when {
                     ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                    g.nodes.isEmpty() -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.Hub, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
-                        Spacer(Modifier.height(10.dp))
-                        Text(g.error ?: "暂无图谱", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    g.error != null && g.error != "图谱为空（尚未构建实体）" -> androidx.compose.foundation.layout.Box(Modifier.align(Alignment.Center)) {
+                        com.hashmm.app.ui.components.HmmStateView(
+                            kind = com.hashmm.app.ui.components.HmmStateKind.Error,
+                            icon = Icons.Outlined.Hub,
+                            title = "暂时无法读取图谱",
+                            message = g.error,
+                            onRetry = viewModel::load,
+                        )
+                    }
+                    g.nodes.isEmpty() -> androidx.compose.foundation.layout.Box(Modifier.align(Alignment.Center)) {
+                        com.hashmm.app.ui.components.HmmStateView(
+                            kind = com.hashmm.app.ui.components.HmmStateKind.Empty,
+                            icon = Icons.Outlined.Hub,
+                            title = "还没有知识图谱",
+                            message = "先在知识库导入资料并完成索引，实体、关系和社区会显示在这里。",
+                        )
                     }
                     else -> {
                         val nodeColor = MaterialTheme.colorScheme.onSurface
@@ -152,14 +193,23 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
                                     drawLine(col, a, b, strokeWidth = if (touches) 2.5f else 1.5f)
                                 }
                             }
-                            // 节点（选中时非邻居淡化）
+                            // 节点（V245：后端随机色 → 品牌灰阶按度数分层——大节点墨黑、中间灰、叶子浅灰；
+                            //        选中节点用围巾红点睛 + 墨黑外环；选中时非邻居淡化）
                             g.nodes.forEach { node ->
                                 val c = sp(node.id) ?: return@forEach
                                 val isSel = node.id == selected
                                 val isNbr = node.id in neighbors
                                 val dim = selected != null && !isSel && !isNbr
-                                val baseCol = runCatching { Color(android.graphics.Color.parseColor(node.color)) }.getOrDefault(nodeColor)
-                                val col = if (dim) baseCol.copy(alpha = 0.18f) else baseCol
+                                val baseCol = when {
+                                    node.size >= 22 -> nodeColor                     // 枢纽：墨黑
+                                    node.size >= 14 -> Color(0xFF77777D)             // 中层：中灰
+                                    else -> Color(0xFFC4C4C9)                        // 叶子：浅灰
+                                }
+                                val col = when {
+                                    isSel -> com.hashmm.app.ui.theme.BrandRed
+                                    dim -> baseCol.copy(alpha = 0.16f)
+                                    else -> baseCol
+                                }
                                 val r = (node.size.coerceIn(8, 40) / 2f) * scale.coerceIn(0.6f, 2.2f)
                                 if (isSel) drawCircle(labelColor, r + 4f, c)
                                 drawCircle(col, r, c)
@@ -171,6 +221,14 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
                                     textAlign = android.graphics.Paint.Align.CENTER
                                     color = android.graphics.Color.argb(255, (labelColor.red * 255).toInt(), (labelColor.green * 255).toInt(), (labelColor.blue * 255).toInt())
                                 }
+                                // V245：标签加白色描边打底——文字压在点/线上也不糊
+                                val halo = android.graphics.Paint().apply {
+                                    isAntiAlias = true
+                                    textAlign = android.graphics.Paint.Align.CENTER
+                                    style = android.graphics.Paint.Style.STROKE
+                                    strokeWidth = 7f
+                                    color = android.graphics.Color.WHITE
+                                }
                                 g.nodes.forEach { node ->
                                     val isSel = node.id == selected
                                     val show = isSel || node.id in neighbors || (selected == null && node.size >= 22)
@@ -178,7 +236,10 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
                                     val c = sp(node.id) ?: return@forEach
                                     paint.textSize = if (isSel) 34f else 24f
                                     paint.isFakeBoldText = isSel
+                                    halo.textSize = paint.textSize
+                                    halo.isFakeBoldText = isSel
                                     val r = (node.size.coerceIn(8, 40) / 2f) * scale.coerceIn(0.6f, 2.2f)
+                                    canvas.nativeCanvas.drawText(node.label, c.x, c.y - r - 6f, halo)
                                     canvas.nativeCanvas.drawText(node.label, c.x, c.y - r - 6f, paint)
                                 }
                             }
@@ -200,26 +261,36 @@ fun KGScreen(onBack: () -> Unit, viewModel: KGViewModel = hiltViewModel()) {
                                 }
                             }
                         }
-                        // 提示
-                        Text(
-                            if (selected == null) "双指缩放 · 拖动 · 点节点或搜索" else "已高亮关联实体",
-                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        // 提示（V245：白胶囊，不再裸字压在图上）
+                        Surface(
+                            color = MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                            shape = RoundedCornerShape(50),
                             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
-                        )
+                        ) {
+                            Text(
+                                if (selected == null) "双指缩放 · 拖动 · 点节点或搜索" else "已高亮关联实体",
+                                fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            )
+                        }
+                        // V245：视图复位钮（缩放/平移跑远后一键回中）
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = CircleShape,
+                            shadowElevation = 4.dp,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp)
+                                .clip(CircleShape)
+                                .clickable { scale = 1f; offset = Offset.Zero; selected = null },
+                        ) {
+                            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.CenterFocusStrong, contentDescription = "复位视图",
+                                    tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+                            }
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
-        }
-    }
-}
-
-@Composable
-private fun StatChip(label: String, value: Int, modifier: Modifier = Modifier) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)), modifier = modifier) {
-        Column(Modifier.padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("$value", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
-            Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

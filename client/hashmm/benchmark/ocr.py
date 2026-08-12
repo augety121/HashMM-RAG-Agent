@@ -75,21 +75,11 @@ def _get_paddle_ocr(lang: str = "en"):
 
 def _ocr_paddleocr(image_path: str | Path, lang: str = "eng") -> str:
     """PaddleOCR 2.x: better on slides than Tesseract."""
-    paddle_lang = {"eng": "en", "fra": "fr", "chi_sim": "ch"}.get(lang, "en")
     try:
-        ocr = _get_paddle_ocr(paddle_lang)
-        result = ocr.ocr(str(image_path), cls=True)
-        if not result or not result[0]:
-            return ""
-        lines = []
-        for line_info in result[0]:
-            if line_info and len(line_info) >= 2:
-                text_block = line_info[1]
-                if isinstance(text_block, (list, tuple)):
-                    lines.append(str(text_block[0]))
-                else:
-                    lines.append(str(text_block))
-        return "\n".join(lines).strip()
+        from hashmm.pipeline.ocr_provider import recognize_image
+        return str(recognize_image(
+            image_path, engine="paddleocr", language=lang,
+        ).get("text") or "").strip()
     except Exception as e:
         logger.warning("PaddleOCR failed for %s: %s", image_path, e)
         return ""

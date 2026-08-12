@@ -31,10 +31,13 @@ Usage:
                    --out HashMM-Setup.exe
 """
 import argparse
+import datetime
 import io
 import os
+import shutil
 import struct
 import sys
+import tempfile
 import zipfile
 
 # 8 bytes exactly. Distinct from the old raw format's "HMSFX1\0\0" so a new
@@ -42,22 +45,50 @@ import zipfile
 MAGIC = b"HMSFXZ1\x00"
 
 
-def build_archive(folder):
-    """DEFLATE-zip the whole folder tree into an in-memory blob.
-
-    Stored paths are forward-slash relative (zip convention); tar.exe and
-    Expand-Archive both recreate the tree correctly from these.
-    """
+def _files(folder):
     folder = os.path.abspath(folder)
+    for root, dirs, files in os.walk(folder, followlinks=False):
+        dirs.sort()
+        files.sort()
+        for name in list(dirs) + list(files):
+            full = os.path.join(root, name)
+            if os.path.islink(full):
+                raise RuntimeError("payload must not contain symlinks: %s" % full)
+        for name in files:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, folder).replace(os.sep, "/")
+            if rel.startswith("../") or rel.startswith("/") or "/../" in "/" + rel:
+                raise RuntimeError("unsafe payload path: %s" % rel)
+            yield full, rel
+
+
+def _zip_timestamp():
+    # Reproducible by default. SOURCE_DATE_EPOCH may opt into a release timestamp.
+    raw = os.environ.get("SOURCE_DATE_EPOCH", "")
+    try:
+        dt = datetime.datetime.utcfromtimestamp(int(raw)) if raw else datetime.datetime(1980, 1, 1)
+    except (ValueError, OverflowError, OSError):
+        dt = datetime.datetime(1980, 1, 1)
+    if dt.year < 1980:
+        dt = datetime.datetime(1980, 1, 1)
+    return (dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+
+
+def _write_archive(folder, target):
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=9, allowZip64=True) as archive:
+        for full, rel in _files(folder):
+            info = zipfile.ZipInfo(rel, _zip_timestamp())
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            with open(full, "rb") as source, archive.open(info, "w", force_zip64=True) as dest:
+                shutil.copyfileobj(source, dest, length=4 * 1024 * 1024)
+
+
+def build_archive(folder):
+    """Compatibility helper used by tests; release builds use the streaming path."""
     buf = io.BytesIO()
-    # compresslevel kwarg exists on Python 3.7+; HashMM packaging uses >=3.10.
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED,
-                         compresslevel=9) as z:
-        for root, _dirs, files in os.walk(folder):
-            for name in files:
-                full = os.path.join(root, name)
-                rel = os.path.relpath(full, folder).replace(os.sep, "/")
-                z.write(full, rel)
+    _write_archive(folder, buf)
     return buf.getvalue()
 
 
@@ -86,23 +117,38 @@ def main():
         print("[pack] ERROR: stub not found: %s" % a.stub, file=sys.stderr)
         return 1
 
-    with open(a.stub, "rb") as f:
-        stub = f.read()
-    zip_bytes = build_archive(a.folder)
-
-    with open(a.out, "wb") as f:
-        f.write(stub)
-        zip_offset = len(stub)
-        f.write(zip_bytes)
-        f.write(struct.pack("<q", zip_offset))   # i64 LE: where the zip starts
-        f.write(MAGIC)                            # 8-byte sentinel
+    out_dir = os.path.dirname(os.path.abspath(a.out)) or os.getcwd()
+    os.makedirs(out_dir, exist_ok=True)
+    zip_tmp = tempfile.NamedTemporaryFile(prefix="hashmm-payload-", suffix=".zip",
+                                          dir=out_dir, delete=False)
+    zip_tmp.close()
+    out_tmp = tempfile.NamedTemporaryFile(prefix="hashmm-setup-", suffix=".tmp",
+                                          dir=out_dir, delete=False)
+    out_tmp.close()
+    try:
+        _write_archive(a.folder, zip_tmp.name)
+        with open(a.stub, "rb") as stub_file, open(zip_tmp.name, "rb") as archive, open(out_tmp.name, "wb") as out:
+            shutil.copyfileobj(stub_file, out, length=4 * 1024 * 1024)
+            zip_offset = out.tell()
+            shutil.copyfileobj(archive, out, length=4 * 1024 * 1024)
+            out.write(struct.pack("<q", zip_offset))
+            out.write(MAGIC)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(out_tmp.name, a.out)
+    finally:
+        for temp_path in (zip_tmp.name, out_tmp.name):
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
 
     raw = folder_raw_size(a.folder)
     out_sz = os.path.getsize(a.out)
     pct = (100.0 * out_sz / raw) if raw else 0.0
     print("[pack] payload raw %.1f MB  ->  exe %.1f MB  (%.0f%% of raw; "
           "zip blob %.1f MB)" % (raw / 1048576.0, out_sz / 1048576.0, pct,
-                                 len(zip_bytes) / 1048576.0))
+                                 (out_sz - zip_offset - 16) / 1048576.0))
     print("[pack] wrote %s" % a.out)
     return 0
 

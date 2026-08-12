@@ -63,7 +63,7 @@ function registerIpc() {
         installDir: t.installDir, registryKey: t.registryKey,
         shortcuts: t.shortcuts, exeName: path.basename(process.execPath),
         // 用户数据夹（默认在安装目录内）卸载时原地保留：工作区 + 后端解析数据
-        preserveDirs: ["HashMM Files", "local-backend"],
+          preserveDirs: ["HashMM Files", "HashMM Data", "local-backend"],
       });
       const batPath = path.join(os.tmpdir(), "hashmm-uninstall-" + Date.now() + ".bat");
       fs.writeFileSync(batPath, bat, "utf8");

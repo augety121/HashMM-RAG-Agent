@@ -66,6 +66,31 @@ def evaluate_retrieval(results: list, query: str, min_results: int = 2,
     return {"label": label, "confidence": conf, "n": n, "coverage": round(cov, 4)}
 
 
+_MQE_SYSTEM = (
+    "你是查询分解助手。把用户的检索问题拆成 {n} 个更具体、可【独立理解】的子问题，"
+    "覆盖原问题的不同角度，用于从知识库分别检索。每行输出一个子问题，不要编号、不要解释。"
+)
+
+
+def _decompose_subqueries(query: str, llm_fn: Callable, n: int = 3) -> list[str]:
+    """SAGE 风格多查询扩展（MQE，适配自 sage-research）：把一个问题拆成 n 个不同角度的子问题，
+    覆盖面比"单句改写"更广 → 检索召回更高。拆出的子问题会随既有的并行子查询检索一起被检索+融合。
+    永不抛错（失败返回空，调用方退回启发式改写，零回归）。"""
+    try:
+        prompt = f"{_MQE_SYSTEM.format(n=n)}\n\n用户查询: {query}\n输出:"
+        resp = llm_fn(prompt)
+        resp = resp if isinstance(resp, str) else str(resp)
+        subs: list[str] = []
+        for line in resp.strip().split("\n"):
+            s = line.strip().lstrip("0123456789.、）)-· ").strip()
+            if s and s != query and len(s) >= 2:
+                subs.append(s)
+        return subs[:n]
+    except Exception as e:
+        log_suppressed(logger, e)
+        return []
+
+
 def rewrite_query(query: str, llm_fn: Callable | None = None) -> list[str]:
     """Produce alternative query phrasings. Heuristic rewrites always; an optional
     LLM rewrite is appended when ``llm_fn`` is provided. Never raises."""
@@ -88,16 +113,10 @@ def rewrite_query(query: str, llm_fn: Callable | None = None) -> list[str]:
                 parts = [p.strip(_PUNCT + " ") for p in q.split(sep)]
                 out.extend(p for p in parts if p and len(p) >= 2)
                 break
-        # 3) optional LLM rewrite (injected; e.g. local Qwen)
+        # 3) SAGE 风格多角度分解（MQE，注入 llm_fn 时）：把问题拆成多个不同角度、可独立检索的子问题，
+        #    覆盖面比"单句改写"更广 → 召回更高。这些子问题随既有并行子查询检索一起被检索+融合。
         if llm_fn is not None:
-            try:
-                prompt = f"把下面的问题改写成更利于检索的一句话（只输出改写后的问题，不要解释）：\n{q}"
-                resp = llm_fn(prompt)
-                resp = (resp if isinstance(resp, str) else str(resp)).strip().strip(_PUNCT)
-                if resp and resp != q:
-                    out.append(resp)
-            except Exception as e:
-                log_suppressed(logger, e)
+            out.extend(_decompose_subqueries(q, llm_fn, n=3))
     except Exception as e:
         log_suppressed(logger, e)
     # dedup, drop anything equal to the original

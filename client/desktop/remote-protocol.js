@@ -124,6 +124,12 @@ function makeInput(action, fields) {
 /** 校验一条输入数据是否合法可执行。返回 { ok, reason }。 */
 function validateInput(d) {
   if (!d || typeof d !== "object") return { ok: false, reason: "no_data" };
+  // V257: 设备控制（重启/关机等）——App 系统面板此前发出即被拒（"装饰按钮"根因）。
+  // 白名单 cmd + 独立形状校验，通过后由 main.js 的 device 分支执行（不进 CU 驱动）。
+  if (d.action === "device") {
+    if (!DEVICE_ACTIONS.has(String(d.cmd || ""))) return { ok: false, reason: "bad_device_cmd" };
+    return { ok: true, data: { action: "device", cmd: String(d.cmd) } };
+  }
   if (!INPUT_ACTIONS.has(d.action)) return { ok: false, reason: "bad_action" };
   const needXY = ["left_click", "right_click", "middle_click", "double_click",
     "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up"];

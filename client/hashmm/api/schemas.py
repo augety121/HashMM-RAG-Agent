@@ -1,6 +1,8 @@
 """Pydantic request/response schemas — extracted from server.py v29."""
 from __future__ import annotations
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -29,6 +31,8 @@ class ModelCreateRequest(BaseModel):
     model_name: str = ""
     temperature: float = 0.1
     max_tokens: int = 4096
+    wire_api: str = ""
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelUpdateRequest(BaseModel):
@@ -39,6 +43,8 @@ class ModelUpdateRequest(BaseModel):
     model_name: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    wire_api: str | None = None
+    config: dict[str, Any] | None = None
 
 
 class KBRequest(BaseModel):

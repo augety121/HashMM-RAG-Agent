@@ -19,6 +19,31 @@ from hashmm.utils import get_logger, log_suppressed
 
 logger = get_logger("hashmm.evolution.episodic")
 
+# ── V308：策略提示的标记与阈值（单一事实源）────────────────────────────
+# 用【文字】而非 emoji：本项目在 Windows GBK 控制台/日志下有真实的非 ASCII 编码
+# 故障史（见 tests/test_v88_requirements_ascii.py），文字标记不受此影响。
+# 测试直接 import 这些常量断言，避免实现与测试各写一份字面量导致静默漂移。
+MARK_GOOD = "[好评]"        # 高 reward / 用户点赞 → 正面参考
+MARK_BAD = "[待改进]"       # 低 reward / 用户点踩 → 前车之鉴
+MARK_NEUTRAL = "[中性]"     # 无明显信号
+
+REWARD_GOOD_MIN = 0.7       # reward ≥ 此值 → MARK_GOOD
+REWARD_BAD_MAX = 0.35       # 0 < reward < 此值 → MARK_BAD
+
+
+def _text_sim(a: str, b: str) -> float:
+    """查询相似度（0~1）：中文走 2-gram 交并比，英文/混合同样适用（字符级）。
+
+    V315：旧实现用 `query.lower().split()` 取词——中文没有空格，永远切成一整块，
+    关键词通道在中文产品里等于没有。字符 2-gram 对中英文都稳。
+    """
+    a, b = (a or "").strip().lower(), (b or "").strip().lower()
+    if not a or not b:
+        return 0.0
+    ga = {a[i:i + 2] for i in range(len(a) - 1)} or {a}
+    gb = {b[i:i + 2] for i in range(len(b) - 1)} or {b}
+    inter = len(ga & gb)
+    return inter / max(1, min(len(ga), len(gb)))   # 覆盖率口径：短句被长句包含 → 高分
 
 class EpisodicMemory:
     """Stores and retrieves interaction episodes for strategy selection."""
@@ -180,6 +205,14 @@ class EpisodicMemory:
 
         entities = self._extract_entities(query)
         insight = self._generate_insight(query, strategy, outcome, feedback)
+        # V315：把 answer 的做法摘要并入 insight——可迁移的知识是「怎么做的」
+        # （如"用 awk 统计后 cat 逐行核对"）。此前 answer 只存长度、insight 常是
+        # "策略=X" 这类零信息串，get_strategy_hint 注入后对模型几乎没用。
+        if (answer or "").strip():
+            _head = " ".join(str(answer).split())[:120]
+            _how = (f"有效做法：{_head}" if outcome == "success"
+                    else f"前车之鉴：{_head}" if outcome == "failure" else _head)
+            insight = f"{_how}（{insight}）" if insight else _how
         alen = answer_length if answer_length is not None else len(answer)
         eid = (episode_id or uuid.uuid4().hex[:12])
 
@@ -229,42 +262,46 @@ class EpisodicMemory:
             scored = []
             for row in rows:
                 d = dict(row)
-                score = 0.0
+                # ── 相关性（与 reward 无关）：实体重叠 + 文本相似 + 新鲜度 ──
+                rel = 0.0
 
                 # Entity overlap
                 ep_entities = json.loads(d.get("key_entities", "[]"))
                 overlap = set(entities) & set(ep_entities)
-                score += len(overlap) * 2.0
+                rel += len(overlap) * 2.0
 
-                # Keyword overlap
-                q_words = set(query.lower().split())
-                ep_words = set(d["query"].lower().split())
-                word_overlap = len(q_words & ep_words)
-                score += min(word_overlap * 0.3, 2.0)
-
-                # Positive feedback bonus
-                if d.get("feedback") == "up":
-                    score += 1.5
-                elif d.get("feedback") == "down":
-                    score -= 1.0
-
-                # V103.90: 奖励驱动——高 reward 经验更值得复用，低 reward 降权。
-                # reward 已归一到 0~1（旧行缺省 0，等价中性偏低，不会喧宾夺主）。
-                try:
-                    rwd = float(d.get("reward") or 0.0)
-                except Exception:
-                    rwd = 0.0
-                score += (rwd - 0.5) * 2.0          # 0.5 中性=0；1.0→+1.0；0.0→-1.0
+                # V315 文本相似：中文用 2-gram（旧版 query.lower().split() 按空格切，
+                # 中文查询恒无重叠 → 关键词通道在中文产品里形同虚设，只剩实体能命中）。
+                rel += min(_text_sim(query, d.get("query", "")) * 3.0, 3.0)
 
                 # Recency bonus (last 24h)
                 age_hours = (time.time() - d.get("created_at", 0)) / 3600
                 if age_hours < 24:
-                    score += 0.5
+                    rel += 0.5
 
-                if score > 0.5:
-                    d["relevance_score"] = score
-                    d["reward"] = rwd
-                    scored.append(d)
+                try:
+                    rwd = float(d.get("reward") or 0.0)
+                except Exception:
+                    rwd = 0.0
+
+                # ── 准入门只看相关性 ──
+                # V315：此前 reward 参与准入（score += (rwd-0.5)*2），reward=0 的失败经验
+                # 直接被扣 1.0 压到阈值下 → 永远召回不到，MARK_BAD「前车之鉴」渲染分支
+                # 形同虚设。而"同一类任务上次这么做失败了"恰恰是最该复用的经验。
+                if rel <= 0.5:
+                    continue
+
+                # ── 排序分：相关性 + 反馈/奖励（高分优先，但低分不再被挡在门外）──
+                score = rel
+                if d.get("feedback") == "up":
+                    score += 1.5
+                elif d.get("feedback") == "down":
+                    score -= 1.0
+                score += (rwd - 0.5) * 2.0          # 0.5 中性=0；1.0→+1.0；0.0→-1.0
+
+                d["relevance_score"] = score
+                d["reward"] = rwd
+                scored.append(d)
 
             scored.sort(key=lambda x: x["relevance_score"], reverse=True)
             return scored[:limit]
@@ -278,6 +315,11 @@ class EpisodicMemory:
 
         V103.90: 奖励感知——高 reward 经验作正面参考、低 reward 作前车之鉴，
         让"越用越强"既学好经验也避坑。
+
+        V308：标记文本与阈值抽为模块常量（MARK_GOOD / MARK_BAD / MARK_NEUTRAL、
+        REWARD_GOOD_MIN / REWARD_BAD_MAX），测试直接 import 这些常量断言。
+        此前实现用文字标记、测试却断言 emoji（✅/⚠️），两边漂移且因该测试文件
+        顶层 sys.exit 杀进程而长期不可见。共享常量后，这类漂移在结构上不可能再发生。
         """
         episodes = self.recall(user_id, query, limit=2)
         if not episodes:
@@ -292,16 +334,21 @@ class EpisodicMemory:
             except Exception:
                 rwd = 0.0
             # 标记优先看显式反馈，其次看 reward 高低。
-            if ep.get("feedback") == "up" or rwd >= 0.7:
-                mark = "✅"
-            elif ep.get("feedback") == "down" or (0 < rwd < 0.35):
-                mark = "⚠️"
+            # V315：reward 恰为 0.0 的【显式失败】此前落在 `0 < rwd < BAD_MAX` 开区间外
+            # 被标成"中性"——而它是最该避坑的一类。用 outcome=="failure" 消歧；
+            # 老数据（reward 缺省 0 且 outcome 未知）仍按中性，兼容不破。
+            if ep.get("feedback") == "up" or rwd >= REWARD_GOOD_MIN:
+                mark = MARK_GOOD
+            elif (ep.get("feedback") == "down" or (0 < rwd < REWARD_BAD_MAX)
+                  or (str(ep.get("outcome") or "") == "failure" and rwd < REWARD_BAD_MAX)):
+                mark = MARK_BAD
             else:
-                mark = "—"
+                mark = MARK_NEUTRAL
             if insight:
                 hints.append(f"{mark} 类似问题经验：{insight}")
             elif strategy:
-                tip = "（效果好，可复用）" if mark == "✅" else "（上次效果欠佳，建议调整）" if mark == "⚠️" else ""
+                tip = ("（效果好，可复用）" if mark == MARK_GOOD
+                       else "（上次效果欠佳，建议调整）" if mark == MARK_BAD else "")
                 hints.append(f"{mark} 上次用了「{strategy}」策略{tip}")
 
         if hints:

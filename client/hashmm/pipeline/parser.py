@@ -80,11 +80,13 @@ class DocumentParser:
     """
 
     def __init__(self, output_dir: str = "data/docs",
-                 noise_filter: NoiseFilter | None = None):
+                 noise_filter: NoiseFilter | None = None,
+                 *, allow_inline_ocr: bool = True):
         self.output_dir = Path(output_dir)
         self.noise_filter = noise_filter or NoiseFilter()
         self.quality_assessor = QualityAssessor()
         self.preprocessor = TextPreprocessor()
+        self.allow_inline_ocr = bool(allow_inline_ocr)
 
     def parse(self, filepath: str | Path) -> ParsedDocument:
         """Parse any supported document format."""
@@ -289,6 +291,9 @@ class DocumentParser:
         
         # All parsers failed or produced garbled text
         # Last resort: OCR (render pages to images → PaddleOCR/Tesseract)
+        if not self.allow_inline_ocr:
+            doc.quality.issues.append("document requires durable OCR")
+            return doc
         try:
             blocks, parser = self._pdf_ocr(filepath, doc_id, doc_dir)
             if blocks and not self._is_text_garbled(blocks):
@@ -570,6 +575,8 @@ class DocumentParser:
 
     def _ocr_image(self, image_path: str) -> str:
         """#3: OCR an image using PaddleOCR or Tesseract (if available)."""
+        if not self.allow_inline_ocr:
+            return ""
         # Try PaddleOCR
         try:
             from paddleocr import PaddleOCR

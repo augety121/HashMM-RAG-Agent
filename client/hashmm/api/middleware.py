@@ -11,6 +11,35 @@ from collections import defaultdict
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
+from starlette.concurrency import run_in_threadpool
+
+
+class AsyncIdentityMiddleware:
+    """Verify bearer tokens off the asyncio event loop.
+
+    Legacy Supabase projects may require one network lookup on the first token
+    verification.  Running that synchronous compatibility path in a worker
+    prevents one device login from stalling health checks and every other user.
+    The result is stored in request state and reused by all route guards.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope, receive=receive)
+        auth = request.headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else request.query_params.get("token", "")
+        state = scope.setdefault("state", {})
+        state["auth_checked"] = True
+        state["auth_user"] = None
+        if token:
+            from hashmm.api.auth import verify_any_token
+            state["auth_user"] = await run_in_threadpool(verify_any_token, token)
+        await self.app(scope, receive, send)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -19,19 +48,78 @@ from starlette.responses import Response, JSONResponse
 
 logger = logging.getLogger("hashmm")
 
-# 高频低价值请求路径（远程中继推/拉帧、心跳、远程状态轮询）——日志里滤掉，避免刷屏。
-_NOISY_PATH_SUBSTRINGS = ("/api/remote/relay/", "/api/health", "/api/remote/status")
+# 高频低价值请求路径（远程中继推/拉帧、心跳、远程状态轮询、App 轮询会话/消息/取照片）——
+# 日志里滤掉，避免刷屏淹没有用信息。注意：SLOW(>5s) 与错误仍会照常记，只是过滤掉常规快速 200。
+_NOISY_PATH_SUBSTRINGS = (
+    "/api/remote/relay/", "/api/health", "/api/remote/status",
+    "/messages", "/api/phone-file-requests", "/api/corpus/stats", "/api/auth/supabase-config",
+    "/desktop-updates", "/api/file-requests",
+)
+
+import re as _re
+# 高频「轮询型」GET（客户端每隔几秒拉会话列表/单会话/隐私模式/派活队列/runner 心跳）——只在 GET 时滤掉，POST 等照常记。
+_POLL_GET_RE = _re.compile(r"^/api/(conversations(/[^/]+)?|privacy-mode|dispatch/(poll|runners(?:/heartbeat)?)"
+                           r"|notifications|gw/(state|stream|rules)|deepsearch/status|loops)$")  # V281 扩容：页面轮询全收编
+# uvicorn access 行形如 ... "GET /api/conversations HTTP/1.1" 200 —— 匹配这些轮询 GET 行
+_NOISY_ACCESS_RE = _re.compile(r'"GET /api/(conversations(/[A-Za-z0-9_-]+)?|privacy-mode|dispatch/(poll|runners(?:/heartbeat)?))[ ?]')
 
 def _is_noisy_path(path: str) -> bool:
     return any(s in path for s in _NOISY_PATH_SUBSTRINGS)
 
+def _is_noisy_poll(method: str, path: str) -> bool:
+    return method == "GET" and bool(_POLL_GET_RE.match(path))
+
 class _NoisyAccessFilter(logging.Filter):
-    """丢弃 uvicorn access 日志里的高频中继/心跳请求行。"""
+    """丢弃 uvicorn access 日志里的高频中继/心跳/轮询请求行。"""
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            return not _is_noisy_path(record.getMessage())
+            msg = record.getMessage()
+            return not (_is_noisy_path(msg) or _NOISY_ACCESS_RE.search(msg))
         except Exception:
             return True
+
+
+# ── V218: 高频请求聚合（治"重复日志淹没关键信息"，同时不把问题静音成看不见）──
+# 之前噪声路径是"直接不打"：200 时清爽，但一旦这些路径持续 404（如后端旧版缺 /api/dispatch），
+# 问题也被吞掉了。改为聚合：同 (method, path, status) 首条照常打印（带聚合提示），
+# 之后 60 秒窗口内只累计；窗口翻转打一条 ×N 汇总；状态码变化（404→200 恢复）立即冲刷——
+# 刷屏没了，异常与恢复各只占一行，且永远可见。
+_AGG_WINDOW_S = 60.0
+_AGG: dict = {}   # key=(method,path) → {"status","count","first_ts","dur"}
+
+# ── V700: 纯心跳/轮询路径成功响应 **完全静默**（连聚合行都不打）────────────
+# 用户实测：relay push / dispatch poll / file-requests 等每分钟都出一条 [聚合]，
+# 依旧会把重要日志顶出屏幕。这些路径成功时没有任何信息量——改为 2xx/304 直接不打；
+# 一旦非 2xx（404/500…）仍走下面的聚合逻辑：首条照常打印 + 状态变化立即冲刷，
+# 异常与恢复永远可见（不违背 V218"不把问题静音"的设计）。
+_HEARTBEAT_RE = _re.compile(
+    r"^/api/(remote/relay/[^/]+/push|dispatch/(poll|runners(?:/heartbeat)?)|file-requests/pending"
+    r"|phone-file-requests|health|notifications|gw/(state|stream|rules)"
+    r"|conversations(?:/[A-Za-z0-9_-]+(?:/messages)?)?|auth/me"
+    r"|projects|runtime/capabilities|plugins|kb/documents|okf/packs|user-work/routines"
+    r"|v2/workspaces/personal/(snapshot|stream)|work-runs(?:/stream|/[^/]+/(?:workspace|stream))?"
+    r"|selftest/job/[A-Za-z0-9_-]+|deepsearch/status|loops)$"
+    # Successful state polling is silent; slow/errors remain visible.
+)
+
+
+def _agg_log(method: str, path: str, status: int, dur: int) -> None:
+    if (200 <= status < 300 or status == 304) and _HEARTBEAT_RE.match(path):
+        return
+    now = time.time()
+    key = (method, path)
+    st = _AGG.get(key)
+    if st is None or st["status"] != status:
+        # 首见 / 状态变化：先冲刷旧计数，再照常打一条并开新窗口
+        if st is not None and st["count"] > 1:
+            logger.info(f"[聚合] {method} {path} → {st['status']} ×{st['count']}（近{int(now - st['first_ts'])}s）")
+        logger.info(f"{method} {path} → {status} ({dur}ms)" + ("" if st is None else "（状态变化）"))
+        _AGG[key] = {"status": status, "count": 1, "first_ts": now, "dur": dur}
+        return
+    st["count"] += 1
+    if now - st["first_ts"] >= _AGG_WINDOW_S:
+        logger.info(f"[聚合] {method} {path} → {status} ×{st['count']}（近{int(now - st['first_ts'])}s，最近 {dur}ms）")
+        _AGG[key] = {"status": status, "count": 0, "first_ts": now, "dur": dur}
 
 def setup_logging(level: str = "INFO"):
     """Configure structured logging."""
@@ -53,6 +141,9 @@ def setup_logging(level: str = "INFO"):
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     # 远程中继推/拉帧、心跳是每秒数次的高频请求，从 uvicorn access 日志里滤掉，避免刷屏淹没真正有用的日志
     _ua = logging.getLogger("uvicorn.access")
+    # V281：uvicorn access 与 hashmm 请求行完全重复（且少了耗时/请求ID），整体关闭；
+    # 5xx/异常仍由 hashmm ERROR 行与 uvicorn.error 通道记录，不影响排障。
+    _ua.disabled = True
     if not any(isinstance(f, _NoisyAccessFilter) for f in _ua.filters):
         _ua.addFilter(_NoisyAccessFilter())
 
@@ -125,7 +216,12 @@ class TraceMiddleware(BaseHTTPMiddleware):
                 logger.warning("SLOW " + msg)
             elif status >= 500:
                 logger.error(msg)
-            elif not _is_noisy_path(path):   # 中继推/拉帧、心跳等高频请求不刷屏（仅慢/错时记）
+            elif (_is_noisy_path(path)
+                  or _is_noisy_poll(request.method, path)
+                  or bool(_HEARTBEAT_RE.match(path))):
+                # V218: 高频中继/心跳/轮询 → 聚合打印（含 404 等异常态，不再静默吞掉）
+                _agg_log(request.method, path, status, dur)
+            else:
                 logger.info(msg)
 
         response.headers["X-Request-ID"] = request_id
@@ -407,6 +503,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.max_per_minute = max_per_minute
         self.max_per_hour = max_per_hour
         self.minute_counts: dict[str, list[float]] = defaultdict(list)
+        self.hour_counts: dict[str, list[float]] = defaultdict(list)   # V306 修 REM-13：小时窗真正执行
         self._redis = None
         self._redis_tried = False
 
@@ -423,12 +520,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return self._redis
 
     def _identity(self, request: Request) -> str:
-        """Prefer the authenticated user; fall back to client IP."""
+        """限流分桶身份：优先按用户，退回客户端 IP。
+
+        ★ 修"桌面端点啥都掉线"：此前这里调 get_current_user() 做**完整令牌校验**来取 uid，
+        而校验对旧版 HS256 的 Supabase 令牌是一次到 /auth/v1/user 的**网络请求**。桌面端后台
+        轮询极多 → 每个请求都在限流中间件里再打一次 Supabase → 把 Supabase 校验接口打到限流 →
+        真正的鉴权随之失败(401) → 前端登出。分桶身份**不需要验签**（伪造 sub 只会和别人共用
+        限流桶，不构成安全问题），这里改成**本地解 JWT 的 sub**（零网络），彻底移除这条热路径上
+        的网络校验。解不出就退回按 IP。"""
         try:
-            from hashmm.api.auth import get_current_user
-            u = get_current_user(request)
-            if u and u.get("uid"):
-                return f"u:{u['uid']}"
+            auth = request.headers.get("Authorization", "")
+            tok = auth[7:] if auth.startswith("Bearer ") else (request.query_params.get("token") or "")
+            if tok and tok.count(".") == 2:
+                import base64 as _b64, json as _json
+                seg = tok.split(".")[1]
+                seg += "=" * (-len(seg) % 4)
+                payload = _json.loads(_b64.urlsafe_b64decode(seg).decode("utf-8", "ignore"))
+                sub = payload.get("sub") or payload.get("uid")
+                if sub:
+                    # 与 verify 后的 uid 形态对齐：Supabase 身份加 sb_ 前缀（HashMM 自带账号 uid 不含点分 sub，原样）
+                    uid = sub if str(sub).startswith("sb_") else (f"sb_{sub}" if payload.get("iss") or payload.get("aud") == "authenticated" else sub)
+                    return f"u:{uid}"
         except Exception as _e:
             log_suppressed(logger, _e)
         ip = request.client.host if request.client else "unknown"
@@ -448,8 +560,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             _ip = request.client.host if request.client else ""
             if _ip in ("127.0.0.1", "::1", "localhost"):
                 return await call_next(request)
-        # 评测进程显式标记（gate 带的 header）也豁免。
-        if request.headers.get("X-HashMM-Eval") == "1":
+        # 评测进程豁免（V306 修 BACK-P1-02）：不再认任何客户端自报的 "X-HashMM-Eval: 1"
+        # ——那等于给公网一个免费绕过开关。改为必须匹配服务端密钥 HASHMM_EVAL_TOKEN
+        # （"服务间认证身份"）；未设该密钥时此 header 一律无效。本地评测已由上面的回环豁免覆盖，
+        # 远端评测需在服务端与 gate 两侧配置同一 HASHMM_EVAL_TOKEN。
+        _eval_tok = _os.environ.get("HASHMM_EVAL_TOKEN", "")
+        if _eval_tok and request.headers.get("X-HashMM-Eval") == _eval_tok:
             return await call_next(request)
 
         # Skip health/metrics + admin GET (read-only, no abuse risk)
@@ -463,20 +579,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         key = self._identity(request)
         now = time.time()
 
+        def _limited(retry_after: int):
+            return JSONResponse(
+                {"ok": False, "error": {"code": "RATE_LIMITED", "message": "请求过于频繁，请稍后再试"}},
+                status_code=429, headers={"Retry-After": str(max(1, int(retry_after)))},
+            )
+
         # ── Redis sliding window (preferred: shared across workers, survives restart) ──
         r = self._get_redis()
         if r is not None:
             try:
+                # 分钟窗
                 rk = f"ratelimit:min:{key}"
                 cnt = r.incr(rk)
                 if cnt == 1:
                     r.expire(rk, 60)
                 if cnt > self.max_per_minute:
-                    return JSONResponse(
-                        {"ok": False, "error": {"code": "RATE_LIMITED",
-                         "message": "请求过于频繁，请稍后再试"}},
-                        status_code=429,
-                    )
+                    return _limited(r.ttl(rk) or 60)
+                # 小时窗（V306：此前只存不查，现真正执行）
+                hk = f"ratelimit:hr:{key}"
+                hcnt = r.incr(hk)
+                if hcnt == 1:
+                    r.expire(hk, 3600)
+                if hcnt > self.max_per_hour:
+                    return _limited(r.ttl(hk) or 3600)
                 return await call_next(request)
             except Exception:
                 pass  # fall back to in-memory
@@ -484,11 +610,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # ── In-memory fallback ──
         self.minute_counts[key] = [t for t in self.minute_counts[key] if now - t < 60]
         if len(self.minute_counts[key]) >= self.max_per_minute:
-            return JSONResponse(
-                {"ok": False, "error": {"code": "RATE_LIMITED", "message": "请求过于频繁，请稍后再试"}},
-                status_code=429,
-            )
+            return _limited(60 - (now - min(self.minute_counts[key])) if self.minute_counts[key] else 60)
+        self.hour_counts[key] = [t for t in self.hour_counts[key] if now - t < 3600]
+        if len(self.hour_counts[key]) >= self.max_per_hour:
+            return _limited(3600 - (now - min(self.hour_counts[key])) if self.hour_counts[key] else 3600)
         self.minute_counts[key].append(now)
+        self.hour_counts[key].append(now)
         return await call_next(request)
 
 

@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException
-from hashmm.api.auth import require_admin
+from hashmm.api.auth import require_admin, require_auth
+from hashmm.access_control import (
+    ACLConfigurationError,
+    allowed_source_ids,
+    load_default_acl,
+)
 from hashmm.kg.storage import KGStorage
 from hashmm.utils import get_logger, log_suppressed
 
@@ -14,10 +19,57 @@ router = APIRouter(prefix="/api/kg", tags=["knowledge-graph"])
 _kg_storage = KGStorage()
 
 
+def _source_scope(user: dict) -> set[str] | None:
+    if user.get("role") == "admin":
+        return None
+    try:
+        acl = load_default_acl()
+    except ACLConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="知识图谱访问策略不可用") from exc
+    from hashmm.retriever_bridge import get_pipeline
+    pipeline = get_pipeline()
+    corpus = list(
+        getattr(getattr(pipeline, "bm25_index", None), "_corpus", []) or []
+    ) if pipeline else []
+    return allowed_source_ids(
+        corpus,
+        principal=str(user.get("uid") or ""),
+        is_admin=False,
+        acl=acl,
+    )
+
+
 @router.get("/stats")
-async def kg_stats():
-    """Get knowledge graph statistics (public, no auth required)."""
-    return _kg_storage.get_stats()
+async def kg_stats(request: Request):
+    """Get knowledge graph statistics scoped to the authenticated principal."""
+    user = require_auth(request)
+    source_scope = _source_scope(user)
+    if source_scope is None:
+        stats = dict(_kg_storage.get_stats() or {})
+    else:
+        kg, _ = _kg_storage.load()
+        vis = kg.to_vis_data(max_nodes=max(200, kg.num_entities), allowed_source_ids=source_scope)
+        stats = {
+            "entities": len(vis["nodes"]),
+            "relations": len(vis["edges"]),
+            "scope": "principal",
+        }
+    try:
+        from hashmm.retrieval.graph_engineering import enabled, evidence_limit
+        stats["graph_engineering"] = {
+            "enabled": enabled(),
+            "ready": bool(enabled() and int(stats.get("entities", 0) or 0) > 0),
+            "mode": "query_time_evidence_graph",
+            "evidence_limit": evidence_limit(),
+            "evidence_preserving": True,
+            "source_join": "chunk_id",
+        }
+    except Exception as e:
+        log_suppressed(logger, e)
+        stats["graph_engineering"] = {
+            "enabled": False, "ready": False, "evidence_preserving": True,
+        }
+    return stats
 
 
 @router.get("/health")
@@ -50,15 +102,29 @@ async def kg_resolve(request: Request):
 
 
 @router.get("/graph")
-async def kg_graph(max_nodes: int = 200):
-    """Get graph data for visualization (public)."""
+async def kg_graph(request: Request, max_nodes: int = 200):
+    """Get graph data without crossing owner/ACL boundaries."""
+    user = require_auth(request)
+    source_scope = _source_scope(user)
     try:
         kg, _ = _kg_storage.load()
         if kg.num_entities == 0:
             return {"nodes": [], "edges": [], "stats": kg.stats()}
-        vis = kg.to_vis_data(max_nodes=max_nodes)
-        vis["stats"] = kg.stats()
+        vis = kg.to_vis_data(
+            max_nodes=max(1, min(int(max_nodes), 1000)),
+            allowed_source_ids=source_scope,
+        )
+        if source_scope is None:
+            vis["stats"] = kg.stats()
+        else:
+            vis["stats"] = {
+                "entities": len(vis["nodes"]),
+                "relations": len(vis["edges"]),
+                "scope": "principal",
+            }
         return vis
+    except HTTPException:
+        raise
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
@@ -341,3 +407,28 @@ async def kg_retriever_stats():
         return retriever.stats()
     except Exception as e:
         return {"available": False, "error": str(e)}
+
+@router.post("/connectivity/repair")
+async def kg_connectivity_repair(request: Request):
+    """V249 接线：图谱一键修复（hashmm/kg/kg_connectivity——此前只有 CLI、默认关、无任何入口）。
+    在已存图上原地改善：① 概念去噪（删泛化 CONCEPT 噪点）② 文档级共现补边（并查集，
+    只加能合并连通块的边）。不调 LLM、不重建、秒级；专治"实体多关系少、图碎成几百块"。
+    返回前后 实体/关系/连通块 对比，前端据此展示成效。"""
+    require_admin(request)
+    try:
+        from hashmm.kg.kg_connectivity import (
+            drop_generic_concepts, add_cooccurrence_edges, build_chunk_to_doc, _components,
+        )
+        kg, comm = _kg_storage.load()
+        before = {"entities": kg.num_entities, "relations": kg.num_relations, "components": _components(kg)}
+        dropped = drop_generic_concepts(kg)
+        chunk_to_doc = build_chunk_to_doc()
+        added = add_cooccurrence_edges(kg, level="doc", chunk_to_doc=chunk_to_doc)
+        _kg_storage.save(kg, comm)
+        after = {"entities": kg.num_entities, "relations": kg.num_relations, "components": _components(kg)}
+        return {"ok": True, "before": before, "after": after,
+                "dropped_concepts": int(dropped.get("dropped", 0)),
+                "edges_added": int(added.get("edges_added", 0)),
+                "level": added.get("level", "doc")}
+    except Exception as e:
+        raise HTTPException(500, f"修复失败：{e}")

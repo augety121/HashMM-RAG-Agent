@@ -233,6 +233,13 @@ class AgenticRetriever:
             return list(res) if res else []
         except Exception as e:
             log_suppressed(logger, e)
+            errors = getattr(self, "_search_errors", None)
+            if isinstance(errors, list):
+                errors.append({
+                    "query": str(q or "")[:240],
+                    "type": type(e).__name__,
+                    "message": str(e)[:240],
+                })
             return []
 
     def retrieve(self, query: str) -> dict:
@@ -250,6 +257,7 @@ class AgenticRetriever:
         要喂的「逐步决策」数据；纯记录，不影响检索行为。
         """
         seen: dict[str, dict] = {}
+        self._search_errors: list[dict[str, str]] = []
         subqueries: list[str] = []
         stopped = "max_hops"
         last_conf: float | None = None
@@ -272,12 +280,13 @@ class AgenticRetriever:
         subqueries.append(query)
         _absorb(self._search(query))
         last_conf = self._confidence(query, list(seen.values()))
-        _log_hop(0, query, "seed")
+        _log_hop(0, query, "seed_error" if self._search_errors else "seed")
         # 闸：开局证据就已足够强 → 直接收手（最省的情况，简单问题不必多跳）。
         if last_conf is not None and last_conf >= self.gate_high:
             return {"sources": list(seen.values())[: self.max_sources], "n_hops": 1,
                     "subqueries": subqueries, "stopped_reason": "confident",
-                    "confidence": last_conf, "trace": trace}
+                    "confidence": last_conf, "trace": trace,
+                    "errors": list(self._search_errors)}
 
         hop = 1
         while hop < self.max_hops:
@@ -333,4 +342,5 @@ class AgenticRetriever:
         sources = list(seen.values())[: self.max_sources]
         return {"sources": sources, "n_hops": len(subqueries),
                 "subqueries": subqueries, "stopped_reason": stopped,
-                "confidence": last_conf, "trace": trace}
+                "confidence": last_conf, "trace": trace,
+                "errors": list(self._search_errors)}

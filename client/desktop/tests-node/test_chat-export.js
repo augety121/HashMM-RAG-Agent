@@ -23,8 +23,8 @@ const conv = {
 console.log("=== toMarkdown ===");
 const md = E.toMarkdown(conv);
 ok("含标题", md.includes("# 测试对话"));
-ok("含用户消息", md.includes("你好") && md.includes("🧑 你"));
-ok("含助手消息", md.includes("🤖 助手") && md.includes("有什么可以帮你"));
+ok("含用户消息", md.includes("你好") && md.includes("## 你"));
+ok("含助手消息", md.includes("## 助手") && md.includes("有什么可以帮你"));
 ok("默认不含 system", !md.includes("系统提示"));
 ok("含 system 选项", E.toMarkdown(conv, { includeSystem: true }).includes("系统提示"));
 ok("多模态文本提取", md.includes("看这张图"));

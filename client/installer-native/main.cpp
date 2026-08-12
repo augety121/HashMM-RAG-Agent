@@ -6,12 +6,17 @@
 #include <QApplication>
 #include <QDir>
 #include <QCoreApplication>
+#include <QIcon>
 #include "InstallerWindow.h"
 #include "UninstallWindow.h"
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("HashMM Setup");
+    // Observer V4 is also the window/taskbar identity. The native resource
+    // below is embedded in the executable, so Windows can show it before Qt
+    // has finished constructing the first installer page.
+    app.setWindowIcon(QIcon(":/icon.png"));
 
     if (app.arguments().contains("--uninstall")) {
         // 卸载经"卸载 HashMM.lnk → HashMM.exe --uninstall"调起，applicationDirPath() 即安装目录。

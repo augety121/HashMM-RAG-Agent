@@ -167,9 +167,10 @@ def test_agent_loop_end_to_end_edit_flow(ws, clean_env):
 
 # ── 4. execute_code 结构化回灌 ──
 
-def test_execute_code_reports_exit_code_and_stderr_tail(clean_env):
+def test_execute_code_reports_exit_code_and_stderr_tail(clean_env, monkeypatch):
     """失败执行必须报显式 exit_code，且 stderr 取【尾部】（traceback 在尾部）。"""
     from hashmm.api import tool_registry as TR
+    monkeypatch.setenv("HASHMM_ALLOW_UNSANDBOXED_EXEC", "1")
     code = (
         "import sys\n"
         "sys.stderr.write('FILLER-HEAD ' * 400)\n"   # ≈4800 字符噪音在前
@@ -182,8 +183,9 @@ def test_execute_code_reports_exit_code_and_stderr_tail(clean_env):
         or "V50-NEEDLE-AT-TAIL" in out            # 宽松：只要针在，截断策略即正确
 
 
-def test_execute_code_success_still_reports_exit_code(clean_env):
+def test_execute_code_success_still_reports_exit_code(clean_env, monkeypatch):
     from hashmm.api import tool_registry as TR
+    monkeypatch.setenv("HASHMM_ALLOW_UNSANDBOXED_EXEC", "1")
     out = str(TR.execute_tool_structured(
         "execute_code", {"code": "print('hello-v50')"}, {"conv_id": CONV}))
     assert "exit_code=0" in out and "hello-v50" in out

@@ -1,6 +1,7 @@
 #pragma once
 // install_engine.h — HashMM 原生安装器的安装逻辑（对照已测 install-engine.js）。
 #include <QString>
+#include <QStringList>
 #include <functional>
 
 namespace InstallEngine {
@@ -31,16 +32,31 @@ bool writeMarker(const QString& installDir, const QString& version);
 // 上次安装记录文件路径（写在 %APPDATA%\HashMM，供再次运行检测已安装）。
 QString lastInstallRecordPath();
 bool writeLastInstallRecord(const QString& installDir, const QString& version);
+struct InstallRecord {
+    QString installDir;
+    QString version;
+    bool valid() const { return !installDir.isEmpty(); }
+};
+InstallRecord readValidLastInstallRecord();
 // 读上次安装记录；若记录的目录仍有标记 → 返回该目录，否则空串。
 QString readValidLastInstall();
+int compareVersions(const QString& left, const QString& right);
 
 // 递归拷贝目录树（payload → 安装目录）。onProgress(pct 0..100) 可空。
 // 排除运行期/无关项（data、logs、.cache、标记文件）。
 bool copyTree(const QString& from, const QString& to,
               std::function<void(int)> onProgress, QString* err);
 
+// Transactional install/update: copy into a sibling staging directory, validate
+// the runnable payload, then swap directories. Existing user data directories
+// are moved into the new install; any failed swap is rolled back.
+bool copyTreeAtomic(const QString& from, const QString& to, const QString& version,
+                    const QStringList& preserveDirs,
+                    std::function<void(int)> onProgress, QString* err);
+
 // 估算源目录文件总数（给进度用）。
 int countFiles(const QString& dir);
+qint64 directoryBytes(const QString& dir);
 
 // 生成创建快捷方式的 PowerShell 命令（与 install-engine.js shortcutPsCommand 同形）。
 // args 非空时写入 $s.Arguments（卸载快捷方式用 "--uninstall"）。

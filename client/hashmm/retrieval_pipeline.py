@@ -150,6 +150,8 @@ class SearchResult:
     chunk_id: str = ""
     source_type: str = ""  # "dense" | "sparse" | "fused"
     modality: str = "text"  # V104 多模态: text | table | code | image | chart | equation
+    owner_id: str = ""
+    workspace_id: str = ""
 
 
 @dataclass
@@ -161,6 +163,12 @@ class SearchResponse:
     total_candidates: int = 0
     elapsed_ms: int = 0
     sources: list[dict] = field(default_factory=list)
+    requested_top_k: int = 0
+    candidate_top_k: int = 0
+    dense_candidates: int = 0
+    sparse_candidates: int = 0
+    fused_candidates: int = 0
+    rerank_method: str = "rrf"
 
 
 # ── V104 多模态：查询模态意图检测 + 模态加权（默认关，HASHMM_MODALITY_BOOST=1 开启）──
@@ -251,16 +259,41 @@ class BM25Index:
             tokens = self._tokenize(text)
             self._tokenized.append(tokens)
             self._corpus.append(meta)
+            # V205 P0-1：增量镜像到磁盘倒排（图2-③口径），冷启动/无 rank_bm25 时兜底
+            try:
+                from hashmm.retrieval.bm25_disk import get_store as _bm25_store
+                _cid = str(meta.get("chunk_id") or f"{meta.get('doc_id','')}#{len(self._corpus)}")
+                _bm25_store().add(_cid, tokens, {**meta, "text": str(meta.get("text", text))[:800]})
+            except Exception as _bde:
+                log_suppressed(logger, _bde)
         self._rebuild_bm25()
 
     def search(self, query: str, top_k: int = 50) -> list[SearchResult]:
         """Search by keywords."""
-        if not self._bm25 or not self._corpus:
-            return []
-
         tokens = self._tokenize(query)
         if not tokens:
             return []
+        if not self._bm25 or not self._corpus:
+            # V205 P0-1：内存索引不可用（rank_bm25 未装 / pickle 丢失）→ 磁盘倒排兜底
+            try:
+                from hashmm.retrieval.bm25_disk import get_store as _bm25_store
+                hits = _bm25_store().search(tokens, top_k)
+                return [SearchResult(
+                    text=str(h["meta"].get("text", "")),
+                    score=float(h["score"]),
+                    doc_id=str(h["meta"].get("doc_id", "")),
+                    filename=str(h["meta"].get("filename", "")),
+                    page=int(h["meta"].get("page", -1) or -1),
+                    section=str(h["meta"].get("section", "")),
+                    chunk_id=str(h["meta"].get("chunk_id", "")),
+                    source_type="sparse",
+                    modality=str(h["meta"].get("modality", "text")),
+                    owner_id=str(h["meta"].get("owner_id", "")),
+                    workspace_id=str(h["meta"].get("workspace_id", "")),
+                ) for h in hits]
+            except Exception as _bde:
+                log_suppressed(logger, _bde)
+                return []
 
         try:
             scores = self._bm25.get_scores(tokens)
@@ -283,6 +316,8 @@ class BM25Index:
                 chunk_id=meta.get("chunk_id", ""),
                 source_type="sparse",
                 modality=meta.get("modality", "text"),
+                owner_id=str(meta.get("owner_id", "")),
+                workspace_id=str(meta.get("workspace_id", "")),
             ))
         return results
 
@@ -294,6 +329,12 @@ class BM25Index:
             self._tokenized = [t for t, _ in keep]
             self._corpus = [m for _, m in keep]
             self._rebuild_bm25()
+        # V205 P0-1：磁盘倒排同步删（与内存态无条件对齐）
+        try:
+            from hashmm.retrieval.bm25_disk import get_store as _bm25_store
+            _bm25_store().remove_doc(doc_id)
+        except Exception as _bde:
+            log_suppressed(logger, _bde)
 
     def _tokenize(self, text: str) -> list[str]:
         """Enterprise-grade Chinese tokenization for BM25.
@@ -456,6 +497,8 @@ class RetrievalPipeline:
             chunk_id=meta.get("chunk_id", ""),
             source_type=source_type,
             modality=meta.get("modality", "text"),
+            owner_id=str(meta.get("owner_id", "")),
+            workspace_id=str(meta.get("workspace_id", "")),
         ))
         return 1
 
@@ -535,6 +578,8 @@ class RetrievalPipeline:
                     chunk_id=r.get("chunk_id", ""),
                     source_type="dense",
                     modality=r.get("modality", "text"),
+                    owner_id=str(r.get("owner_id", "")),
+                    workspace_id=str(r.get("workspace_id", "")),
                 ))
 
         # Step 4: Sparse search (BM25)
@@ -574,9 +619,12 @@ class RetrievalPipeline:
         candidate_pool = min(top_k * 10, 100) if reranker_ready else top_k * 4
         fused = self._rrf_fusion(dense_results, sparse_results, top_k=candidate_pool)
 
+        fused_candidates = len(fused)
+        rerank_method = "rrf"
         # Step 6: Reranker cross-encoder (if available)
         if reranker_ready and self._reranker and len(fused) > top_k:
             fused = self._rerank(query, fused, top_k)
+            rerank_method = "cross_encoder"
             logger.info(f"Reranked {candidate_pool} → {len(fused)} results")
         elif not (reranker_ready and self._reranker):
             # Step 6.5 (V98): 本地语义重排——桌面 sidecar 的小模型嵌入服务。
@@ -587,6 +635,7 @@ class RetrievalPipeline:
                 reordered = maybe_local_rerank(query, fused, top_k)
                 if reordered is not fused:   # no-op 时返回同一对象，identity 判定零成本
                     fused = reordered
+                    rerank_method = "local_semantic"
                     logger.info("Local semantic rerank applied (desktop sidecar)")
             except Exception:
                 pass
@@ -624,6 +673,12 @@ class RetrievalPipeline:
             total_candidates=len(dense_results) + len(sparse_results),
             elapsed_ms=elapsed,
             sources=sources,
+            requested_top_k=top_k,
+            candidate_top_k=candidate_pool,
+            dense_candidates=len(dense_results),
+            sparse_candidates=len(sparse_results),
+            fused_candidates=fused_candidates,
+            rerank_method=rerank_method,
         )
 
     def _apply_modality_boost(self, query: str, results: list) -> list:
@@ -807,9 +862,14 @@ class RetrievalPipeline:
 
         # v6.0: Multi-tenant owner filter
         if "owner_id" in filters:
-            oid = filters["owner_id"]
+            oid = str(filters["owner_id"])
             filtered = [r for r in filtered
-                        if getattr(r, 'owner_id', '') == oid or not getattr(r, 'owner_id', '')]
+                        if str(getattr(r, "owner_id", "")) == oid]
+
+        if "workspace_id" in filters:
+            wid = str(filters["workspace_id"])
+            filtered = [r for r in filtered
+                        if str(getattr(r, "workspace_id", "")) == wid]
 
         return filtered
 
@@ -823,7 +883,16 @@ class RetrievalPipeline:
         for meta in self.bm25_index._corpus:
             fn = meta.get("filename", meta.get("doc_id", "unknown"))
             did = meta.get("doc_id", "")
-            if fn not in docs:
-                docs[fn] = {"filename": fn, "doc_id": did, "num_chunks": 0}
-            docs[fn]["num_chunks"] += 1
+            owner_id = str(meta.get("owner_id", ""))
+            workspace_id = str(meta.get("workspace_id", ""))
+            key = f"{owner_id}\0{workspace_id}\0{fn}\0{did}"
+            if key not in docs:
+                docs[key] = {
+                    "filename": fn,
+                    "doc_id": did,
+                    "owner_id": owner_id,
+                    "workspace_id": workspace_id,
+                    "num_chunks": 0,
+                }
+            docs[key]["num_chunks"] += 1
         return list(docs.values())

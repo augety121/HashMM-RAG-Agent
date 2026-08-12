@@ -59,3 +59,25 @@ def test_reset_clears_all_lifecycles():
     H.reset_hooks()
     assert len(H._PRECOMPACT_HOOKS) == 0
     assert len(H._SUBAGENT_STOP_HOOKS) == 0
+
+
+def test_critical_pre_hook_exception_denies_and_is_traced():
+    from hashmm import hooks as H
+    ctx = {}
+
+    def boom(*_args):
+        raise RuntimeError("policy unavailable")
+
+    H.register_pre_hook("critical_policy", boom, critical=True)
+    decision = H.run_pre_tool_hooks("run_shell", {}, ctx)
+    assert decision.allow is False and decision.hook == "critical_policy"
+    assert H.get_hook_runs(ctx)[0]["status"] == "error"
+
+
+def test_observer_pre_hook_exception_is_visible_but_does_not_block():
+    from hashmm import hooks as H
+    ctx = {}
+    H.register_pre_hook("observer", lambda *_: (_ for _ in ()).throw(ValueError("boom")))
+    decision = H.run_pre_tool_hooks("read_file", {}, ctx)
+    assert decision.allow is True
+    assert H.get_hook_runs(ctx)[0]["status"] == "error"

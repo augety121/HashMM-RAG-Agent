@@ -26,6 +26,15 @@ if "HASHMM_DB_PATH" not in os.environ:
     _TEST_DB_DIR = tempfile.mkdtemp(prefix="hashmm_pytest_")
     os.environ["HASHMM_DB_PATH"] = str(Path(_TEST_DB_DIR) / "pytest.sqlite")
 
+# ── V308：根治"测试间共享工作区 / 幂等 DB"污染 ──
+# CONV_FILES_ROOT（会话工作区）与 idempotency.db（幂等缓存）都锚定 HASHMM_DATA_DIR，
+# 默认指向项目内固定的 data/。并跑时多个测试写同一 data/ → 工作区文件互相覆盖、
+# 幂等记录跨测试残留（典型表现：test_v50/v52/v57 单独跑全过、并跑却失败——即"假绿"
+# 的另一面：结果不可复现）。把 HASHMM_DATA_DIR 也指向独立临时目录后，每次 pytest 进程
+# 的工作区与幂等库都是全新的，测试顺序无关、可反复复现。
+if "HASHMM_DATA_DIR" not in os.environ:
+    os.environ["HASHMM_DATA_DIR"] = tempfile.mkdtemp(prefix="hashmm_pytest_data_")
+
 
 # ── 排除"诊断脚本"被 pytest 收集 ──
 # tests/ 里混有一些【手动诊断脚本】（如 test_llm_api.py：测 DeepSeek API 连通性，
@@ -43,6 +52,39 @@ def _is_diagnostic_script(path: Path) -> bool:
         return False
     # 顶层 sys.exit + 提示设置 API key 的，判定为诊断脚本
     return ("sys.exit(1)" in head and ("API_KEY" in head or "诊断脚本" in head))
+
+
+import pytest as _pytest
+
+_CANONICAL_DB_PATH = None
+_CANONICAL_MODELS_MIRROR = None
+
+
+@_pytest.fixture(scope="session", autouse=True)
+def _init_test_db_schema():
+    """V308 根治顺序敏感：多个测试（test_v57 roundtrip / http_integration 等）直接调
+    db.create_conversation / create_user，却【假设表已存在】——只有随机顺序里恰好有
+    别的测试先触发过建表它们才通过（“靠邻居建表”）。这是并跑/乱序不稳定的最后来源。
+    此 fixture 在 pytest 会话开始时对隔离的测试 DB 执行一次 init_db()，
+    所有测试从此天然有 schema，与执行顺序彻底解耦。init 失败不吞：直接暴露。"""
+    from hashmm.api import database as _db
+    _db.init_db()
+    global _CANONICAL_DB_PATH, _CANONICAL_MODELS_MIRROR
+    _CANONICAL_DB_PATH = _db.DB_PATH
+    _CANONICAL_MODELS_MIRROR = _db._MODELS_MIRROR
+    yield
+
+
+@_pytest.fixture(autouse=True)
+def _restore_database_module_globals(_init_test_db_schema):
+    """Stop a temporary DB module assignment leaking into the next test."""
+    yield
+    from hashmm.api import database as _db
+    _db._close_pool()
+    if _CANONICAL_DB_PATH is not None:
+        _db.DB_PATH = _CANONICAL_DB_PATH
+    if _CANONICAL_MODELS_MIRROR is not None:
+        _db._MODELS_MIRROR = _CANONICAL_MODELS_MIRROR
 
 
 def pytest_ignore_collect(collection_path, config):

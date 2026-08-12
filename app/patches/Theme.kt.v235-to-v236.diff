@@ -1,0 +1,17 @@
+--- /tmp/b-Theme.kt	2026-07-04 13:39:45.900707588 +0000
++++ app/src/main/java/com/hashmm/app/ui/theme/Theme.kt	2026-07-04 13:38:55.173877446 +0000
+@@ -37,11 +37,11 @@
+ 
+ private val DarkColors = darkColorScheme(
+     primary = BrandLight,
+-    onPrimary = Color.White,
++    onPrimary = Color(0xFF1A1A1A),   // V247: 深色主题主色是浅灰(BrandLight)，其上文字须用黑（白字会看不见）
+     primaryContainer = BrandDark,
+     onPrimaryContainer = Color.White,
+-    secondary = Brand,
+-    onSecondary = Color.White,
++    secondary = BrandLight,
++    onSecondary = Color(0xFF1A1A1A),
+     background = DarkBg,
+     onBackground = DarkOnSurface,
+     surface = DarkSurface,

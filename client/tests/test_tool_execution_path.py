@@ -28,9 +28,9 @@ def reg():
 
 
 def test_known_tool_executes(reg, clean_env):
-    """注册的工具正常执行（默认配置零拦截）。"""
-    reg.register_executor("_t_echo", lambda a, c: f"echo:{a.get('x')}")
-    out = reg.execute_tool("_t_echo", {"x": "hi"}, {})
+    """执行器和权限能力均显式登记的工具可以执行。"""
+    reg.register_executor("kb_search", lambda a, c: f"echo:{a.get('query')}")
+    out = reg.execute_tool("kb_search", {"query": "hi"}, {})
     assert "echo:hi" in out
 
 
@@ -42,8 +42,9 @@ def test_unknown_tool_errors(reg, clean_env):
 
 def test_structured_preserves_dict(reg, clean_env):
     """execute_tool_structured 保留原始 dict（file 字段不被压平）。"""
-    reg.register_executor("_t_doc", lambda a, c: {"status": "ok", "file": {"filename": "x.pptx"}})
-    d = reg.execute_tool_structured("_t_doc", {}, {})
+    reg.register_executor("create_document", lambda a, c: {"status": "ok", "file": {"filename": "x.pptx"}})
+    d = reg.execute_tool_structured(
+        "create_document", {"filename": "x.pptx", "content": "slides"}, {})
     assert isinstance(d, dict) and "file" in d
 
 
@@ -54,10 +55,10 @@ def test_safe_tool_not_blocked_by_default(reg, clean_env):
     assert "results" in out
 
 
-def test_high_risk_tool_runs_without_approval_flag(reg, clean_env):
-    """默认（未开审批）下，即使是高风险工具名也照常执行 —— 接入后这条必须仍成立（零变化）。"""
-    reg.register_executor("_t_write", lambda a, c: "written")
-    out = reg.execute_tool("_t_write", {}, {})
+def test_registered_write_tool_runs_without_approval_flag(reg, clean_env):
+    """默认模式下，显式登记的工作区写工具仍可运行。"""
+    reg.register_executor("create_file", lambda a, c: "written")
+    out = reg.execute_tool("create_file", {"filename": "x.txt", "content": "x"}, {})
     assert "written" in out
 
 
@@ -83,3 +84,37 @@ def test_safe_tool_bypasses_approval(reg, monkeypatch, clean_env):
     reg.register_executor("kb_search", lambda a, c: "results")
     out = reg.execute_tool("kb_search", {"query": "x"}, {})
     assert "results" in out
+
+
+def test_approval_classifier_failure_is_denied(reg, monkeypatch, clean_env):
+    """开启审批后，风险分类器异常不能把写工具静默当成低风险。"""
+    from hashmm import agent_safety
+
+    monkeypatch.setenv("HASHMM_TOOL_APPROVAL", "1")
+    monkeypatch.setattr(
+        agent_safety, "classify_tool_risk",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("classifier down")),
+    )
+    reg.register_executor("create_file", lambda a, c: "must-not-run")
+
+    out = reg.execute_tool("create_file", {"filename": "x.txt", "content": "x"}, {})
+
+    assert "拒绝" in out or "审批" in out
+    assert "must-not-run" not in out
+
+
+def test_strict_plan_classifier_failure_is_denied(reg, monkeypatch, clean_env):
+    """strict 计划模式的风险判断异常必须阻断，不能回落到执行。"""
+    from hashmm import agent_safety
+
+    monkeypatch.setenv("HASHMM_PLAN_MODE", "strict")
+    monkeypatch.setattr(
+        agent_safety, "classify_tool_risk",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("classifier down")),
+    )
+    reg.register_executor("create_file", lambda a, c: "must-not-run")
+
+    out = reg.execute_tool("create_file", {"filename": "x.txt", "content": "x"}, {})
+
+    assert "拒绝" in out
+    assert "must-not-run" not in out

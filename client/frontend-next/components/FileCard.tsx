@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { FileText, FileCode, Image, Table, File, Download, Eye, Play, Loader2 } from "lucide-react";
-import { withToken } from "@/lib/api";
+import { ensureFreshToken, executeConversationCode, withToken } from "@/lib/api";
 
 interface Props {
   filename: string;
@@ -56,6 +56,7 @@ export function FileCard({ filename, downloadUrl, lines, chars, language, convId
     if (!convId || running) return;
     setRunning(true);
     try {
+      await ensureFreshToken();
       const token = typeof localStorage !== "undefined" ? localStorage.getItem("hmm_token") : null;
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -63,11 +64,7 @@ export function FileCard({ filename, downloadUrl, lines, chars, language, convId
       const readRes = await fetch(`${downloadUrl}`, { headers });
       const code = await readRes.text();
       // Execute
-      const execRes = await fetch(`/api/conversations/${convId}/execute`, {
-        method: "POST", headers,
-        body: JSON.stringify({ code }),
-      });
-      const data = await execRes.json();
+      const data = await executeConversationCode(convId, code);
       setOutput(data.output || data.error || "(无输出)");
     } catch (e) {
       setOutput(`错误: ${e instanceof Error ? e.message : String(e)}`);

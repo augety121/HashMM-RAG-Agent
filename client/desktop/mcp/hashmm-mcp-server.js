@@ -22,7 +22,7 @@ const P = require("./protocol");
 const { ToolRegistry } = require("./tool-registry");
 const { WhitelistManager } = require("./whitelist");
 
-const SERVER_INFO = { name: "hashmm-mcp", version: "1.6.0" };
+const SERVER_INFO = { name: "hashmm-mcp", version: "17.0.2" };
 
 // ── 工具注册 ──
 const registry = new ToolRegistry();

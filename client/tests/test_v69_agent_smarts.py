@@ -129,7 +129,7 @@ def test_scorer_exception_is_fail_not_error(tmp_path):
     # 假 llm：直接返回空回答（_run_turn 由脚本化 runner 驱动——这里直接打桩 run 的内部）
     import asyncio
     orig = ab._run_turn
-    async def fake_run_turn(llm_fn, conv_id, q, history):
+    async def fake_run_turn(llm_fn, conv_id, q, history, **kwargs):  # V308: **kwargs 兼容 mem/user/inject_hints 等新增参数
         return ab.TurnResult(answer="done", events=[])
     ab._run_turn = fake_run_turn
     try:

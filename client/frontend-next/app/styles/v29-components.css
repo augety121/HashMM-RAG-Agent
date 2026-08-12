@@ -767,7 +767,7 @@
 }
 .retrieval-debug-meta { font-size: 10px; font-family: var(--mono); }
 .retrieval-debug-tag {
-  font-size: 9px;
+  font-size: 10px;
   padding: 1px 4px;
   border-radius: 3px;
   background: #059669;

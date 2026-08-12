@@ -1,7 +1,7 @@
 "use client";
 import { FileTreeView } from "./FileTreeView";
 import { useState, useEffect } from "react";
-import { listConvFiles, withToken } from "@/lib/api";
+import { listConvFiles, onConvFileListUpdated, withToken } from "@/lib/api";
 import { Download, FileText, FileSpreadsheet, Image, FileCode, File, Eye, X, FolderOpen } from "lucide-react";
 
 interface ConvFile {
@@ -25,6 +25,7 @@ export function ConvFilePanel({ convId, onPreview }: { convId: string | null; on
   useEffect(() => {
     if (!convId) { setFiles([]); return; }
     listConvFiles(convId).then(d => setFiles(d.files || [])).catch(() => setFiles([]));
+    return onConvFileListUpdated(convId, d => setFiles(d.files || []));
   }, [convId]);
 
   // Also listen for file events via custom event

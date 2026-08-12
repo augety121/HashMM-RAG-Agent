@@ -24,6 +24,8 @@ Gate logic:
 """
 from __future__ import annotations
 
+import os as _os
+
 import json
 import os
 from dataclasses import dataclass, field
@@ -287,6 +289,59 @@ def load_baseline(path: str | Path) -> dict | None:
         return None
 
 
+# ── V211 差距一：分数 diff 表 ──────────────────────────────────────────────
+def diff_report(report: GateReport, baseline: dict | None) -> dict:
+    """本次 vs baseline 的每指标增减。用于每次改动都带数字（贴 PR / changelog）。
+
+    返回 {overall: {base, cur, delta}, by_category: {cat: {base, cur, delta}}, has_baseline}。
+    delta > 0 = 变好；无 baseline 时 base=None、delta=None（首次跑，只记录不比较）。
+    """
+    cur_overall = round(report.overall_pass_rate, 4)
+    if not baseline:
+        return {"has_baseline": False,
+                "overall": {"base": None, "cur": cur_overall, "delta": None},
+                "by_category": {cat: {"base": None, "cur": b.get("rate"), "delta": None}
+                                for cat, b in report.by_category.items()}}
+    base_overall = baseline.get("overall_pass_rate")
+    out: dict = {"has_baseline": True, "overall": {
+        "base": base_overall, "cur": cur_overall,
+        "delta": round(cur_overall - base_overall, 4) if isinstance(base_overall, (int, float)) else None}}
+    base_by = baseline.get("by_category", {})
+    cats = set(report.by_category) | set(base_by)
+    bycat: dict = {}
+    for cat in sorted(cats):
+        cur_rate = report.by_category.get(cat, {}).get("rate")
+        base_rate = base_by.get(cat, {}).get("rate")
+        delta = (round(cur_rate - base_rate, 4)
+                 if isinstance(cur_rate, (int, float)) and isinstance(base_rate, (int, float)) else None)
+        bycat[cat] = {"base": base_rate, "cur": cur_rate, "delta": delta}
+    out["by_category"] = bycat
+    return out
+
+
+def format_diff_markdown(diff: dict) -> str:
+    """把 diff_report 渲染成 Markdown 表格——直接贴 PR/changelog。"""
+    def arrow(d):
+        if d is None:
+            return "—"
+        if d > 0.0005:
+            return f"▲ +{d:.4f}"
+        if d < -0.0005:
+            return f"▼ {d:.4f}"
+        return "= 0"
+    def cell(v):
+        return f"{v:.4f}" if isinstance(v, (int, float)) else "n/a"
+    lines = ["| 指标 | 基线 | 本次 | 变化 |", "|---|---|---|---|"]
+    o = diff["overall"]
+    lines.append(f"| **overall** | {cell(o['base'])} | {cell(o['cur'])} | {arrow(o['delta'])} |")
+    for cat, c in diff["by_category"].items():
+        lines.append(f"| {cat} | {cell(c['base'])} | {cell(c['cur'])} | {arrow(c['delta'])} |")
+    if not diff.get("has_baseline"):
+        lines.append("")
+        lines.append("> 首次运行，无基线可比对——本次结果将成为后续对比的基线。")
+    return "\n".join(lines)
+
+
 # ── CI entrypoint ──────────────────────────────────────────────────────────
 def gate_main(answer_fn: Callable | None, *, retrieve_fn: Callable | None = None,
               case_paths: list[str | Path] | None = None,
@@ -307,9 +362,14 @@ def gate_main(answer_fn: Callable | None, *, retrieve_fn: Callable | None = None
     report = run_gate(cases, answer_fn, retrieve_fn=retrieve_fn,
                       thresholds=thresholds, baseline=baseline, judge_fn=judge_fn)
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    # V211 差距一：每次都出分数 diff 表（有 baseline 才比对，否则记录本次为基线）
+    cmp_base = baseline if baseline is not None else (load_baseline(baseline_path) if baseline_path else None)
+    diff = diff_report(report, cmp_base)
+    print("\n── 分数变化（vs 基线）──")
+    print(format_diff_markdown(diff))
     if update_baseline and baseline_path:
         save_baseline(report, baseline_path)
-        print(f"eval-gate: baseline written to {baseline_path}")
+        print(f"\neval-gate: baseline written to {baseline_path}")
         return 0
     print(f"eval-gate: {'PASS' if report.passed else 'FAIL'} "
           f"(overall {report.overall_pass_rate:.3f}, n={report.n})")
@@ -426,7 +486,7 @@ def _build_http_judge_fn(base_url: str, token: str | None = None):
                 ],
                 "max_tokens": max_tokens, "temperature": 0,
             }).encode("utf-8")
-            headers = {"Content-Type": "application/json", "X-HashMM-Eval": "1"}
+            headers = {"Content-Type": "application/json", "X-HashMM-Eval": _os.environ.get("HASHMM_EVAL_TOKEN", "1")}
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             req = _ur.Request(base + "/api/llm/tools", data=body, headers=headers)
@@ -479,7 +539,7 @@ def _build_http_answer_fn(base_url: str, token: str | None = None):
 
     def _answer(query: str) -> dict:
         body = _json.dumps({"message": query}).encode("utf-8")
-        headers = {"Content-Type": "application/json", "X-HashMM-Eval": "1"}
+        headers = {"Content-Type": "application/json", "X-HashMM-Eval": _os.environ.get("HASHMM_EVAL_TOKEN", "1")}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         req = _ur.Request(base + "/api/chat", data=body, headers=headers)
@@ -518,7 +578,7 @@ def _build_stream_answer_fn(base_url: str, token: str | None = None, dump_dir: s
         import time as _t
         conv = _uuid.uuid4().hex
         body = _sj.dumps({"message": query}).encode("utf-8")
-        headers = {"Content-Type": "application/json", "X-HashMM-Eval": "1"}
+        headers = {"Content-Type": "application/json", "X-HashMM-Eval": _os.environ.get("HASHMM_EVAL_TOKEN", "1")}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         req = _ur.Request(f"{base}/api/conversations/{conv}/stream", data=body, headers=headers)
@@ -608,7 +668,10 @@ def _build_stream_answer_fn(base_url: str, token: str | None = None, dump_dir: s
         if dump_dir:
             _dump_n[0] += 1
             try:
-                import os as _os
+                # V308 修 F823 真 bug：这里原有 `import os as _os`。函数内的这条 import 让
+                # Python 把整个 _answer 里的 _os 都视为【局部变量】，于是本函数更早处
+                # （第 581 行 headers 构造）引用 _os 时会 UnboundLocalError 崩溃——
+                # 而模块顶部第 27 行早已 `import os as _os`。删掉这条冗余局部 import 即可。
                 _safe = "".join(ch if ch.isalnum() else "_" for ch in query[:30])
                 _fp = _os.path.join(dump_dir, f"{_dump_n[0]:03d}_{_safe}.txt")
                 with open(_fp, "w", encoding="utf-8") as _f:
@@ -667,7 +730,7 @@ if __name__ == "__main__":
     ap.add_argument("--stub", action="store_true",
                     help="不接真实管线，用桩 answer_fn 自检 harness（CI 用，无需模型/索引）")
     ap.add_argument("--api", default=None,
-                    help="对一个正在运行的后端测（如 http://127.0.0.1:17680 或 ）；测试机无需 transformers/模型")
+                    help="对一个正在运行的后端测（如 http://127.0.0.1:17680 或 http://111.115.7.14:20014）；测试机无需 transformers/模型")
     ap.add_argument("--token", default=None, help="后端需要鉴权时的 Bearer token（或用 --user/--password 自动登录）")
     ap.add_argument("--user", default=None, help="HTTP 模式自动登录用的用户名（如 admin）")
     ap.add_argument("--password", default=None, help="HTTP 模式自动登录用的密码")

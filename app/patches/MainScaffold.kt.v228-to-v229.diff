@@ -1,0 +1,13 @@
+--- /tmp/b-MainScaffold.kt	2026-07-04 03:22:07.707446151 +0000
++++ app/src/main/java/com/hashmm/app/ui/MainScaffold.kt	2026-07-04 03:19:06.829905302 +0000
+@@ -18,10 +18,7 @@
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.size
+ import androidx.compose.material.icons.Icons
+-import androidx.compose.material.icons.filled.Bolt
+ import androidx.compose.material.icons.filled.ChatBubble
+-import androidx.compose.material.icons.filled.Dashboard
+-import androidx.compose.material.icons.filled.Person
+ import androidx.compose.material.icons.outlined.Bolt
+ import androidx.compose.material.icons.outlined.ChatBubbleOutline
+ import androidx.compose.material.icons.outlined.Dashboard

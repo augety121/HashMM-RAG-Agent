@@ -16,6 +16,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QProcess>
+#include <memory>
 #include <QFileInfo>
 #include <QDir>
 #include <QStorageInfo>
@@ -28,13 +29,21 @@
 #include <QFutureWatcher>
 #include <QPainterPath>
 #include <QRegion>
+#include <QShortcut>
+#include <QKeySequence>
+#include <QResizeEvent>
 
-static const char* kVersion = "1.6.0";
+#ifndef HASHMM_SETUP_VERSION
+#define HASHMM_SETUP_VERSION "0.0.0-invalid"
+#endif
+static const char* kVersion = HASHMM_SETUP_VERSION;
 
 InstallerWindow::InstallerWindow(QWidget* parent) : QWidget(parent) {
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowSystemMenuHint);
     setAttribute(Qt::WA_TranslucentBackground, false);
-    setFixedSize(480, 548);
+    resize(500, 590);
+    setMinimumSize(460, 540);
+    setMaximumSize(560, 660);
     setWindowTitle("HashMM 安装");
 
     stack_ = new QStackedWidget(this);
@@ -44,50 +53,87 @@ InstallerWindow::InstallerWindow(QWidget* parent) : QWidget(parent) {
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->addWidget(stack_);
+    root->setSpacing(0);
 
-    applyStyle();
-
-    // 自绘标题栏按钮：最小化 / 关闭（窗口无边框，必须自己加）。绝对定位在右上角，浮于内容之上。
-    QPushButton* minBtn = new QPushButton(QString::fromUtf8("\u2014"), this);   // —
+    // 独立标题栏参与布局，任何 DPI/字体缩放下都不会压住正文或主按钮。
+    auto* titlebar = new QWidget(this);
+    titlebar->setObjectName("titlebar");
+    titlebar->setFixedHeight(44);
+    auto* titleLayout = new QHBoxLayout(titlebar);
+    titleLayout->setContentsMargins(14, 6, 8, 6);
+    titleLayout->setSpacing(4);
+    auto* title = new QLabel("HashMM", titlebar);
+    title->setObjectName("windowtitle");
+    QPushButton* minBtn = new QPushButton(QString::fromUtf8("\u2014"), titlebar);   // —
     minBtn->setObjectName("winmin");
-    minBtn->setGeometry(width() - 74, 8, 30, 26);
+    minBtn->setFixedSize(36, 32);
+    minBtn->setAccessibleName("最小化安装器");
     minBtn->setCursor(Qt::PointingHandCursor);
     connect(minBtn, &QPushButton::clicked, this, &QWidget::showMinimized);
-    QPushButton* closeBtn = new QPushButton(QString::fromUtf8("\u00D7"), this); // ×
+    QPushButton* closeBtn = new QPushButton(QString::fromUtf8("\u00D7"), titlebar); // ×
     closeBtn->setObjectName("winclose");
-    closeBtn->setGeometry(width() - 40, 8, 30, 26);
+    closeBtn->setFixedSize(36, 32);
+    closeBtn->setAccessibleName("关闭安装器");
     closeBtn->setCursor(Qt::PointingHandCursor);
     connect(closeBtn, &QPushButton::clicked, this, &QWidget::close);
-    minBtn->raise();
-    closeBtn->raise();
+    titleLayout->addWidget(title);
+    titleLayout->addStretch();
+    titleLayout->addWidget(minBtn);
+    titleLayout->addWidget(closeBtn);
+    root->addWidget(titlebar);
+    root->addWidget(stack_, 1);
+
+    applyStyle();
+    auto* closeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(closeShortcut, &QShortcut::activated, this, &QWidget::close);
 
     installDir_ = InstallEngine::defaultInstallDir();
     pathBox_->setText(installDir_);
 
     // 可用空间
+    const QString payload = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/app");
+    const qint64 payloadBytes = InstallEngine::directoryBytes(payload);
     QStorageInfo si(QFileInfo(installDir_).absolutePath());
-    double freeGB = si.isValid() ? si.bytesAvailable() / (1024.0 * 1024 * 1024) : 0;
-    spaceLabel_->setText(QString("安装所需空间：约 540 MB · 可用空间：%1 GB").arg(freeGB, 0, 'f', 1));
+    const double freeGB = si.isValid() ? si.bytesAvailable() / (1024.0 * 1024 * 1024) : 0;
+    const double requiredMB = payloadBytes > 0 ? payloadBytes / (1024.0 * 1024.0) : 0;
+    spaceLabel_->setText(QString("安装所需空间：约 %1 MB · 可用空间：%2 GB")
+        .arg(requiredMB, 0, 'f', 0).arg(freeGB, 0, 'f', 1));
 
     detectExisting();
     refreshRunningState();   // V102: 启动即检测 HashMM 是否在跑
-    QPainterPath rounded;
-    rounded.addRoundedRect(0, 0, width(), height(), 16, 16);
-    setMask(QRegion(rounded.toFillPolygon().toPolygon()));
+    resizeEvent(nullptr);
 }
 
 void InstallerWindow::detectExisting() {
-    QString prev = InstallEngine::readValidLastInstall();
-    if (!prev.isEmpty()) {
+    const auto record = InstallEngine::readValidLastInstallRecord();
+    if (record.valid()) {
         existing_ = true;
-        installDir_ = prev;
-        pathBox_->setText(prev);
-        installedExe_ = QDir::cleanPath(prev + "/" + InstallEngine::installedExeName()).replace('/', '\\');
+        installDir_ = record.installDir;
+        installedVersion_ = record.version;
+        pathBox_->setText(record.installDir);
+        installedExe_ = QDir::cleanPath(record.installDir + "/" + InstallEngine::installedExeName()).replace('/', '\\');
+        const QString currentVersion = QString::fromUtf8(kVersion);
+        const int comparison = InstallEngine::compareVersions(currentVersion, installedVersion_);
+        upgradeAvailable_ = !installedVersion_.isEmpty() && comparison > 0;
+        downgradeBlocked_ = !installedVersion_.isEmpty() && comparison < 0;
         badge_->setVisible(true);
-        btnPrimary_->setText("启动 HashMM");
+        if (upgradeAvailable_) {
+            badge_->setText(QString("已安装 %1 · 可升级到 %2").arg(installedVersion_, currentVersion));
+            btnPrimary_->setText(QString("升级到 %1").arg(currentVersion));
+            btnReinstall_->setVisible(false);
+        } else if (downgradeBlocked_) {
+            badge_->setText(QString("已安装较新版本 %1").arg(installedVersion_));
+            btnPrimary_->setText("启动 HashMM");
+            btnReinstall_->setVisible(false);
+        } else {
+            badge_->setText(installedVersion_.isEmpty()
+                ? "检测到已安装"
+                : QString("已安装当前版本 %1").arg(installedVersion_));
+            btnPrimary_->setText("启动 HashMM");
+            btnReinstall_->setText("修复当前版本");
+            btnReinstall_->setVisible(true);
+        }
         btnPrimary_->setEnabled(true);
-        btnReinstall_->setVisible(true);
         agree_->parentWidget()->setVisible(false);
         if (eulaLink_) eulaLink_->setVisible(true);   // V103.1: 启动态显示独立协议链接（点开弹窗）
     }
@@ -128,7 +174,7 @@ bool InstallerWindow::ensureNotRunning() {
 QWidget* InstallerWindow::buildWelcome() {
     auto* w = new QWidget;
     auto* v = new QVBoxLayout(w);
-    v->setContentsMargins(44, 32, 44, 26);
+    v->setContentsMargins(44, 18, 44, 28);
 
     auto* logo = new QLabel; logo->setObjectName("logo");
     logo->setPixmap(QPixmap(":/icon.png").scaled(84, 84, Qt::KeepAspectRatio, Qt::SmoothTransformation));
@@ -151,6 +197,7 @@ QWidget* InstallerWindow::buildWelcome() {
     runBanner_->setVisible(false);
 
     btnPrimary_ = new QPushButton("立即安装"); btnPrimary_->setObjectName("primary");
+    btnPrimary_->setAccessibleName("安装 HashMM");
     btnPrimary_->setEnabled(false);
     connect(btnPrimary_, &QPushButton::clicked, this, &InstallerWindow::onPrimary);
 
@@ -161,26 +208,42 @@ QWidget* InstallerWindow::buildWelcome() {
     auto* agreeRow = new QWidget;
     auto* ah = new QHBoxLayout(agreeRow); ah->setContentsMargins(0, 10, 0, 0); ah->setAlignment(Qt::AlignCenter);
     agree_ = new QCheckBox; ah->addWidget(agree_);
+    agree_->setAccessibleName("同意用户协议与隐私政策");
     auto* eula = new QLabel("已阅读并同意 <a href='#' style='color:#5a4de8;text-decoration:none'>《用户协议与隐私政策》</a>");
     eula->setTextFormat(Qt::RichText); eula->setObjectName("agreeText");
     connect(eula, &QLabel::linkActivated, this, [this](const QString&){ onEula(); });
     ah->addWidget(eula);
     connect(agree_, &QCheckBox::toggled, this, [this](bool on){ if (!existing_) btnPrimary_->setEnabled(on); });
-    // 默认勾选「已阅读并同意」——让全新机器上「立即安装」按钮直接可点。
-    // 之前别人电脑上没有旧安装、又没注意到这个不显眼的复选框，按钮就一直灰着点不了；
-    // 协议链接仍可点开查看，用户也可取消勾选。
-    agree_->setChecked(true);
-    if (!existing_) btnPrimary_->setEnabled(true);
+    // 首次安装必须由用户主动同意；扩大勾选区和主按钮后，不再用预勾选掩盖可用性问题。
+    agree_->setChecked(false);
+    if (!existing_) btnPrimary_->setEnabled(false);
 
     auto* pathRow = new QWidget;
     auto* ph = new QHBoxLayout(pathRow); ph->setContentsMargins(0, 0, 0, 0);
     auto* pl = new QLabel("安装路径"); pl->setObjectName("pathlabel");
     pathBox_ = new QLineEdit; pathBox_->setReadOnly(true); pathBox_->setObjectName("pathbox");
     auto* browse = new QPushButton("浏览"); browse->setObjectName("browse");
+    browse->setAccessibleName("选择安装位置");
     connect(browse, &QPushButton::clicked, this, &InstallerWindow::onBrowse);
     ph->addWidget(pl); ph->addWidget(pathBox_, 1); ph->addWidget(browse);
 
     spaceLabel_ = new QLabel("安装所需空间：约 540 MB"); spaceLabel_->setObjectName("space");
+    auto* options = new QWidget;
+    options->setObjectName("optionsPanel");
+    auto* optionsLayout = new QVBoxLayout(options);
+    optionsLayout->setContentsMargins(0, 10, 0, 0);
+    optionsLayout->setSpacing(8);
+    optionsLayout->addWidget(pathRow);
+    optionsLayout->addWidget(spaceLabel_);
+    options->setVisible(false);
+    auto* optionsToggle = new QPushButton("安装位置与选项");
+    optionsToggle->setObjectName("optionsToggle");
+    optionsToggle->setCheckable(true);
+    optionsToggle->setAccessibleName("展开安装位置与选项");
+    connect(optionsToggle, &QPushButton::toggled, this, [options, optionsToggle](bool open) {
+        options->setVisible(open);
+        optionsToggle->setText(open ? "收起安装选项" : "安装位置与选项");
+    });
 
     // V103.1: 大厂安装器的做法——点击链接弹窗看完整协议，不内嵌占地方的滚动框。
     // 安装态：协议链接在勾选行(agreeRow)里；启动态(已安装)：用这个独立链接，点开同一弹窗。
@@ -196,19 +259,20 @@ QWidget* InstallerWindow::buildWelcome() {
     v->addStretch(1);
     v->addWidget(btnPrimary_); v->addSpacing(9); v->addWidget(btnReinstall_); v->addWidget(agreeRow);
     v->addWidget(eulaLink_);             // V103.1: 启动态可见的协议链接
-    v->addSpacing(18);
-    v->addWidget(pathRow); v->addSpacing(8); v->addWidget(spaceLabel_);
+    v->addSpacing(10);
+    v->addWidget(optionsToggle);
+    v->addWidget(options);
     return w;
 }
 
 QWidget* InstallerWindow::buildProgress() {
     auto* w = new QWidget;
-    auto* v = new QVBoxLayout(w); v->setContentsMargins(46, 40, 46, 40);
+    auto* v = new QVBoxLayout(w); v->setContentsMargins(46, 52, 46, 44);
     auto* logo = new QLabel; logo->setPixmap(QPixmap(":/icon.png").scaled(72, 72, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logo->setAlignment(Qt::AlignCenter);
     auto* name = new QLabel("正在安装 HashMM…"); name->setObjectName("name2"); name->setAlignment(Qt::AlignCenter);
     progSub_ = new QLabel("正在准备文件"); progSub_->setObjectName("tag"); progSub_->setAlignment(Qt::AlignCenter);
-    bar_ = new QProgressBar; bar_->setRange(0, 100); bar_->setValue(0); bar_->setTextVisible(false); bar_->setObjectName("bar");
+    bar_ = new QProgressBar; bar_->setRange(0, 100); bar_->setValue(0); bar_->setFormat("%p%"); bar_->setTextVisible(true); bar_->setObjectName("bar");
     v->addStretch(1); v->addWidget(logo); v->addSpacing(16);
     v->addWidget(name); v->addWidget(progSub_); v->addSpacing(24); v->addWidget(bar_); v->addStretch(2);
     return w;
@@ -216,14 +280,15 @@ QWidget* InstallerWindow::buildProgress() {
 
 QWidget* InstallerWindow::buildDone() {
     auto* w = new QWidget;
-    auto* v = new QVBoxLayout(w); v->setContentsMargins(46, 50, 46, 30);
+    auto* v = new QVBoxLayout(w); v->setContentsMargins(46, 58, 46, 38);
     auto* check = new QLabel("✓"); check->setObjectName("doneIcon"); check->setAlignment(Qt::AlignCenter);
     check->setFixedSize(78, 78);
     auto* checkWrap = new QHBoxLayout; checkWrap->addStretch(); checkWrap->addWidget(check); checkWrap->addStretch();
     auto* name = new QLabel("安装完成"); name->setObjectName("name2"); name->setAlignment(Qt::AlignCenter);
-    auto* tag = new QLabel("本地运行 · 数据保留 · 不动系统"); tag->setObjectName("tag"); tag->setAlignment(Qt::AlignCenter);
+    auto* tag = new QLabel("已准备就绪"); tag->setObjectName("tag"); tag->setAlignment(Qt::AlignCenter);
     donePath_ = new QLabel; donePath_->setObjectName("donePath"); donePath_->setAlignment(Qt::AlignCenter);
     auto* start = new QPushButton("开始使用"); start->setObjectName("primary");
+    start->setAccessibleName("启动 HashMM");
     connect(start, &QPushButton::clicked, this, &InstallerWindow::onStart);
     v->addStretch(1); v->addLayout(checkWrap); v->addSpacing(18);
     v->addWidget(name); v->addWidget(tag); v->addWidget(donePath_); v->addStretch(1); v->addWidget(start);
@@ -236,7 +301,13 @@ void InstallerWindow::onBrowse() {
 }
 
 void InstallerWindow::onPrimary() {
-    if (existing_) { launchInstalled(); return; }
+    if (existing_ && !upgradeAvailable_) { launchInstalled(); return; }
+    if (existing_ && upgradeAvailable_) {
+        if (!ensureNotRunning()) return;
+        existing_ = false;
+        doInstall();
+        return;
+    }
     if (!agree_->isChecked()) return;
     if (!ensureNotRunning()) return;   // V102: 运行中 → 先关闭再装
     doInstall();
@@ -267,12 +338,27 @@ void InstallerWindow::doInstall() {
             "app 目录里没有 HashMM.exe（程序文件没打包进安装包）。\n请用 build-all.bat 重新打包，并确认 payload\\app 非空。");
         stack_->setCurrentIndex(0); return;
     }
+    const qint64 required = InstallEngine::directoryBytes(payload);
+    QStorageInfo storage(QFileInfo(installDir_).absolutePath());
+    // Transactional update temporarily keeps the old install and a full staging
+    // copy. Require payload bytes plus 256 MiB headroom before touching anything.
+    if (storage.isValid() && required > 0 && storage.bytesAvailable() < required + 256LL * 1024 * 1024) {
+        QMessageBox::critical(this, "磁盘空间不足",
+            QString("安全安装还需要约 %1 MB 可用空间（包含事务更新余量）。")
+                .arg((required + 256LL * 1024 * 1024) / (1024 * 1024)));
+        stack_->setCurrentIndex(0); return;
+    }
 
     // 在后台线程拷贝，避免卡 UI
     auto* watcher = new QFutureWatcher<bool>(this);
-    connect(watcher, &QFutureWatcher<bool>::finished, this, [this, watcher]() {
+    auto installError = std::make_shared<QString>();
+    connect(watcher, &QFutureWatcher<bool>::finished, this, [this, watcher, installError]() {
         bool ok = watcher->result(); watcher->deleteLater();
-        if (!ok) { QMessageBox::critical(this, "安装失败", "拷贝程序文件失败。"); stack_->setCurrentIndex(0); return; }
+        if (!ok) {
+            QMessageBox::critical(this, "安装失败",
+                installError->isEmpty() ? QStringLiteral("安装事务失败，旧版本未被破坏。") : *installError);
+            stack_->setCurrentIndex(0); return;
+        }
 
         QString exeName = InstallEngine::installedExeName();
         installedExe_ = QDir::cleanPath(installDir_ + "/" + exeName).replace('/', '\\');
@@ -298,20 +384,22 @@ void InstallerWindow::doInstall() {
         InstallEngine::writeUninstallRegistry(installDir_, kVersion, installedExe_);
 
         progSub_->setText("即将完成"); bar_->setValue(97);
-        InstallEngine::writeMarker(installDir_, kVersion);
-        InstallEngine::writeLastInstallRecord(installDir_, kVersion);
+        if (!InstallEngine::writeLastInstallRecord(installDir_, kVersion)) {
+            QMessageBox::warning(this, "安装记录写入失败",
+                "程序已经正确安装，但无法写入上次安装位置记录。下次重装时需要重新选择目录。");
+        }
 
         bar_->setValue(100);
         donePath_->setText("已安装到 " + installDir_);
         stack_->setCurrentIndex(2);
     });
     QString dest = installDir_;
-    watcher->setFuture(QtConcurrent::run([payload, dest, this]() -> bool {
-        QString err;
-        return InstallEngine::copyTree(payload, dest, [this](int pct){
+    watcher->setFuture(QtConcurrent::run([payload, dest, this, installError]() -> bool {
+        const QStringList preserve = { QStringLiteral("HashMM Files"), QStringLiteral("HashMM Data"), QStringLiteral("local-backend") };
+        return InstallEngine::copyTreeAtomic(payload, dest, kVersion, preserve, [this](int pct){
             // 进度回调在工作线程——用 invokeMethod 安全更新 UI
             QMetaObject::invokeMethod(bar_, "setValue", Qt::QueuedConnection, Q_ARG(int, qMin(80, pct)));
-        }, &err);
+        }, installError.get());
     }));
 }
 
@@ -363,28 +451,34 @@ void InstallerWindow::applyStyle() {
         #name2 { font-size:19px; font-weight:600; color:#18181b; }
         #tag { font-size:13px; color:#9094a0; }
         #badge { color:#4f46c7; background:#eeecfe; border-radius:13px; padding:6px 14px; font-size:12px; font-weight:500; }
-        #primary { min-height:46px; border:none; border-radius:11px; color:#fff; font-size:15px; font-weight:600;
+        #primary { min-height:48px; border:none; border-radius:12px; color:#fff; font-size:15px; font-weight:600;
                    background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #6e61f2,stop:1 #5a4de8); }
         #primary:hover { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #7d72f5,stop:1 #6457ec); }
         #primary:pressed { background:#4d40d8; }
         #primary:disabled { background:#dcd8f6; color:#f4f3fc; }
         #link { border:1px solid #e6e6ec; background:#ffffff; color:#5a4de8; font-size:14px; font-weight:500; border-radius:11px; min-height:44px; padding:0 18px; }
         #link:hover { border-color:#cfc8f7; background:#faf9ff; }
-        #agreeText { font-size:12.5px; color:#8a8f99; }
+        QCheckBox { min-width:22px; min-height:22px; spacing:8px; }
+        QCheckBox::indicator { width:18px; height:18px; }
+        #agreeText { font-size:12.5px; color:#737783; }
         #pathlabel { font-size:12.5px; color:#82828f; }
         #pathbox { min-height:40px; border:1px solid #e4e4e7; border-radius:10px; background:#fbfbfc; padding:0 13px; font-size:12.5px; color:#52525b; }
-        #browse { min-height:40px; border:1px solid #e4e4e7; border-radius:10px; background:#fff; padding:0 18px; font-size:13px; color:#52525b; font-weight:500; }
+        #browse { min-width:72px; min-height:42px; border:1px solid #e4e4e7; border-radius:10px; background:#fff; padding:0 18px; font-size:13px; color:#52525b; font-weight:500; }
         #browse:hover { background:#f6f6f8; border-color:#d4d4da; }
         #space { font-size:11.5px; color:#aeaeba; }
         #runbanner { color:#b45309; background:#fff7ed; border:1px solid #fde9d3; border-radius:10px; padding:9px 13px; font-size:12px; }
         #eulalink { font-size:12.5px; }
-        #bar { border:none; background:#eef0f4; border-radius:5px; max-height:8px; }
-        #bar::chunk { border-radius:5px; background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #6e61f2,stop:1 #5a4de8); }
+        #bar { border:none; background:#eef0f4; border-radius:8px; min-height:22px; max-height:22px; color:#55515f; font-size:11px; text-align:center; }
+        #bar::chunk { border-radius:8px; background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #6e61f2,stop:1 #5a4de8); }
         #donePath { font-size:12px; color:#aeaeba; }
         #doneIcon { font-size:40px; color:#fff; background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #34d399,stop:1 #10b981); border-radius:39px; }
-        #winmin, #winclose { border:none; background:transparent; color:#b0b0bb; font-size:15px; border-radius:7px; padding:0; }
+        #titlebar { background:#fff; border-bottom:1px solid #f2f2f4; }
+        #windowtitle { color:#777783; font-size:12px; font-weight:600; }
+        #winmin, #winclose { border:none; background:transparent; color:#8b8b96; font-size:16px; border-radius:8px; padding:0; }
         #winmin:hover { background:#f2f2f6; color:#555; }
         #winclose:hover { background:#ef4444; color:#fff; }
+        #optionsToggle { min-height:34px; border:none; background:transparent; color:#777783; font-size:12px; text-align:center; }
+        #optionsToggle:hover { color:#5a4de8; background:#faf9ff; border-radius:8px; }
     )");
 }
 
@@ -397,3 +491,10 @@ void InstallerWindow::mouseMoveEvent(QMouseEvent* e) {
     if (dragging_ && (e->buttons() & Qt::LeftButton)) move(e->globalPosition().toPoint() - dragPos_);
 }
 void InstallerWindow::mouseReleaseEvent(QMouseEvent*) { dragging_ = false; }
+
+void InstallerWindow::resizeEvent(QResizeEvent* event) {
+    if (event) QWidget::resizeEvent(event);
+    QPainterPath rounded;
+    rounded.addRoundedRect(0, 0, width(), height(), 16, 16);
+    setMask(QRegion(rounded.toFillPolygon().toPolygon()));
+}

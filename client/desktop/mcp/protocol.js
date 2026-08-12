@@ -9,7 +9,7 @@
  */
 "use strict";
 
-const MCP_PROTOCOL_VERSION = "2024-11-05"; // MCP 规范版本
+const MCP_PROTOCOL_VERSION = "2025-11-25"; // 与后端协商首选版本保持一致
 const JSONRPC = "2.0";
 
 // JSON-RPC 标准错误码

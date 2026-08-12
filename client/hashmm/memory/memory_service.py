@@ -36,6 +36,29 @@ logger = get_logger(__name__)
 _DAY = 86400.0
 _KEY_RE = re.compile(r"[^A-Za-z0-9_.\-]")
 
+# V211 差距三：记忆策略的三条启发式（都保守——宁可漏记也别乱记乱翻）。
+# ① 何时该翻记忆：任务是否依赖"我这个人的偏好/历史/习惯"。纯知识/翻译/算题不依赖 → 不翻。
+_RECALL_TRIGGER = re.compile(
+    r"(我的|我们|上次|之前|以前|我(通常|一般|平时|习惯|喜欢|偏好)|记得|按我|照我|"
+    r"我(叫|是谁)|我的名字|我的(项目|团队|公司|风格|口味)|继续(上|之前)|接着(上|之前))")
+# ② 什么值得写入长期记忆：显式的偏好/身份/长期事实表述。
+_WRITE_WORTHY = re.compile(
+    r"(记住|记一下|帮我记|以后(都|记得|请)|我(叫|是|喜欢|偏好|习惯|讨厌|不喜欢|不吃|忌口)|"
+    r"我的(名字|邮箱|电话|地址|生日|团队|公司|项目|职位|角色)(是|叫|为)|"
+    r"我(通常|一般|平时|默认)(用|喜欢|选|要))")
+# ③ 一次性/无价值，别写：闲聊、即时任务、礼貌用语。
+_TRIVIAL = re.compile(
+    r"^(你好|谢谢|多谢|好的|嗯|哦|ok|thanks?|hi|hello|在吗|测试|test)\b|"
+    r"(帮我(查|搜|算|写|翻译|总结|生成)|现在|马上|立刻)")
+
+
+def is_write_worthy(text: str) -> bool:
+    """判断这句话是否值得写入长期记忆（显式偏好/身份/长期事实=值得；闲聊/一次性任务=不值得）。"""
+    t = (text or "").strip()
+    if len(t) < 3 or _TRIVIAL.search(t):
+        return False
+    return bool(_WRITE_WORTHY.search(t))
+
 
 def memory_service_enabled() -> bool:
     """Whether memory recall is injected into the live context (default OFF)."""
@@ -144,6 +167,39 @@ class MemoryService:
             return ""
 
     # ── read (with reinforcement) ──
+    def should_recall(self, query: str) -> bool:
+        """V211 差距三：需不需要翻记忆。只有任务依赖"我这个人"时才翻——纯知识/翻译/算题不翻，省噪声不干扰。
+
+        无记忆可翻时直接 False。命中 recall-trigger（我的/上次/我通常…）才翻。
+        """
+        if not self.items:
+            return False
+        return bool(_RECALL_TRIGGER.search(query or ""))
+
+    def remember_pref(self, field_key: str, value: str, *, now: float | None = None) -> str:
+        """V211 差距三：写入/更新一条"结构化偏好"，冲突以新覆旧。
+
+        同一 field_key（如"下载目录""称呼""语气偏好"）只保留最新值——
+        用户上周说"喜欢简洁"、这周说"要详细"，听这周的。旧的同字段记忆被本次覆盖。
+        """
+        try:
+            now = now if now is not None else time.time()
+            key = (field_key or "").strip()
+            if not key:
+                return ""
+            # 删除同字段旧记忆（entities 里带 pref:<key> 标识）
+            tag = f"pref:{key}"
+            self.items = {mid: it for mid, it in self.items.items() if tag not in (it.entities or [])}
+            mid = uuid.uuid4().hex[:16]
+            self.items[mid] = MemoryItem(
+                id=mid, text=f"{key}：{value}", kind="preference", importance=1.5,
+                entities=[tag], created_at=now, last_used=now, use_count=0)
+            self._save()
+            return mid
+        except Exception as e:
+            log_suppressed(logger, e)
+            return ""
+
     def recall(self, query: str, *, k: int = 5, now: float | None = None,
                reinforce: bool = True) -> list[MemoryItem]:
         try:
@@ -237,7 +293,12 @@ class MemoryService:
 
     def context_block(self, query: str, *, k: int = 5, now: float | None = None) -> str:
         """Render the top recalled memories as a context block for prompt injection
-        (cross-session personalization). Empty when nothing relevant."""
+        (cross-session personalization). Empty when nothing relevant.
+
+        V211 差距三：先过 needs_memory 门——任务不依赖历史偏好/事实时，直接不注入（省噪声、不干扰）。
+        """
+        if not self.should_recall(query):
+            return ""
         mems = self.recall(query, k=k, now=now)
         if not mems:
             return ""

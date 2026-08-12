@@ -52,9 +52,9 @@ class KnowledgeRepository @Inject constructor(
     private val settings: SettingsStore,
     private val auth: AuthRepository,
 ) {
-    private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
+    private val http = SharedHttp.base.newBuilder().callTimeout(12, TimeUnit.SECONDS).build()
     // 上传 + 解析索引可能较久，给足超时
-    private val uploadHttp = OkHttpClient.Builder()
+    private val uploadHttp = SharedHttp.base.newBuilder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)

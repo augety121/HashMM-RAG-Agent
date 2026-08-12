@@ -47,17 +47,27 @@ class PhotoRequestViewModel @Inject constructor(
     }
 
     private suspend fun pollLoop() {
+        var idleDelayMs = 5_000L
         while (true) {
             try {
                 if (_pending.value == null && !_busy.value) {
                     val reqs = repo.pollPending()
                     val next = reqs.firstOrNull { it.id !in handled }
-                    if (next != null) _pending.value = next
+                    if (next != null) {
+                        _pending.value = next
+                        idleDelayMs = 5_000L
+                    } else {
+                        // The endpoint may query remote persistence.  Fixed
+                        // five-second polling produced 9-10 expensive reads a
+                        // minute while the App was idle.  Back off to 30s and
+                        // reset immediately when a request is observed.
+                        idleDelayMs = (idleDelayMs * 2).coerceAtMost(30_000L)
+                    }
                 }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (_: Exception) { /* 轮询失败静默，下一轮再试 */ }
-            delay(5000)
+            delay(if (_pending.value != null || _busy.value) 5_000L else idleDelayMs)
         }
     }
 

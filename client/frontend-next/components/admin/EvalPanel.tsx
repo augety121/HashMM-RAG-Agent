@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as api from "@/lib/api";
-import { Play, GitCompare, TrendingUp, TrendingDown, Minus, Award, Download } from "lucide-react";
+import { Play, GitCompare, TrendingUp, TrendingDown, Minus, Award, Download, Inbox, CheckCircle2, XCircle } from "lucide-react";
 import { EvalCaseList, EvalCategoryBars, EvalFailBuckets, EvalTrend, EvalDiffPairs, QualityDashboard } from "./EvalViews";
 import type { ModelConfig } from "@/lib/types";
 
@@ -20,6 +20,11 @@ export function EvalPanel() {
   const [candidate, setCandidate] = useState("");
   const [diff, setDiff] = useState<Record<string, unknown> | null>(null);
   const [quality, setQuality] = useState<Record<string, unknown> | null>(null);
+  const [feedbackCases, setFeedbackCases] = useState<api.FeedbackCase[]>([]);
+  const [feedbackPolicy, setFeedbackPolicy] = useState("");
+  const [references, setReferences] = useState<Record<string, string>>({});
+  const [reviewBusy, setReviewBusy] = useState("");
+  const [reviewError, setReviewError] = useState("");
   const pollRef = useRef<number | null>(null);
   const settledRef = useRef(false);
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current); }, []);
@@ -28,6 +33,10 @@ export function EvalPanel() {
     try { const r = await api.listEvalRuns(); setRuns(r.runs || []); } catch { /* */ }
     try { setQuality(await api.getQualityDashboard(7)); } catch { /* */ }
     try { setModels(await api.listModels()); } catch { /* */ }
+    try {
+      const feedback = await api.listFeedbackCandidates("pending", 50);
+      setFeedbackCases(feedback.cases || []); setFeedbackPolicy(feedback.policy || "");
+    } catch { /* non-admin/offline keeps the section empty */ }
   }, []);
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
@@ -107,7 +116,7 @@ export function EvalPanel() {
     const finishWithMeta = (m: RunMeta) => {
       if (settledRef.current) return; settledRef.current = true;
       stopPoll(); setRunning(false);
-      setRunMsg(`✓ 评测完成：通过率 ${Math.round((m.pass_rate ?? 0) * 100)}% · 平均分 ${m.avg_score ?? "—"}。结果已存入下方「运行记录」，可用「对比两次运行」看明细。`);
+      setRunMsg(`评测完成：通过率 ${Math.round((m.pass_rate ?? 0) * 100)}% · 平均分 ${m.avg_score ?? "—"}。结果已存入下方「运行记录」，可用「对比两次运行」看明细。`);
       loadRuns();
     };
 
@@ -146,6 +155,24 @@ export function EvalPanel() {
     if (!baseline || !candidate) { alert("请选择两个运行"); return; }
     try { setDiff(await api.compareEvalRuns(baseline, candidate)); }
     catch (e) { alert("对比失败：" + String(e)); }
+  }
+
+  async function reviewCandidate(item: api.FeedbackCase, decision: "approve" | "dismiss") {
+    const reference = (references[item.id] || "").trim();
+    if (decision === "approve" && reference.length < 5) {
+      setReviewError("加入回归集前必须填写可信参考答案，不能把失败回答直接当作标准答案。");
+      return;
+    }
+    setReviewBusy(item.id); setReviewError("");
+    try {
+      await api.reviewFeedbackCandidate(item.id, decision, reference);
+      setFeedbackCases(current => current.filter(x => x.id !== item.id));
+      setReferences(current => { const next = { ...current }; delete next[item.id]; return next; });
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : "复核失败");
+    } finally {
+      setReviewBusy("");
+    }
   }
 
   const card = { background: "var(--bg-secondary)", border: "1px solid var(--border)" };
@@ -190,7 +217,7 @@ export function EvalPanel() {
       </div>
       {runMsg && (
         <div className="text-[11.5px] mb-4 px-3 py-2.5 rounded-lg leading-relaxed"
-          style={{ background: "var(--bg-tertiary)", color: runMsg.startsWith("✓") ? "var(--success)" : "var(--text-secondary)" }}>
+          style={{ background: "var(--bg-tertiary)", color: runMsg.startsWith("评测完成") ? "var(--success)" : "var(--text-secondary)" }}>
           {running && <span className="inline-block w-2 h-2 rounded-full mr-1.5 animate-pulse" style={{ background: "var(--accent)" }} />}
           {runMsg}
         </div>
@@ -198,6 +225,61 @@ export function EvalPanel() {
 
       {/* v16 Phase 14: online quality dashboard (real traffic) */}
       <QualityDashboard data={quality} />
+
+      <div className="rounded-xl p-4 mb-4" style={card}>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <div className="text-[12px] font-semibold flex items-center gap-1.5" style={{ color: "var(--text-primary)" }}>
+              <Inbox size={13} /> 真实失败回灌
+              <span className="px-1.5 py-0.5 rounded-md text-[10px]" style={{ background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>
+                待复核 {feedbackCases.length}
+              </span>
+            </div>
+            <div className="text-[10.5px] mt-1" style={{ color: "var(--text-tertiary)" }}>
+              {feedbackPolicy || "Chat 负反馈会携带真实运行证据进入这里，人工确认后才进入回归集。"}
+            </div>
+          </div>
+        </div>
+        {reviewError && <div className="text-[11px] mb-2" style={{ color: "var(--error)" }}>{reviewError}</div>}
+        {feedbackCases.length === 0 ? (
+          <div className="rounded-lg px-3 py-4 text-center text-[11px]" style={{ background: "var(--bg-tertiary)", color: "var(--text-tertiary)" }}>
+            当前没有待复核的真实失败。这里不会用演示数据填充空状态。
+          </div>
+        ) : feedbackCases.map(item => (
+          <div key={item.id} className="rounded-xl p-3 mb-2 last:mb-0" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>{item.reason_label || item.reason_code}</div>
+              <div className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{new Date(item.updated_at * 1000).toLocaleString("zh-CN")}</div>
+            </div>
+            <div className="text-[11px] mt-1.5 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+              <span style={{ color: "var(--text-tertiary)" }}>用户问题：</span>{item.query || "（未找到对应用户轮次）"}
+            </div>
+            <details className="mt-1.5 text-[10.5px]" style={{ color: "var(--text-tertiary)" }}>
+              <summary className="cursor-pointer">查看失败回答与用户补充</summary>
+              <div className="mt-1.5 p-2 rounded-lg whitespace-pre-wrap max-h-40 overflow-auto" style={{ background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>
+                {item.answer || "（空回答）"}{item.comment ? `\n\n用户补充：${item.comment}` : ""}
+              </div>
+            </details>
+            <textarea value={references[item.id] || ""}
+              onChange={e => setReferences(current => ({ ...current, [item.id]: e.target.value.slice(0, 12000) }))}
+              placeholder="人工填写可信参考答案；审批后进入 held-out 回归集"
+              className="w-full mt-2 rounded-lg px-2.5 py-2 text-[11px] min-h-[62px] resize-y outline-none"
+              style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", color: "var(--text-primary)" }} />
+            <div className="flex justify-end gap-2 mt-2">
+              <button onClick={() => reviewCandidate(item, "dismiss")} disabled={reviewBusy === item.id}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] disabled:opacity-40"
+                style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+                <XCircle size={12} /> 忽略
+              </button>
+              <button onClick={() => reviewCandidate(item, "approve")} disabled={reviewBusy === item.id || !(references[item.id] || "").trim()}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-white disabled:opacity-40"
+                style={{ background: "var(--accent)" }}>
+                <CheckCircle2 size={12} /> {reviewBusy === item.id ? "处理中…" : "加入回归集"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {/* Last report */}
       {summary && (
@@ -263,14 +345,14 @@ export function EvalPanel() {
           {/* v16: explain why judge / retrieval metrics may be empty */}
           {summary.avg_judge_score == null && (
             <div className="mt-2 text-[11px]" style={{ color: "#d97706" }}>
-              ⚠ 评审分为空：{Number(summary.cases_with_reference) === 0
+              评审分为空：{Number(summary.cases_with_reference) === 0
                 ? "用例未配置参考答案（reference_answer）。在「质量评测」用例里补上参考答案即可启用 LLM 评审。"
                 : !summary.judge_enabled ? "本次未启用评审。" : "部分用例缺参考答案。"}
             </div>
           )}
           {(!summary.retrieval || Object.keys(summary.retrieval as object).length === 0) && Number(summary.cases_with_relevant_docs) === 0 && (
             <div className="mt-1 text-[11px]" style={{ color: "#d97706" }}>
-              ⚠ 检索指标为空：用例未标注相关文档（relevant_docs）。标注后可算 Recall@k / MRR / NDCG。
+              检索指标为空：用例未标注相关文档（relevant_docs）。标注后可算 Recall@k / MRR / NDCG。
             </div>
           )}
         </div>
@@ -312,7 +394,7 @@ export function EvalPanel() {
             <div className="flex items-center gap-3 mb-2">
               <span className="px-2 py-1 rounded text-[12px] font-bold text-white"
                 style={{ background: diff.verdict === "REGRESSION" ? "#ef4444" : "#22c55e" }}>
-                {diff.verdict === "REGRESSION" ? "⚠ 检测到回归" : "✓ 无回归"}
+                {diff.verdict === "REGRESSION" ? "检测到回归" : "无回归"}
               </span>
               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
                 平均分变化 {Number(diff.avg_score_delta) >= 0 ? "+" : ""}{String(diff.avg_score_delta)}

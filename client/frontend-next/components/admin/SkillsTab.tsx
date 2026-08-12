@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import * as api from "@/lib/api";
-import { Plus, Trash2, ThumbsUp, ThumbsDown, Zap, Brain, TrendingUp, Search } from "lucide-react";
+import { Plus, Trash2, ThumbsUp, ThumbsDown, Zap, Brain, TrendingUp, Search, AlertCircle, RefreshCw } from "lucide-react";
 import { sortSkills, filterSkills, type SkillRec, type SkillSort } from "@/lib/skillStats";
 
 interface EvolutionSkill {
@@ -27,6 +27,10 @@ export function SkillsTab() {
   const [legacySkills, setLegacySkills] = useState<LegacySkill[]>([]);
   const [evoSkills, setEvoSkills] = useState<EvolutionSkill[]>([]);
   const [tab, setTab] = useState<"auto" | "manual">("auto");
+  const [loading, setLoading] = useState({ auto: true, manual: true });
+  const [errors, setErrors] = useState<{ auto: string | null; manual: string | null }>({ auto: null, manual: null });
+  const [verifiedAt, setVerifiedAt] = useState<{ auto: number | null; manual: number | null }>({ auto: null, manual: null });
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", triggers: "", prompt: "", tools: "kb_search" });
   // V103.90 搜索 / 排序
@@ -36,35 +40,58 @@ export function SkillsTab() {
   const shownLegacy = useMemo(() => filterSkills(legacySkills as SkillRec[], query) as typeof legacySkills, [legacySkills, query]);
 
   const loadLegacy = useCallback(async () => {
-    try { const r = await api.listSkills(); setLegacySkills(r.skills || []); } catch {}
+    setLoading(prev => ({ ...prev, manual: true }));
+    try {
+      const r = await api.listSkills(); setLegacySkills(r.skills || []);
+      setErrors(prev => ({ ...prev, manual: null })); setVerifiedAt(prev => ({ ...prev, manual: Date.now() }));
+    } catch (reason) {
+      setErrors(prev => ({ ...prev, manual: reason instanceof Error ? reason.message : "手动技能读取失败" }));
+    } finally { setLoading(prev => ({ ...prev, manual: false })); }
   }, []);
 
   const loadEvolution = useCallback(async () => {
-    try { const r = await api.listEvolutionSkills(); setEvoSkills(r.skills || []); } catch {}
+    setLoading(prev => ({ ...prev, auto: true }));
+    try {
+      const r = await api.listEvolutionSkills(); setEvoSkills(r.skills || []);
+      setErrors(prev => ({ ...prev, auto: null })); setVerifiedAt(prev => ({ ...prev, auto: Date.now() }));
+    } catch (reason) {
+      setErrors(prev => ({ ...prev, auto: reason instanceof Error ? reason.message : "自动技能读取失败" }));
+    } finally { setLoading(prev => ({ ...prev, auto: false })); }
   }, []);
 
   useEffect(() => { loadLegacy(); loadEvolution(); }, [loadLegacy, loadEvolution]);
 
   async function handleCreate() {
-    if (!form.name.trim()) return;
+    if (!form.name.trim() || busyKey) return;
+    setBusyKey("create"); setErrors(prev => ({ ...prev, manual: null }));
     try {
       await api.createSkill({ name: form.name, description: form.description, triggers: form.triggers.split(",").map(t => t.trim()).filter(Boolean), prompt: form.prompt, tools: form.tools.split(",").map(t => t.trim()).filter(Boolean) });
-      setForm({ name: "", description: "", triggers: "", prompt: "", tools: "kb_search" }); setShowAdd(false); loadLegacy();
-    } catch {}
+      setForm({ name: "", description: "", triggers: "", prompt: "", tools: "kb_search" }); setShowAdd(false); await loadLegacy();
+    } catch (reason) { setErrors(prev => ({ ...prev, manual: reason instanceof Error ? reason.message : "技能创建失败" })); }
+    finally { setBusyKey(null); }
   }
 
   async function handleDeleteLegacy(name: string) {
     if (!confirm(`删除技能 "${name}"?`)) return;
-    try { await api.deleteSkill(name); loadLegacy(); } catch {}
+    if (busyKey) return; setBusyKey(`manual:${name}`);
+    try { await api.deleteSkill(name); await loadLegacy(); }
+    catch (reason) { setErrors(prev => ({ ...prev, manual: reason instanceof Error ? reason.message : "技能删除失败" })); }
+    finally { setBusyKey(null); }
   }
 
   async function handleDeleteEvo(id: string) {
     if (!confirm("删除此自动创建的技能?")) return;
-    try { await api.deleteEvolutionSkill(id); loadEvolution(); } catch {}
+    if (busyKey) return; setBusyKey(`auto:${id}`);
+    try { await api.deleteEvolutionSkill(id); await loadEvolution(); }
+    catch (reason) { setErrors(prev => ({ ...prev, auto: reason instanceof Error ? reason.message : "自动技能删除失败" })); }
+    finally { setBusyKey(null); }
   }
 
   async function handleEvoFeedback(id: string, fb: "up" | "down") {
-    try { await api.skillFeedback(id, fb); loadEvolution(); } catch {}
+    if (busyKey) return; setBusyKey(`feedback:${id}`);
+    try { await api.skillFeedback(id, fb); await loadEvolution(); }
+    catch (reason) { setErrors(prev => ({ ...prev, auto: reason instanceof Error ? reason.message : "反馈未取得服务端回执" })); }
+    finally { setBusyKey(null); }
   }
 
   return (
@@ -95,6 +122,9 @@ export function SkillsTab() {
         </div>
       </div>
 
+      {errors[tab] && <div className="mb-4 flex items-start gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(180,35,24,.06)", border: "1px solid rgba(180,35,24,.16)" }}><AlertCircle size={15} className="mt-0.5 flex-shrink-0" style={{ color: "#b42318" }} /><div className="flex-1"><div className="text-[12px]" style={{ color: "#b42318" }}>{errors[tab]}</div><div className="text-[10.5px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{(tab === "auto" ? evoSkills : legacySkills).length ? "当前显示最近一次成功读取结果。" : "当前没有取得可验证的技能列表。"}</div></div><button disabled={loading[tab]} onClick={tab === "auto" ? loadEvolution : loadLegacy} className="inline-flex items-center gap-1 text-[11px]" style={{ color: "var(--accent)" }}><RefreshCw size={12} />重试</button></div>}
+      {verifiedAt[tab] && !errors[tab] && <div className="mb-3 text-[10px]" style={{ color: "var(--text-tertiary)" }}>本次已验证 · {new Date(verifiedAt[tab]!).toLocaleTimeString()}</div>}
+
       {/* V103.90 搜索 / 排序 */}
       {((tab === "auto" && evoSkills.length > 0) || (tab === "manual" && legacySkills.length > 0)) && (
         <div className="flex items-center gap-2 flex-wrap mb-3">
@@ -120,7 +150,7 @@ export function SkillsTab() {
           <input value={form.triggers} onChange={e => setForm({ ...form, triggers: e.target.value })} placeholder="触发词（逗号分隔）" className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }} />
           <textarea value={form.prompt} onChange={e => setForm({ ...form, prompt: e.target.value })} placeholder="技能 Prompt" rows={3} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }} />
           <div className="flex gap-2">
-            <button onClick={handleCreate} className="px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ background: "var(--accent)" }}>创建</button>
+            <button disabled={!!busyKey} onClick={handleCreate} className="px-3 py-1.5 rounded-lg text-xs font-medium text-white disabled:opacity-50" style={{ background: "var(--accent)" }}>{busyKey === "create" ? "等待回执…" : "创建"}</button>
             <button onClick={() => setShowAdd(false)} className="px-3 py-1.5 rounded-lg text-xs" style={{ color: "var(--text-tertiary)" }}>取消</button>
           </div>
         </div>
@@ -129,7 +159,7 @@ export function SkillsTab() {
       {/* Auto-created skills (evolution engine) */}
       {tab === "auto" && (
         <div className="space-y-2">
-          {evoSkills.length === 0 && (
+          {!loading.auto && evoSkills.length === 0 && !errors.auto && (
             <div className="text-center py-12">
               <Brain size={36} style={{ color: "var(--text-tertiary)", opacity: 0.3 }} className="mx-auto mb-3" />
               <p className="text-[13px]" style={{ color: "var(--text-secondary)" }}>暂无自动创建的技能</p>
@@ -150,13 +180,13 @@ export function SkillsTab() {
                   <div className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{s.description}</div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => handleEvoFeedback(s.id, "up")} className="p-1 rounded-md hover:bg-green-50 dark:hover:bg-green-950/20" title="提升质量分">
+                  <button disabled={!!busyKey} onClick={() => handleEvoFeedback(s.id, "up")} className="p-1 rounded-md hover:bg-green-50 dark:hover:bg-green-950/20 disabled:opacity-40" title="提升质量分">
                     <ThumbsUp size={12} style={{ color: "#22c55e" }} />
                   </button>
-                  <button onClick={() => handleEvoFeedback(s.id, "down")} className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-950/20" title="降低质量分">
+                  <button disabled={!!busyKey} onClick={() => handleEvoFeedback(s.id, "down")} className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-40" title="降低质量分">
                     <ThumbsDown size={12} style={{ color: "#ef4444" }} />
                   </button>
-                  <button onClick={() => handleDeleteEvo(s.id)} className="p-1 rounded-md hover:bg-red-100 dark:hover:bg-red-950/30">
+                  <button disabled={!!busyKey} onClick={() => handleDeleteEvo(s.id)} className="p-1 rounded-md hover:bg-red-100 dark:hover:bg-red-950/30 disabled:opacity-40">
                     <Trash2 size={12} className="text-red-400" />
                   </button>
                 </div>
@@ -191,14 +221,14 @@ export function SkillsTab() {
                   <div className="font-semibold text-[13px]" style={{ color: "var(--text-primary)" }}>{s.name}</div>
                   <div className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{s.description}</div>
                 </div>
-                <button onClick={() => handleDeleteLegacy(s.name)} className="p-1 rounded-md hover:bg-red-100"><Trash2 size={14} className="text-red-400" /></button>
+                <button disabled={!!busyKey} onClick={() => handleDeleteLegacy(s.name)} className="p-1 rounded-md hover:bg-red-100 disabled:opacity-40"><Trash2 size={14} className="text-red-400" /></button>
               </div>
               <div className="flex flex-wrap gap-1 mt-2">
                 {(s.triggers || []).map(t => <span key={t} className="px-2 py-0.5 rounded-md text-[10px]" style={{ background: "var(--accent-light)", color: "var(--accent)" }}>{t}</span>)}
               </div>
             </div>
           ))}
-          {legacySkills.length === 0 && <div className="text-center py-8 text-sm" style={{ color: "var(--text-tertiary)" }}>暂无手动技能</div>}
+          {!loading.manual && legacySkills.length === 0 && !errors.manual && <div className="text-center py-8 text-sm" style={{ color: "var(--text-tertiary)" }}>暂无手动技能</div>}
         </div>
       )}
     </div>
@@ -209,7 +239,7 @@ function QualityBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
   const color = pct >= 70 ? "#22c55e" : pct >= 40 ? "#f59e0b" : "#ef4444";
   return (
-    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold"
+    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold"
       style={{ background: `${color}15`, color }}>
       {pct}%
     </span>

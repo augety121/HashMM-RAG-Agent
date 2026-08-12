@@ -67,6 +67,34 @@ def test_admin_allowlist():
     os.environ.pop("HASHMM_SUPABASE_ADMIN_EMAILS", None)
 
 
+def test_server_owned_app_metadata_grants_admin():
+    c = _base_claims()
+    c["app_metadata"] = {"role": "admin"}
+    assert sa.claims_to_user(c)["role"] == "admin"
+
+
+def test_user_metadata_cannot_self_promote():
+    c = _base_claims()
+    c["user_metadata"] = {"role": "admin"}
+    assert sa.claims_to_user(c)["role"] == "user"
+
+
+def test_locally_verified_token_does_not_block_on_remote_role_refresh(monkeypatch):
+    token = "old-app-token"
+    local = _base_claims()
+    remote = {**local, "app_metadata": {"role": "admin"}}
+    sa._verify_cache.clear()
+    monkeypatch.setattr(sa, "enabled", lambda: True)
+    monkeypatch.setattr(sa, "_verify_jwks", lambda value: local if value == token else None)
+    monkeypatch.setattr(
+        sa,
+        "_verify_remote",
+        lambda value: (_ for _ in ()).throw(AssertionError("remote role refresh called")),
+    )
+
+    assert sa.verify_token(token)["role"] == "user"
+
+
 def test_disabled_when_no_url():
     os.environ.pop("HASHMM_SUPABASE_URL", None)
     assert sa.enabled() is False

@@ -38,18 +38,37 @@ _FERNET_PREFIX = "f1:"
 _DEFAULT_SECRET = "hashmm-default-secret-change-me-in-prod"
 
 
+def _is_production() -> bool:
+    """生产判定：HASHMM_REQUIRE_AUTH 开 或 HASHMM_ENV=production。生产下密钥缺陷从严。"""
+    if os.environ.get("HASHMM_REQUIRE_AUTH", "").lower() in ("1", "true", "yes", "on"):
+        return True
+    return os.environ.get("HASHMM_ENV", "").lower() in ("prod", "production")
+
+
 def _secret() -> str:
-    return os.environ.get("HASHMM_SECRET", _DEFAULT_SECRET)
+    s = os.environ.get("HASHMM_SECRET", _DEFAULT_SECRET)
+    # V306 修 REM-11：生产环境拒绝使用默认弱密钥（等同明文），直接失败而非静默降级。
+    if _is_production() and (not s or s == _DEFAULT_SECRET):
+        raise RuntimeError(
+            "生产环境未设置 HASHMM_SECRET（或仍为默认值）。密钥加密不能用默认弱密钥——"
+            "请设置一个高强度随机 HASHMM_SECRET 后再启动。"
+        )
+    return s
 
 
 def _fernet():
     """Return a Fernet instance, or None if cryptography is unavailable."""
+    return _fernet_for_secret(_secret())
+
+
+def _fernet_for_secret(secret: str):
+    """Build a Fernet instance for an explicit operator secret."""
     try:
         from cryptography.fernet import Fernet
     except Exception:
         return None
     # Derive a valid 32-byte urlsafe-base64 key from the operator's secret.
-    digest = hashlib.sha256(_secret().encode("utf-8")).digest()
+    digest = hashlib.sha256(secret.encode("utf-8")).digest()
     key = base64.urlsafe_b64encode(digest)
     return Fernet(key)
 
@@ -84,6 +103,12 @@ def encrypt_secret(plain: str) -> str:
         return ""
     f = _fernet()
     if f is None:
+        # V306 修 REM-11：生产环境缺 cryptography → 不允许 XOR 降级（XOR≈明文），直接失败。
+        if _is_production():
+            raise RuntimeError(
+                "生产环境缺少 cryptography 库，禁止降级为 XOR（等同明文）。"
+                "请安装 cryptography 以启用 Fernet(AEAD) 加密后再启动。"
+            )
         logger.warning(
             "cryptography unavailable — storing secret with legacy XOR (NOT secure). "
             "Install 'cryptography' to enable Fernet encryption."
@@ -110,6 +135,49 @@ def decrypt_secret(cipher: str) -> str:
             return ""
     # No prefix → legacy XOR ciphertext (pre-upgrade row).
     return _xor_decrypt(cipher)
+
+
+def rewrap_legacy_fernet_ciphertext(cipher: str) -> str | None:
+    """Re-encrypt authenticated Fernet data after an operator-key rotation.
+
+    A new ciphertext is returned only when the current key cannot decrypt the
+    value and one supported previous key authenticates it. Early launchers did
+    not persist ``HASHMM_SECRET``, so the historical default is a deliberate
+    one-time candidate. ``HASHMM_SECRET_PREVIOUS`` supports explicit rotations.
+    No plaintext or key material is logged.
+    """
+    if not cipher or not cipher.startswith(_FERNET_PREFIX):
+        return None
+    encoded = cipher[len(_FERNET_PREFIX):].encode("ascii")
+    current_secret = _secret()
+    current = _fernet_for_secret(current_secret)
+    if current is None:
+        return None
+    try:
+        current.decrypt(encoded)
+        return None
+    except Exception:
+        pass
+
+    candidates = []
+    configured_previous = os.environ.get("HASHMM_SECRET_PREVIOUS", "").strip()
+    if configured_previous:
+        candidates.append(configured_previous)
+    if _DEFAULT_SECRET != current_secret:
+        candidates.append(_DEFAULT_SECRET)
+
+    for previous_secret in candidates:
+        if not previous_secret or previous_secret == current_secret:
+            continue
+        previous = _fernet_for_secret(previous_secret)
+        if previous is None:
+            continue
+        try:
+            plain = previous.decrypt(encoded).decode("utf-8")
+        except Exception:
+            continue
+        return _FERNET_PREFIX + current.encrypt(plain.encode("utf-8")).decode("ascii")
+    return None
 
 
 def is_legacy_ciphertext(cipher: str) -> bool:

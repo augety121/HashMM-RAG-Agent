@@ -14,10 +14,34 @@ Usage:
 """
 from __future__ import annotations
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashmm.utils import get_logger, log_suppressed
 
 logger = get_logger("hashmm.chat_retrieval")
+
+
+def _filter_owner_results(results, owner_id: str | None):
+    """Return only evidence owned by ``owner_id``.
+
+    ``None`` is reserved for an explicitly unscoped/privileged caller.  An
+    empty string and legacy chunks without ``owner_id`` both fail closed.
+    Keeping this boundary local to ChatRetrieval ensures query planning,
+    corrective retrieval, graph expansion and section navigation cannot place
+    another tenant's text in the model prompt.
+    """
+    rows = list(results or [])
+    if owner_id is None:
+        return rows
+    owner = str(owner_id or "")
+    if not owner:
+        return []
+
+    def _owner_of(row) -> str:
+        if isinstance(row, dict):
+            return str(row.get("owner_id") or "")
+        return str(getattr(row, "owner_id", "") or "")
+
+    return [row for row in rows if _owner_of(row) == owner]
 
 # v17 Phase 18f: detect when retrieved sources don't mention the query's subject.
 _QUERY_STOP = ("的", "是", "多少", "公司", "查询", "年", "营收", "收入", "销量",
@@ -282,6 +306,7 @@ class AnswerStrategy:
     mode: str = "direct"        # "grounded" | "augmented" | "supplement" | "direct" | "insufficient"
     instruction: str = ""       # System prompt addition for LLM
     confidence: float = 0.0     # Top retrieval score
+    retrieval_contract: dict = field(default_factory=dict)
 
     @property
     def should_cite(self) -> bool:
@@ -644,7 +669,8 @@ class ChatRetrieval:
     def enhance(self, query: str, messages: list[dict],
                 top_k: int = 5,
                 retrieval_mode: str = "mix",
-                allowed_docs: list | None = None) -> tuple[list[dict], list[dict], AnswerStrategy]:
+                allowed_docs: list | None = None,
+                owner_id: str | None = None) -> tuple[list[dict], list[dict], AnswerStrategy]:
         """Enhance conversation with KB retrieval.
 
         v8.0: Supports three retrieval modes:
@@ -657,14 +683,34 @@ class ChatRetrieval:
             messages: Message history
             top_k: Number of results
             retrieval_mode: "naive", "kg", or "mix"
+            allowed_docs: Explicit document ACL patterns, when configured.
+            owner_id: Exact authenticated owner scope when no ACL is configured.
 
         Returns:
             (enhanced_messages, sources, strategy)
         """
         self._ensure_pipeline()
 
-        empty_strategy = AnswerStrategy(mode="direct", instruction="", confidence=0)
-        if not self._pipeline or not self.should_search(query):
+        from hashmm.retrieval.contract import build_retrieval_contract
+        from hashmm.retrieval.run import RetrievalRun
+        retrieval_run = RetrievalRun(
+            query=query, requested_mode=retrieval_mode,
+            requested_top_k=top_k,
+            acl_scoped=allowed_docs is not None or owner_id is not None,
+        )
+        empty_strategy = AnswerStrategy(
+            mode="direct", instruction="", confidence=0,
+            retrieval_contract=build_retrieval_contract(
+                query=query, requested_top_k=top_k, results=(), strategy="direct"))
+        if not self._pipeline:
+            retrieval_run.degraded("pipeline", "retrieval_pipeline_unavailable")
+            empty_strategy.retrieval_contract["run"] = retrieval_run.finish(
+                status="degraded")
+            return messages, [], empty_strategy
+        if not self.should_search(query):
+            retrieval_run.degraded("routing", "query_does_not_require_retrieval")
+            empty_strategy.retrieval_contract["run"] = retrieval_run.finish(
+                status="skipped")
             return messages, [], empty_strategy
 
         # Query-adaptive routing: translate "auto" into a concrete mode based on
@@ -683,13 +729,41 @@ class ChatRetrieval:
                 # still detect multi-hop intent from the query so KG traversal
                 # depth adapts even when the mode wasn't chosen here.
                 self._last_route_hops = route_query(query).hops
+            retrieval_run.route(
+                retrieval_mode, reason=self._last_route_reason,
+                hops=self._last_route_hops,
+            )
             logger.info(f"[Router] {query[:40]} → {retrieval_mode} (hops={self._last_route_hops})")
         except Exception as _e:
             log_suppressed(logger, _e)
+            retrieval_run.route(retrieval_mode)
+            retrieval_run.degraded("routing", type(_e).__name__)
 
         try:
             # Step 1: Analyze query
             analysis = self.analyze_query(query)
+            search_filters: dict = {}
+            if allowed_docs is not None:
+                # A user-selected scope contains exact filenames and can be
+                # pushed into the pipeline. ACL policies can contain globs such
+                # as ``*.pdf``; the legacy filename filter is not glob-aware, so
+                # those remain enforced by the post-search ACL gate.
+                scoped_docs = list(allowed_docs)
+                if scoped_docs and all(
+                    not any(marker in str(name) for marker in ("*", "?", "["))
+                    for name in scoped_docs
+                ):
+                    search_filters["filename"] = scoped_docs
+            if owner_id is not None:
+                search_filters["owner_id"] = str(owner_id or "")
+            search_filters = search_filters or None
+
+            def _search(term: str, *, limit: int):
+                if search_filters:
+                    return self._pipeline.search(
+                        term, top_k=limit, filters=search_filters,
+                    )
+                return self._pipeline.search(term, top_k=limit)
 
             # Step 2: Rewrite query for better retrieval
             search_query = self.rewrite_query(query, messages)
@@ -702,7 +776,7 @@ class ChatRetrieval:
 
             if plan.is_multi_step:
                 # Multi-step: execute plan (comparison, timeline, etc.)
-                merged = execute_plan(plan, self._pipeline)
+                merged = execute_plan(plan, self._pipeline, filters=search_filters)
                 # Convert to SearchResult format
                 from hashmm.retrieval_pipeline import SearchResponse, SearchResult
                 results = [SearchResult(
@@ -710,6 +784,8 @@ class ChatRetrieval:
                     filename=r.get("filename", ""), page=r.get("page", -1),
                     section=r.get("section", ""), doc_id="",
                     chunk_id="", source_type="planned",
+                    owner_id=str(r.get("owner_id", "")),
+                    workspace_id=str(r.get("workspace_id", "")),
                 ) for r in merged[:top_k * 2]]
                 response = SearchResponse(results=results, query=search_query,
                                           total_candidates=len(merged))
@@ -717,7 +793,9 @@ class ChatRetrieval:
                     # Inject output format hint for LLM
                     search_query = f"{search_query}\n\n{plan.output_hint}"
             elif analysis.is_compare and len(analysis.companies) > 1:
-                response = self._compare_search(analysis, top_k)
+                response = self._compare_search(
+                    analysis, top_k, filters=search_filters,
+                )
             else:
                 # v16 Phase 12: optional HyDE + multi-query + RRF fusion
                 from hashmm.retrieval import advanced as _adv
@@ -748,7 +826,7 @@ class ChatRetrieval:
                     result_lists = []
                     for term in search_terms:
                         try:
-                            resp = self._pipeline.search(term, top_k=top_k)
+                            resp = _search(term, limit=top_k)
                             if resp.results:
                                 result_lists.append(resp.results)
                         except Exception:
@@ -759,9 +837,11 @@ class ChatRetrieval:
                         response = SearchResponse(results=fused, query=search_query,
                                                   total_candidates=len(fused))
                     else:
-                        response = self._pipeline.search(search_query, top_k=top_k)
+                        response = _search(search_query, limit=top_k)
                 else:
-                    response = self._pipeline.search(search_query, top_k=top_k)
+                    response = _search(search_query, limit=top_k)
+
+            retrieval_run.attempt(search_query, response.results, stage="primary")
 
             # v6.0: Iterative retrieval — retry with rewritten query if score too low
             low_score_threshold = 1.0  # below this = probably wrong results
@@ -783,7 +863,11 @@ class ChatRetrieval:
                         break
                     retry_queries_tried.add(alt_query)
 
-                    alt_response = self._pipeline.search(alt_query, top_k=top_k)
+                    alt_response = _search(alt_query, limit=top_k)
+                    retrieval_run.attempt(
+                        alt_query, alt_response.results,
+                        stage=f"corrective_{retry_i + 1}",
+                    )
                     if (alt_response.results
                             and alt_response.results[0].score > response.results[0].score):
                         response = alt_response
@@ -795,7 +879,37 @@ class ChatRetrieval:
                     else:
                         break  # No improvement, stop retrying
 
+            selected_index = next(
+                (index for index, item in enumerate(retrieval_run.attempts)
+                 if item.get("query") == search_query),
+                max(0, len(retrieval_run.attempts) - 1),
+            )
+            retrieval_run.select_attempt(selected_index)
+
+            # Tenant boundary must run before confidence routing, KG prose and
+            # prompt construction.  Search remains tolerant of heterogeneous
+            # legacy indexes, but legacy rows without an owner are never
+            # treated as globally shared evidence.
+            if owner_id is not None:
+                _before_owner = len(response.results)
+                response.results = _filter_owner_results(response.results, owner_id)
+                retrieval_run.filtered(
+                    "owner_scope", _before_owner, len(response.results),
+                    reason="exact_authenticated_owner",
+                )
+
             if not response.results:
+                run_record = retrieval_run.finish(
+                    evidence_count=0, total_candidates=response.total_candidates,
+                )
+                empty_strategy.retrieval_contract = build_retrieval_contract(
+                    query=query, rewritten_query=search_query, requested_top_k=top_k,
+                    total_candidates=response.total_candidates,
+                    candidate_top_k=getattr(response, "candidate_top_k", 0),
+                    results=(), elapsed_ms=response.elapsed_ms, strategy="empty",
+                    rerank_method=getattr(response, "rerank_method", ""),
+                    run=run_record,
+                )
                 return messages, [], empty_strategy
 
             # v5.1: Score cutoff — adaptive to score scale
@@ -820,6 +934,10 @@ class ChatRetrieval:
                 if len(filtered) < len(all_results):
                     logger.info(f"Score cutoff: {len(all_results)} → {len(filtered)} "
                                 f"(threshold={threshold:.4f})")
+                retrieval_run.filtered(
+                    "score_cutoff", len(all_results), len(filtered),
+                    reason=f"threshold={threshold:.6f}",
+                )
                 response.results = filtered
 
             # Step 4: Route by confidence (+ entity-presence refusal)
@@ -879,36 +997,150 @@ class ChatRetrieval:
                         )
                 except Exception as e:
                     logger.debug(f"KG retrieval skipped: {e}")
+                    retrieval_run.degraded("knowledge_graph", type(e).__name__)
 
             # Step 5: Build context injection (three-layer: entities + relations + chunks)
             context_parts = []
             sources = []
 
-            # Layer 1: KG entities (if available)
-            if kg_entities_ctx:
+            # Layer 1/2: KG summaries are only safe in the single-tenant path.
+            # With an explicit document allow-list, KG nodes/edges may aggregate
+            # support from several documents, so only the ACL-checked original
+            # evidence chunks below may enter model context.
+            if kg_entities_ctx and allowed_docs is None and owner_id is None:
                 context_parts.append(kg_entities_ctx)
-            # Layer 2: KG relations (if available)
-            if kg_relations_ctx:
+            if kg_relations_ctx and allowed_docs is None and owner_id is None:
                 context_parts.append(kg_relations_ctx)
             # Layer 3: Document chunks
             chunk_parts = []
             # v17 Phase 31: ② doc-level ACL filter (no-op when allowed_docs is None,
             # i.e. single-tenant default) + ⑦ optional retrieval diversification
             # (opt-in via env; validate on real eval before trusting).
-            _results = response.results
+            _results = _filter_owner_results(response.results, owner_id)
+            _before_acl = len(_results)
+            _doc_acl = None
             try:
                 if allowed_docs is not None:
                     from hashmm.access_control import DocumentACL, filter_results
-                    _acl = DocumentACL(default=list(allowed_docs))
-                    _results = filter_results(_results, _acl, principal="_")
+                    _doc_acl = DocumentACL(default=list(allowed_docs))
+                    _results = filter_results(_results, _doc_acl, principal="_")
                 import os as _os
                 if _os.environ.get("HASHMM_RETRIEVAL_DIVERSIFY") == "1":
                     from hashmm.retrieval_quality import diversify
                     _results = diversify(
                         _results,
                         max_per_doc=int(_os.environ.get("HASHMM_DIVERSIFY_MAX_PER_DOC", "3")))
+                if allowed_docs is not None:
+                    retrieval_run.filtered(
+                        "document_acl", _before_acl, len(_results),
+                        reason="server_side_allow_list",
+                    )
             except Exception:
-                _results = response.results
+                # An ACL failure must never fall back to the unfiltered result
+                # set.  Single-tenant retrieval can keep its previous graceful
+                # degradation behavior.
+                _results = [] if allowed_docs is not None else response.results
+                retrieval_run.degraded("document_acl", "filter_failed_closed")
+
+            # Graph Engineering: KGRetriever previously returned source chunk IDs
+            # but Chat only injected entity/relation prose and never fetched those
+            # chunks.  Join query-local graph support back to the original corpus,
+            # bound the expansion, then re-apply the same document ACL.
+            _graph_expansion = None
+            try:
+                if kg_result and getattr(kg_result, "evidence", None):
+                    _before_graph = len(_results)
+                    from hashmm.retrieval.graph_engineering import expand_graph_evidence
+                    _corpus = getattr(getattr(self, "_pipeline", None), "vector_index", None)
+                    _corpus = getattr(_corpus, "_metadata", None) or []
+                    _graph_expansion = expand_graph_evidence(
+                        _results, _corpus, kg_result.evidence,
+                        acl=_doc_acl, principal="_",
+                    )
+                    _results = _graph_expansion.results
+                    if allowed_docs is not None:
+                        from hashmm.access_control import DocumentACL, filter_results
+                        _results = filter_results(
+                            _results, DocumentACL(default=list(allowed_docs)), principal="_",
+                        )
+                    retrieval_run.expanded(
+                        "knowledge_graph", _before_graph, len(_results),
+                        considered=_graph_expansion.considered,
+                        skipped_missing=_graph_expansion.skipped_missing,
+                        skipped_forbidden=_graph_expansion.skipped_forbidden,
+                    )
+                    if _graph_expansion.added_chunk_ids:
+                        logger.info(
+                            "Graph Engineering: added %d evidence chunks (considered=%d, missing=%d, forbidden=%d)",
+                            len(_graph_expansion.added_chunk_ids),
+                            _graph_expansion.considered,
+                            _graph_expansion.skipped_missing,
+                            _graph_expansion.skipped_forbidden,
+                        )
+            except Exception as _e:
+                logger.debug("Graph Engineering evidence expansion skipped: %s", _e)
+                retrieval_run.degraded("graph_expansion", type(_e).__name__)
+
+            # V174→深化：Navigate 扩展接入【LLM 上下文】（不止 sources 层）。命中块沿单文档结构图
+            # （section 树 + chunk 连接）把相邻块/本节首块/同节兄弟补进 _results，让综述能看到整节上下文。
+            # 仅 HASHMM_NAVIGATE_EXPAND=1 时启用；语料取 _pipeline 向量索引 _metadata；任何异常都安全降级。
+            try:
+                from hashmm.retrieval import section_graph as _sg
+                if _sg.navigate_enabled() and _results:
+                    _corpus = getattr(getattr(self, "_pipeline", None), "vector_index", None)
+                    _corpus = getattr(_corpus, "_metadata", None)
+                    if _corpus:
+                        import types as _types
+                        _graph = _sg.build_chunk_graph(_corpus)
+                        _lut = {str(c.get("chunk_id") or ""): c for c in _corpus}
+                        _seeds = [getattr(r, "chunk_id", "") for r in _results if getattr(r, "chunk_id", "")]
+                        _seen = set(_seeds)
+                        for _cid in _sg.navigate_expand(_seeds, _graph):
+                            if _cid in _seen:
+                                continue
+                            _ch = _lut.get(_cid)
+                            if not _ch or not str(_ch.get("text") or "").strip():
+                                continue
+                            _seen.add(_cid)
+                            _results.append(_types.SimpleNamespace(
+                                text=str(_ch.get("text") or ""), score=0.0,
+                                doc_id=_ch.get("doc_id", ""),
+                                filename=_ch.get("doc_title") or _ch.get("filename") or "",
+                                page=_ch.get("page", -1),
+                                section=_ch.get("section", "") or _ch.get("section_path", ""),
+                                chunk_id=_cid, source_type="navigate", display_text=None,
+                                owner_id=str(_ch.get("owner_id") or ""),
+                                workspace_id=str(_ch.get("workspace_id") or "")))
+            except Exception as _e:
+                retrieval_run.degraded("section_navigation", type(_e).__name__)
+
+            # Final context boundary.  Graph and section navigation both append
+            # results after the initial retrieval filter, therefore permission
+            # enforcement is repeated immediately before prompt construction.
+            if allowed_docs is not None:
+                _before_final_acl = len(_results)
+                try:
+                    from hashmm.access_control import DocumentACL, filter_results
+                    _results = filter_results(
+                        _results,
+                        _doc_acl or DocumentACL(default=list(allowed_docs)),
+                        principal="_",
+                    )
+                    retrieval_run.filtered(
+                        "final_document_acl", _before_final_acl, len(_results),
+                        reason="post_expansion_recheck",
+                    )
+                except Exception:
+                    _results = []
+                    retrieval_run.degraded("final_document_acl", "filter_failed_closed")
+            if owner_id is not None:
+                _before_final_owner = len(_results)
+                _results = _filter_owner_results(_results, owner_id)
+                retrieval_run.filtered(
+                    "final_owner_scope", _before_final_owner, len(_results),
+                    reason="post_expansion_recheck",
+                )
+
             for i, r in enumerate(_results):
                 idx = i + 1
                 source_info = r.filename or r.doc_id
@@ -937,14 +1169,50 @@ class ChatRetrieval:
                 sources.append({
                     "id": idx,
                     "text": r.text[:200],
+                    "chunk_id": getattr(r, "chunk_id", ""),
+                    "doc_id": getattr(r, "doc_id", ""),
                     "filename": r.filename,
                     "page": r.page,
                     "section": r.section,
                     "score": round(r.score, 4),
+                    "method": getattr(r, "source_type", "") or "retrieval",
+                    "modality": getattr(r, "modality", "text"),
+                    "graph_support": getattr(r, "graph_support", None),
                 })
 
             if chunk_parts:
                 context_parts.append("## 相关文档段落\n" + "\n\n".join(chunk_parts))
+
+            _graph_stats = {}
+            if _graph_expansion is not None:
+                _graph_stats = {
+                    "considered": getattr(_graph_expansion, "considered", 0),
+                    "added": len(getattr(_graph_expansion, "added_chunk_ids", []) or []),
+                    "missing": getattr(_graph_expansion, "skipped_missing", 0),
+                    "forbidden": getattr(_graph_expansion, "skipped_forbidden", 0),
+                }
+            _filtered_total = sum(item.get("removed", 0) for item in retrieval_run.filters)
+            _run_record = retrieval_run.finish(
+                evidence_count=len(sources), total_candidates=response.total_candidates,
+            )
+            strategy.retrieval_contract = build_retrieval_contract(
+                query=query,
+                rewritten_query=search_query,
+                requested_top_k=top_k,
+                total_candidates=response.total_candidates,
+                candidate_top_k=getattr(response, "candidate_top_k", 0),
+                results=sources,
+                elapsed_ms=response.elapsed_ms,
+                strategy=strategy.mode,
+                rerank_method=getattr(response, "rerank_method", ""),
+                graph=_graph_stats,
+                filtered_count=_filtered_total,
+                run=_run_record,
+            )
+            if sources:
+                # Stored with the first source so Chat, desktop and App receive
+                # the same deterministic trace without a singleton side channel.
+                sources[0]["retrieval_contract"] = strategy.retrieval_contract
 
             retrieval_text = "\n\n".join(context_parts)
             injection = (
@@ -987,9 +1255,20 @@ class ChatRetrieval:
 
         except Exception as e:
             logger.warning(f"Chat retrieval failed: {e}")
+            retrieval_run.degraded("retrieval", f"{type(e).__name__}: {str(e)[:160]}")
+            empty_strategy.retrieval_contract = build_retrieval_contract(
+                query=query, requested_top_k=top_k, results=(), strategy="failed",
+                run=retrieval_run.finish(status="failed"),
+            )
             return messages, [], empty_strategy
 
-    def _compare_search(self, analysis: QueryAnalysis, top_k: int):
+    def _compare_search(
+        self,
+        analysis: QueryAnalysis,
+        top_k: int,
+        *,
+        filters: dict | None = None,
+    ):
         """Search separately for each entity in a comparison query."""
         from hashmm.retrieval_pipeline import SearchResponse, SearchResult
 
@@ -1001,7 +1280,12 @@ class ChatRetrieval:
             if analysis.times:
                 sub_query += " " + analysis.times[0]
 
-            response = self._pipeline.search(sub_query, top_k=top_k)
+            if filters:
+                response = self._pipeline.search(
+                    sub_query, top_k=top_k, filters=filters,
+                )
+            else:
+                response = self._pipeline.search(sub_query, top_k=top_k)
             all_results.extend(response.results)
 
         # Deduplicate by chunk_id
@@ -1026,7 +1310,7 @@ class ChatRetrieval:
         """Generate citation footer text."""
         if not sources:
             return ""
-        lines = ["\n\n---\n**📚 参考来源：**"]
+        lines = ["\n\n---\n**参考来源：**"]
         for s in sources:
             page_str = f" p.{s['page']}" if s.get('page', -1) > 0 else ""
             lines.append(f"[{s['id']}] {s.get('filename', '')}{page_str}")

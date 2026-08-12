@@ -35,7 +35,7 @@ class AvatarRepository @Inject constructor(
     private val auth: AuthRepository,
     private val supabase: SupabaseClient,
 ) {
-    private val http = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
+    private val http = SharedHttp.base.newBuilder().callTimeout(15, TimeUnit.SECONDS).build()
     private val jpeg = "image/jpeg".toMediaTypeOrNull()
 
     @Serializable
@@ -60,6 +60,40 @@ class AvatarRepository @Inject constructor(
 
     private fun toDataUrl(jpegBytes: ByteArray): String =
         "data:image/jpeg;base64," + Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+
+    // ── 昵称（display_name，与桌面端个人信息页互通）──
+    @kotlinx.serialization.Serializable
+    private data class NameRow(@kotlinx.serialization.SerialName("display_name") val displayName: String? = null)
+
+    @kotlinx.serialization.Serializable
+    private data class NamePatch(@kotlinx.serialization.SerialName("display_name") val displayName: String)
+
+    @kotlinx.serialization.Serializable
+    private data class NameUpsert(
+        @kotlinx.serialization.SerialName("id") val id: String,
+        @kotlinx.serialization.SerialName("display_name") val displayName: String,
+    )
+
+    /** 读取当前用户昵称（profiles.display_name）；无档案/离线返回 null。 */
+    suspend fun loadDisplayName(): String? = withContext(Dispatchers.IO) {
+        val uid = auth.currentUserId() ?: return@withContext null
+        try {
+            supabase.postgrest.from("profiles")
+                .select(Columns.list("display_name")) { filter { eq("id", uid) }; limit(1) }
+                .decodeList<NameRow>().firstOrNull()?.displayName
+        } catch (_: Exception) { null }
+    }
+
+    /** 保存昵称到 profiles.display_name（RLS 仅本人可写）。 */
+    suspend fun saveDisplayName(name: String): Boolean = withContext(Dispatchers.IO) {
+        val uid = auth.currentUserId() ?: return@withContext false
+        try {
+            // V248: upsert 而非 update——profiles 表没有该用户行时，update 影响 0 行、昵称存不进去
+            //（这正是"个人信息页改了昵称、我的主页仍显示 QQ 号"的根因）。upsert 没有就插入。
+            supabase.postgrest.from("profiles").upsert(NameUpsert(uid, name.trim()))
+            true
+        } catch (_: Exception) { false }
+    }
 
     private fun fromDataUrl(dataUrl: String): ByteArray? = try {
         val b64 = dataUrl.substringAfter("base64,", "")

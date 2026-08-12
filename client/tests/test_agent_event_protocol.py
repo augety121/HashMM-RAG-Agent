@@ -3,7 +3,7 @@
 锁住四件事：
 1. tool_start / tool_done 携带同一个非空 id（前端据此把"运行中"原地更新为"完成"）。
 2. narrate trace 携带模型工具前说明的【完整】文字（不再截断到 200 字）。
-3. reasoning_content 存在时，每轮发 ("thinking", {"content": ...}) 事件且含原文。
+3. reasoning_content 只在供应商请求链内部续传，不进入公开 Agent 事件。
 4. 工具循环不再发 "调用 xxx..." 噪音 trace；工具失败时 tool_done.status == "error"。
 """
 import asyncio
@@ -90,13 +90,460 @@ def test_narrate_full_text_not_truncated():
     assert narrates[0]["detail"] == NARRATION  # 一字不少
 
 
-def test_thinking_emitted_every_iteration():
-    """每轮 reasoning_content 都通过 thinking 事件实时上报（含原文）。"""
+def test_provider_reasoning_is_not_emitted_as_public_event():
+    """供应商私有 reasoning 不能泄露到用户可见事件流。"""
     events = _run_loop(_ToolThenAnswerLLM())
-    thinkings = [ed["content"] for et, ed in events if et == "thinking"]
-    assert len(thinkings) == 2
-    assert "先查知识库" in thinkings[0]
-    assert "直接总结" in thinkings[1]
+    public_payload = "\n".join(str(data) for _, data in events)
+    assert "先查知识库" not in public_payload
+    assert "直接总结" not in public_payload
+    assert not [data for event_type, data in events if event_type == "thinking"]
+
+
+def test_public_progress_projection_never_returns_private_reasoning():
+    """所有兼容入口必须把私有推理投影为固定、可审计的公开状态。"""
+    from hashmm.api.public_progress import public_analysis_status
+
+    private = "这是供应商私有推理，包含不应展示的中间假设。"
+    public = public_analysis_status(private)
+    assert public == "正在分析任务并选择下一步"
+    assert private not in public
+
+
+def test_text_form_tool_call_preserves_reasoning_for_next_request():
+    """DSML 工具调用也必须原样续传 DeepSeek reasoning_content。
+
+    真实故障链是模型先用文本形式返回工具调用；兼容解析器把它转换成
+    structured tool_calls 后却丢了 reasoning_content，导致下一轮请求被
+    DeepSeek thinking-mode 以 HTTP 400 拒绝。
+    """
+    from hashmm.agent.loop import AgentLoop
+
+    reasoning = "先打开原始来源，核验标题、发布时间和关键事实。"
+
+    class _TextToolLLM:
+        def __init__(self):
+            self.calls = 0
+            self.requests = []
+
+        def call_with_tools(self, messages, tools=None):
+            self.calls += 1
+            self.requests.append([dict(message) for message in messages])
+            if self.calls == 1:
+                return _Resp(_Msg(
+                    content=(
+                        "我先核验原始来源。"
+                        '<tool_calls><invoke name="fetch_url">'
+                        '<parameter name="url">https://example.com/source</parameter>'
+                        "</invoke></tool_calls>"
+                    ),
+                    reasoning=reasoning,
+                ))
+            return _Resp(_Msg(content="来源已核验。", reasoning="基于工具结果收尾。"))
+
+    class _NoNetwork(AgentLoop):
+        async def _execute_tool(self, name, args, user_id):
+            return {"status": "ok", "content": "原始来源正文"}
+
+    llm = _TextToolLLM()
+
+    async def _run():
+        loop = _NoNetwork(
+            llm_fn=llm,
+            system_prompt="助手",
+            user_id="u",
+            conv_id="cReasoningReplay",
+        )
+        return [
+            (event_type, event_data)
+            async for event_type, event_data in loop.run(
+                query="核验来源", history=[], user_id="u"
+            )
+        ]
+
+    asyncio.run(_run())
+    assert len(llm.requests) >= 2
+    replayed = [
+        message
+        for message in llm.requests[1]
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    assert len(replayed) == 1
+    assert replayed[0]["reasoning_content"] == reasoning
+    assert replayed[0]["tool_calls"][0]["function"]["name"] == "fetch_url"
+
+
+def test_publisher_delivery_retry_preserves_reasoning_and_creates_both_files():
+    """交付门重试既不能丢 DeepSeek reasoning，也不能只承诺生成文件。"""
+    import json
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from hashmm.agent.loop import AgentLoop
+
+    first_reasoning = "来源已经核验，下一步必须落盘两种交付格式。"
+    current = datetime.now(ZoneInfo("Asia/Shanghai"))
+    source_time = (current - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
+    cutoff_time = (current - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M")
+    valid_markdown = (
+        "# AI 行业简报\n\n"
+        f"数据截至：{cutoff_time}（北京时间）\n\n"
+        "## 模型厂商发布可靠性更新\n\n"
+        "厂商在官方发布页公布了面向生产工作负载的可靠性更新。"
+        "原始页面已经实际打开，标题、发布时间与关键变更均已逐项核对；"
+        "本段只陈述原始页面能够直接支持的内容，并把编辑判断与事实分开。\n\n"
+        f"来源：https://example.com/official-release ，发布于 {source_time}"
+        "（北京时间）｜状态：已核验\n\n"
+        "## 待确认项\n\n发布前仍需用户确认标题和最终排版，不会自动发布。"
+    )
+    valid_html = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<style>body{font-family:sans-serif;line-height:1.7}</style></head><body>"
+        "<h1>AI 行业简报</h1>"
+        f"<p>数据截至：{cutoff_time}（北京时间）</p>"
+        "<h2>模型厂商发布可靠性更新</h2>"
+        "<p>厂商在官方发布页公布了面向生产工作负载的可靠性更新。"
+        "原始页面已经实际打开，标题、发布时间与关键变更均已逐项核对；"
+        "本段只陈述原始页面能够直接支持的内容，并把编辑判断与事实分开。</p>"
+        f"<p>来源：https://example.com/official-release，发布于 {source_time}"
+        "（北京时间），状态：已核验。</p>"
+        "<h2>待确认项</h2><p>发布前仍需用户确认标题和最终排版，不会自动发布。</p>"
+        "</body></html>"
+    )
+
+    class _PublisherLLM:
+        def __init__(self):
+            self.calls = 0
+            self.requests = []
+
+        def call_with_tools(self, messages, tools=None):
+            self.calls += 1
+            self.requests.append([dict(message) for message in messages])
+            if self.calls == 1:
+                return _Resp(_Msg(
+                    content="候选已经整理完毕，现在生成 Markdown 和 HTML。",
+                    reasoning=first_reasoning,
+                ))
+            if self.calls == 2:
+                return _Resp(_Msg(
+                    content="正在生成两份草稿。",
+                    tool_calls=[
+                        _TC(
+                            "create_file",
+                            json.dumps(
+                                {"filename": "ai-brief.md", "content": valid_markdown},
+                                ensure_ascii=False,
+                            ),
+                            id="md_1",
+                        ),
+                        _TC(
+                            "create_file",
+                            json.dumps(
+                                {"filename": "ai-brief.html", "content": valid_html},
+                                ensure_ascii=False,
+                            ),
+                            id="html_1",
+                        ),
+                    ],
+                    reasoning="按交付门要求创建两个真实文件。",
+                ))
+            return _Resp(_Msg(
+                content="Markdown 与公众号兼容 HTML 草稿均已生成，发布前等待你的确认。",
+                reasoning="交付物齐全，可以收尾。",
+            ))
+
+    class _LocalFiles(AgentLoop):
+        async def _execute_tool(self, name, args, user_id):
+            assert name == "create_file"
+            return {
+                "status": "ok",
+                "file": {
+                    "filename": args["filename"],
+                    "download_url": f"/api/files/{args['filename']}",
+                },
+            }
+
+    llm = _PublisherLLM()
+
+    async def _run():
+        loop = _LocalFiles(
+            llm_fn=llm,
+            system_prompt="助手",
+            user_id="u",
+            conv_id="cPublisherReasoning",
+            workflow_mode="publisher",
+        )
+        return [
+            (event_type, event_data)
+            async for event_type, event_data in loop.run(
+                query="生成过去 24 小时 AI 行业简报并交付 Markdown 和 HTML",
+                history=[],
+                user_id="u",
+            )
+        ]
+
+    events = asyncio.run(_run())
+    replayed = [
+        message
+        for message in llm.requests[1]
+        if message.get("role") == "assistant"
+        and message.get("content", "").startswith("候选已经整理")
+    ]
+    assert replayed == [{
+        "role": "assistant",
+        "content": "候选已经整理完毕，现在生成 Markdown 和 HTML。",
+        "reasoning_content": first_reasoning,
+    }]
+    files = [data["filename"] for event, data in events if event == "file"]
+    assert files == ["ai-brief.md", "ai-brief.html"]
+    done = [data for event, data in events if event == "done"][-1]
+    assert done["stop_reason"] == "completed"
+
+
+def test_publisher_without_real_files_fails_closed():
+    """连续只说“正在生成”不能把简报任务标记为完成。"""
+    class _PromiseOnlyLLM:
+        def call_with_tools(self, messages, tools=None):
+            return _Resp(_Msg(
+                content=(
+                    "# AI 行业简报\n\n候选池已经整理，接下来生成 Markdown 和 HTML。"
+                ),
+                reasoning="仍未调用文件工具。",
+            ))
+
+    events = _run_loop(
+        _PromiseOnlyLLM(),
+        workflow_mode="publisher",
+    )
+    done = [data for event, data in events if event == "done"][-1]
+    assert done["stop_reason"] == "delivery_incomplete"
+    terminal_traces = [
+        data for event, data in events
+        if event == "trace" and data.get("node") in {"done", "error"}
+    ]
+    assert terminal_traces[-1]["node"] == "error"
+    assert not any(
+        data.get("node") == "done"
+        for event, data in events
+        if event == "trace"
+    )
+
+
+def test_publisher_materializes_html_after_model_only_created_markdown():
+    """模型漏掉 HTML 时由交付层做安全、确定性的格式转换。
+
+    这条回归对应真实故障：模型已经写入完整 Markdown，随后只说
+    “现在生成 HTML”并结束，产品却把这一轮留在半完成状态。
+    """
+    import json
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from hashmm.agent.loop import AgentLoop
+
+    current = datetime.now(ZoneInfo("Asia/Shanghai"))
+    source_time = (current - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
+    cutoff_time = (current - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M")
+    markdown = (
+        "# AI 行业简报\n\n"
+        f"数据截至：{cutoff_time}（北京时间）\n\n"
+        "## 官方发布：模型服务可靠性更新\n\n"
+        "模型厂商在官方页面公布了一项面向生产工作负载的可靠性更新。"
+        "原始页面已经实际打开，标题、发布时间与关键事实均完成逐项核对。"
+        "这里只保留原始页面能够直接支持的事实，并把编辑判断与事实分开。\n\n"
+        f"来源：https://example.com/official-release ，发布于 {source_time}"
+        "（北京时间）｜状态：已核验\n\n"
+        "## 待确认项\n\n发布前仍需用户确认标题与最终版式，不会自动发布。"
+    )
+
+    class _MarkdownOnlyLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def call_with_tools(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return _Resp(_Msg(
+                    content="先写入完成核验的 Markdown 草稿。",
+                    tool_calls=[_TC(
+                        "create_file",
+                        json.dumps(
+                            {"filename": "daily.md", "content": markdown},
+                            ensure_ascii=False,
+                        ),
+                        id="md_only",
+                    )],
+                    reasoning="先持久化正文。",
+                ))
+            return _Resp(_Msg(
+                content="Markdown 已生成。",
+                reasoning="模型遗漏了 HTML，交付层必须补齐。",
+            ))
+
+    created: dict[str, str] = {}
+
+    class _LocalFiles(AgentLoop):
+        async def _execute_tool(self, name, args, user_id):
+            assert name == "create_file"
+            created[args["filename"]] = args["content"]
+            return {
+                "status": "ok",
+                "file": {
+                    "filename": args["filename"],
+                    "download_url": f"/api/files/{args['filename']}",
+                },
+            }
+
+    async def _run():
+        loop = _LocalFiles(
+            llm_fn=_MarkdownOnlyLLM(),
+            system_prompt="助手",
+            user_id="u",
+            conv_id="cPublisherMaterialize",
+            workflow_mode="publisher",
+        )
+        return [
+            (event_type, event_data)
+            async for event_type, event_data in loop.run(
+                query="生成过去 24 小时 AI 简报并交付 Markdown 和 HTML",
+                history=[],
+                user_id="u",
+            )
+        ]
+
+    events = asyncio.run(_run())
+    assert set(created) == {"daily.md", "daily.html"}
+    assert "<script" not in created["daily.html"].lower()
+    assert "官方发布：模型服务可靠性更新" in created["daily.html"]
+    done = [data for event, data in events if event == "done"][-1]
+    assert done["stop_reason"] == "completed"
+    assert [data["filename"] for event, data in events if event == "file"] == [
+        "daily.md",
+        "daily.html",
+    ]
+
+
+def test_legacy_handler_keeps_provider_reasoning_private():
+    """旧兼容 Handler 也只能公开固定进度，不能泄露 reasoning_content。"""
+    from hashmm.api.handlers.agent import AgentLoopHandler
+
+    private_reasoning = "这是供应商的私有推理，不应显示给用户。"
+
+    class _LegacyLLM:
+        def __init__(self):
+            self.calls = 0
+            self.requests = []
+
+        def call_with_tools(self, messages, tools, tool_choice="auto"):
+            self.calls += 1
+            self.requests.append([dict(item) for item in messages])
+            if self.calls == 1:
+                return type("Choice", (), {
+                    "message": _Msg(
+                        content="我先读取资料。",
+                        tool_calls=[_TC("kb_search", '{"query":"可靠性"}')],
+                        reasoning=private_reasoning,
+                    ),
+                    "finish_reason": "tool_calls",
+                })()
+            return type("Choice", (), {
+                "message": _Msg(content="资料读取完成。", reasoning="收尾推理"),
+                "finish_reason": "stop",
+            })()
+
+    handler = AgentLoopHandler(
+        query="读取资料",
+        conv_id="legacy-private",
+        history=[],
+        llm_fn=_LegacyLLM(),
+        tool_exec_fn=lambda *_: "OK",
+        tool_definitions=[{
+            "type": "function",
+            "function": {
+                "name": "kb_search",
+                "description": "搜索资料",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }],
+    )
+    events = list(handler.run())
+    public = "\n".join(str(event.data) for event in events)
+    assert private_reasoning not in public
+    assert "收尾推理" not in public
+    assert not [event for event in events if event.event == "thinking"]
+    replayed = [
+        item
+        for item in handler.llm_fn.requests[1]
+        if item.get("role") == "assistant" and item.get("tool_calls")
+    ]
+    assert replayed[0]["reasoning_content"] == private_reasoning
+
+
+def test_heartbeat_can_restart_after_stop():
+    """同一长任务中的第二个慢步骤仍必须有 keepalive。"""
+    import time
+
+    from hashmm.api.handlers.base import HeartbeatThread
+
+    heartbeat = HeartbeatThread(interval=0.01)
+    heartbeat.start()
+    time.sleep(0.03)
+    heartbeat.stop()
+    assert heartbeat.drain()
+
+    heartbeat.start()
+    time.sleep(0.03)
+    heartbeat.stop()
+    assert heartbeat.drain()
+
+
+def test_todo_manifest_revision_is_stable_and_monotonic():
+    """同一轮任务的清单必须用稳定 manifest_id 和单调 revision 防止重放倒退。"""
+    from hashmm.agent.loop import AgentLoop
+
+    class _TodoLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def call_with_tools(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return _Resp(_Msg(tool_calls=[_TC(
+                    "update_todo",
+                    '{"items":[{"text":"核验来源","status":"doing"},'
+                    '{"text":"生成交付物","status":"pending"}]}',
+                    id="todo_1",
+                )]))
+            if self.calls == 2:
+                return _Resp(_Msg(tool_calls=[_TC(
+                    "update_todo",
+                    '{"items":[{"text":"核验来源","status":"done"},'
+                    '{"text":"生成交付物","status":"doing"}]}',
+                    id="todo_2",
+                )]))
+            return _Resp(_Msg(content="继续执行，尚未把未完成事项伪装成完成。"))
+
+    async def _run():
+        loop = AgentLoop(
+            llm_fn=_TodoLLM(),
+            system_prompt="助手",
+            user_id="u",
+            conv_id="cTodoRevision",
+        )
+        return [
+            (event_type, event_data)
+            async for event_type, event_data in loop.run(
+                query="完成一个两步任务", history=[], user_id="u"
+            )
+        ]
+
+    events = asyncio.run(_run())
+    todos = [data for event, data in events if event == "todo"]
+    assert len(todos) >= 2
+    assert todos[0]["manifest_id"]
+    assert todos[0]["manifest_id"] == todos[1]["manifest_id"]
+    assert [todos[0]["revision"], todos[1]["revision"]] == [1, 2]
+    assert todos[0]["items"][0]["status"] == "doing"
+    assert todos[1]["items"][0]["status"] == "done"
 
 
 def test_no_calling_noise_trace():

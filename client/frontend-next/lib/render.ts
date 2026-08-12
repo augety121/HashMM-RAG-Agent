@@ -1,25 +1,49 @@
+import { stripDangerousHtml } from "./sanitize-html";
+
 function esc(t: string) {
   return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /** Strip DSML / DeepSeek internal tags and XML tool tags */
 export function sanitizeLLMOutput(text: string): string {
+  // V306 修 DESK-P0-03：先做危险 HTML 净化（去 <script>/<iframe>/<svg>、事件处理器、危险协议），
+  // 再剥离内部标记。渲染管线后续只应产出白名单标签，任何注入的可执行内容在此处已被中和。
+  let t = stripDangerousHtml(text);
+  // Empty ChatML role frames leak the literal role name if markers are stripped
+  // independently ("<|im_start|>system<|im_end|>" -> "system"). Remove the
+  // complete frame first; non-empty content is handled by the generic marker pass.
+  t = t.replace(/<\|im_start\|>\s*(?:system|assistant|user)\s*<\|im_end\|>/gi, "");
   // DeepSeek internal markers
-  let t = text.replace(/<\|?\/?(?:DSML|tool_calls?|function_call|system|end|im_start|im_end|endoftext)[^>]*\|?>/g, "");
+  t = t.replace(/<\|?\/?(?:DSML|tool_calls?|function_call|system|end|im_start|im_end|endoftext)[^>]*\|?>/g, "");
   // XML-like tool/observation tags
   t = t.replace(/<\/?(?:tool_call|function|result|observation|action|tool_result|assistant_response)[^>]*>/g, "");
+  // 跨端标记：App 澄清气泡的身份标记，网页端只剥离（视觉由 App 侧承载）
+  t = t.replace(/\u27E6CLARIFY\u27E7/g, "");
   return t;
 }
 
 export function renderMsg(text: string): string {
   const mb: { d: boolean; m: string }[] = [];
   const cb: { lang: string; code: string }[] = [];
+  const links: { label: string; url: string }[] = [];
   let t = sanitizeLLMOutput(text);
 
   // Extract code blocks (```lang ... ```)
   t = t.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
     cb.push({ lang: lang || "text", code: code.trimEnd() });
     return `%%CODE${cb.length - 1}%%`;
+  });
+
+  // Pull links out before any generated HTML exists. This lets bare URLs and
+  // Markdown links share one safe, delegated-click path without accidentally
+  // linkifying href attributes created later in the pipeline.
+  t = t.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_m, label, url) => {
+    links.push({ label: String(label), url: String(url) });
+    return `%%LINK${links.length - 1}%%`;
+  });
+  t = t.replace(/https?:\/\/[^\s<>"'）】}，。！？；：,;]+/gi, (url) => {
+    links.push({ label: url, url });
+    return `%%LINK${links.length - 1}%%`;
   });
 
   // Strip markdown headers → bold (outside code blocks)
@@ -50,14 +74,32 @@ export function renderMsg(text: string): string {
 
   t = t.replace(/<(?!\/?(?:table|thead|tbody|tr|th|td|div)[ >])/g, '&lt;');
 
-  // Headers, bold, citations, inline code, lists
+  // Blockquotes and contiguous lists use semantic HTML. Generated tags are
+  // created only after the raw '<' gate above, so user-supplied tags cannot
+  // acquire attributes or become executable markup.
+  t = t.replace(/(?:^>\s?.+(?:\n|$))+/gm, (block) => {
+    const body = block.trimEnd().split("\n").map(line => line.replace(/^>\s?/, "")).join("<br>");
+    return `<blockquote class="msg-blockquote">${body}</blockquote>`;
+  });
+  t = t.replace(/(?:^[-•]\s+.+(?:\n|$))+/gm, (block) => {
+    const items = block.trimEnd().split("\n").map(line => line.replace(/^[-•]\s+/, ""));
+    return `<ul class="msg-list">${items.map(item => `<li>${item}</li>`).join("")}</ul>`;
+  });
+  t = t.replace(/(?:^\d+\.\s+.+(?:\n|$))+/gm, (block) => {
+    const items = block.trimEnd().split("\n").map(line => line.replace(/^\d+\.\s+/, ""));
+    return `<ol class="msg-list msg-list-ordered">${items.map(item => `<li>${item}</li>`).join("")}</ol>`;
+  });
+
+  // Headers, bold, citations, inline code, and http(s) Markdown links.
   // Headers already converted to bold above, skip legacy handler
   t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   t = t.replace(/\[(\d+)\]/g, '<sup class="cite-num" data-n="$1">$1</sup>');
   t = t.replace(/\[来源(\d+)\]/g, '<sup class="cite-num" data-n="$1">$1</sup>');
   t = t.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
-  t = t.replace(/^[-•]\s+(.+)/gm, '<div class="msg-li">$1</div>');
-  t = t.replace(/^(\d+)\.\s+(.+)/gm, '<div class="msg-oli"><span class="msg-oli-n">$1.</span> $2</div>');
+  t = t.replace(/%%LINK(\d+)%%/g, (_m, i) => {
+    const link = links[Number(i)];
+    return link ? `<a href="${esc(link.url)}" data-hashmm-browser-link="1" rel="noopener noreferrer">${esc(link.label)}</a>` : "";
+  });
   t = t.replace(/\n/g, '<br>');
 
   // Restore code blocks with Prism.js language classes
@@ -68,7 +110,7 @@ export function renderMsg(text: string): string {
     const langClass = `language-${b.lang}`;
     return `<div class="code-block">` +
       `<div class="code-header"><span class="code-lang">${esc(b.lang)}</span>` +
-      `<button class="code-copy" onclick="navigator.clipboard?navigator.clipboard.writeText(document.getElementById('${id}').textContent).then(function(){this.textContent='✓ 已复制';var b=this;setTimeout(function(){b.textContent='复制'},1500)}.bind(this)):void 0">复制</button></div>` +
+      `<button class="code-copy" onclick="navigator.clipboard?navigator.clipboard.writeText(document.getElementById('${id}').textContent).then(function(){this.textContent='已复制';var b=this;setTimeout(function(){b.textContent='复制'},1500)}.bind(this)):void 0">复制</button></div>` +
       `<pre class="code-pre"><code id="${id}" class="${langClass}">${esc(b.code)}</code></pre></div>`;
   });
 

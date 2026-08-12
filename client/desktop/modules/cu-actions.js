@@ -31,6 +31,7 @@ const ACTIONS = {
   type: { write: true, needsXY: false, needsText: true },
   key: { write: true, needsXY: false, needsKeys: true },
   scroll: { write: true, needsXY: true, needsScroll: true },
+  open_url: { write: true, needsUrl: true },   // 浏览器导航：用系统默认浏览器打开 URL（让 CU 直接跳转，不用在地址栏一个个点字）
   wait: { write: false, needsXY: false },
 };
 
@@ -167,6 +168,19 @@ function validateAction(action, screen) {
     if (!["up", "down", "left", "right"].includes(dir)) return { ok: false, error: `非法滚动方向: ${dir}` };
     plan.scrollDir = dir;
     plan.scrollAmt = _clampInt(action.scroll_amount == null ? 3 : action.scroll_amount, 1, SCROLL_CLAMP);
+  }
+
+  // 浏览器导航 URL
+  if (spec.needsUrl) {
+    let url = String(action.url == null ? "" : action.url).trim();
+    if (!url) return { ok: false, error: "open_url 动作缺少 url" };
+    // 明确挡掉危险协议（file/javascript/data 等），只放行网页
+    if (/^\s*(file|javascript|data|vbscript|about|chrome|ftp|blob):/i.test(url))
+      return { ok: false, error: "只允许 http/https 网址" };
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;   // 没协议 → 补 https
+    if (url.length > 2048) return { ok: false, error: "url 过长" };
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) return { ok: false, error: `非法 url: ${url.slice(0, 60)}` };
+    plan.url = url;
   }
 
   // 等待

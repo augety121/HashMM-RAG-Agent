@@ -2,6 +2,8 @@
 
 覆盖：skill 加载、触发匹配精准度、设计方法论注入、PPT 主题。
 """
+from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -48,6 +50,6 @@ def test_html_prompt_exists_with_antislop():
 def test_ppt_themes_available():
     """新增的现代配色主题就位。"""
     import hashmm.api.pptx_builder as PB
-    src = open(PB.__file__).read()
+    src = Path(PB.__file__).read_text(encoding="utf-8")
     for theme in ("ink", "forest", "midnight", "warmgray"):
         assert f'"{theme}"' in src

@@ -79,7 +79,9 @@ def searchr1_available(**kw) -> bool:
     return get_policy(**kw) is not None
 
 
-def build_search_fn(top_k: int = 5) -> Callable[[str], list]:
+def build_search_fn(top_k: int = 5, *, acl=None,
+                    principal: str | None = None,
+                    document_scope: list[str] | None = None) -> Callable[[str], list]:
     """复用项目现成检索桥 kb_search_bridge，构造 run_search_loop 用的 search_fn。
 
     归一化字段与 eval_retrieval_policy._make_kb_search_fn 完全一致（text/filename/page/score）。
@@ -88,8 +90,32 @@ def build_search_fn(top_k: int = 5) -> Callable[[str], list]:
 
     def search_fn(subquery: str) -> list:
         try:
-            out = kb_search_bridge({"query": subquery, "top_k": top_k}) or {}
+            payload = {"query": subquery, "top_k": top_k}
+            scoped_ctx = (
+                {
+                    "user_id": str(principal or ""),
+                    "doc_filter": list(document_scope or []),
+                }
+                if principal is not None or document_scope is not None
+                else None
+            )
+            if scoped_ctx is None:
+                out = kb_search_bridge(payload) or {}
+            else:
+                try:
+                    out = kb_search_bridge(payload, scoped_ctx) or {}
+                except TypeError:
+                    # A legacy one-argument bridge can only be tolerated when
+                    # an explicit ACL will still filter every result below.
+                    # Owner-only or user-selected scopes must never fall back
+                    # to an unscoped bridge.
+                    if acl is None or document_scope is not None:
+                        raise
+                    out = kb_search_bridge(payload) or {}
             results = out.get("results", []) or []
+            if acl is not None:
+                from hashmm.access_control import filter_results
+                results = filter_results(results, acl, principal)
             norm = []
             for r in results:
                 norm.append({
@@ -108,6 +134,8 @@ def build_search_fn(top_k: int = 5) -> Callable[[str], list]:
 
 def answer_with_searchr1(question: str, *, top_k: int = 5, max_hops: int = 3,
                          search_fn: Optional[Callable[[str], list]] = None,
+                         acl=None, principal: str | None = None,
+                         document_scope: list[str] | None = None,
                          base_model=None, lora_dir=None, max_new=None) -> Optional[dict]:
     """用训练好的策略做一次「模型驱动检索 + 带出处作答」。
 
@@ -117,7 +145,12 @@ def answer_with_searchr1(question: str, *, top_k: int = 5, max_hops: int = 3,
     pol = get_policy(base_model=base_model, lora_dir=lora_dir, max_new=max_new)
     if pol is None:
         return None
-    sf = search_fn or build_search_fn(top_k)
+    sf = search_fn or build_search_fn(
+        top_k,
+        acl=acl,
+        principal=principal,
+        document_scope=document_scope,
+    )
     try:
         return pol.run_search_loop(question, sf, max_hops=max_hops, top_k=top_k)
     except Exception as e:  # noqa: BLE001
@@ -155,6 +188,7 @@ def synthesize_with_deepseek(question: str, sources: list) -> Optional[str]:
 
 
 def answer_multihop(question: str, *, top_k: int = 5, max_hops: int = 3,
+                    acl=None, principal: str | None = None,
                     base_model=None, lora_dir=None, max_new=None) -> Optional[dict]:
     """一站式「选项A」：7B 驱动(多跳)检索取证据 → deepseek 合成最终答案（经真机验证的 83.3% 路径）。
 
@@ -162,6 +196,7 @@ def answer_multihop(question: str, *, top_k: int = 5, max_hops: int = 3,
     deepseek 不可用时自动退回 7B 自己的答案（仍带证据），answer_by 标明是谁作答。
     """
     res = answer_with_searchr1(question, top_k=top_k, max_hops=max_hops,
+                               acl=acl, principal=principal,
                                base_model=base_model, lora_dir=lora_dir, max_new=max_new)
     if res is None:
         return None

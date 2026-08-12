@@ -136,26 +136,69 @@ def _exec_calculator(args: dict, ctx: dict | None = None) -> str:
 # Schemas + registration
 # ════════════════════════════════════════════════════════════════════════
 
-def _exec_deep_search(args: dict, ctx: dict | None = None) -> str:
-    """深度检索（Self-RAG）：模型驱动多跳检索 + deepseek 作答 + 自我批判 + 证据不足时
-    自适应再检索 + 忠实度门控。适合需跨多文档/多跳推理/对比计算才能回答的复杂知识问题；
-    普通单跳事实查询用 kb_search 更快。返回答案 + 可信度 + 带 [N] 编号的来源，供 agent 引用。
-    策略未就绪（无 GPU / 未配 HASHMM_SEARCHR1_LORA）时返回友好提示，绝不抛错。"""
+def _scoped_retrieval_search(ctx: dict | None, top_k: int):
+    """Build the Self-RAG search adapter when Chat selected documents.
+
+    Returning ``None`` keeps the existing owner-ACL retrieval path for turns
+    without an explicit selection. With a selection, every hop is routed
+    through the same filename filter as kb_search.
+    """
+    scope = (ctx or {}).get("doc_filter") or []
+    if isinstance(scope, str):
+        scope = [scope]
+    scope = [
+        str(item).strip()[:260]
+        for item in scope
+        if str(item).strip()
+    ][:40]
+    if not scope:
+        return None
+
+    def _search(question: str):
+        from hashmm.retriever_bridge import kb_search_bridge
+        payload = kb_search_bridge(
+            {"query": question, "top_k": top_k},
+            {**(ctx or {}), "doc_filter": scope},
+        )
+        return [
+            {
+                **item,
+                "text": item.get("text") or item.get("content") or "",
+            }
+            for item in (payload.get("results") or [])
+        ]
+
+    return _search
+
+
+def run_deep_search(args: dict, ctx: dict | None = None) -> dict:
+    """Run Self-RAG and retain its structured evidence for Chat persistence."""
     query = (args.get("query") or "").strip()
     if not query:
-        return "Error: deep_search 需要 query 参数。"
+        return {"ok": False, "error": "Error: deep_search 需要 query 参数。"}
     try:
         from hashmm.retrieval import self_rag as _sr
+        top_k = int(args.get("top_k") or 5)
         r = _sr.self_rag_answer(
             query,
-            top_k=int(args.get("top_k") or 5),
+            top_k=top_k,
             max_hops=int(args.get("max_hops") or 3),
+            search_fn=_scoped_retrieval_search(ctx, top_k),
+            principal=str((ctx or {}).get("user_id") or "") or None,
         )
     except Exception as e:  # noqa: BLE001
-        return f"深度检索出错：{str(e)[:200]}。可改用 kb_search。"
+        return {"ok": False, "error": f"深度检索出错：{str(e)[:200]}。可改用 kb_search。"}
     if r is None:
-        return ("深度检索当前不可用（检索策略未就绪，例如未配置 HASHMM_SEARCHR1_LORA 或本机无 GPU）。"
-                "请改用 kb_search。")
+        return {"ok": False, "error": (
+            "深度检索当前不可用（检索策略未就绪，例如未配置 HASHMM_SEARCHR1_LORA 或本机无 GPU）。"
+            "请改用 kb_search。")}
+    return {**r, "ok": True}
+
+
+def format_deep_search_result(r: dict) -> str:
+    """Format a structured Self-RAG result for the model-facing tool contract."""
+    if not r.get("ok"):
+        return str(r.get("error") or "深度检索当前不可用，请改用 kb_search。")
     out = []
     out.append(f"【深度检索答案】{r.get('answer') or '（无答案）'}")
     note = "已通过自评" if r.get("grounded") else "证据可能不足"
@@ -175,6 +218,14 @@ def _exec_deep_search(args: dict, ctx: dict | None = None) -> str:
     return "\n".join(out)
 
 
+def _exec_deep_search(args: dict, ctx: dict | None = None) -> str:
+    """深度检索（Self-RAG）：模型驱动多跳检索 + deepseek 作答 + 自我批判 + 证据不足时
+    自适应再检索 + 忠实度门控。适合需跨多文档/多跳推理/对比计算才能回答的复杂知识问题；
+    普通单跳事实查询用 kb_search 更快。返回答案 + 可信度 + 带 [N] 编号的来源，供 agent 引用。
+    策略未就绪（无 GPU / 未配 HASHMM_SEARCHR1_LORA）时返回友好提示，绝不抛错。"""
+    return format_deep_search_result(run_deep_search(args, ctx))
+
+
 def _exec_deep_research(args: dict, ctx: dict | None = None) -> str:
     """深度研究模式（方案7，对标 DeerFlow / R2R Deep Research）：把问题拆成多个子主题、各自
     深度检索取证据、综合成一份**跨多文档、每段带 [N] 全局引用**的长报告（引用经全局去重重编号，
@@ -190,11 +241,16 @@ def _exec_deep_research(args: dict, ctx: dict | None = None) -> str:
         return f"深度研究不可用：{str(e)[:160]}。可改用 deep_search。"
 
     _cache: dict = {}
+    principal = str((ctx or {}).get("user_id") or "") or None
+    _top_k = int(args.get("top_k") or 5)
+    _scoped_search = _scoped_retrieval_search(ctx, _top_k)
 
     def _search(subtopic: str):
         try:
-            r = _sr.self_rag_answer(subtopic, top_k=int(args.get("top_k") or 5),
-                                    max_hops=int(args.get("max_hops") or 2)) or {}
+            r = _sr.self_rag_answer(subtopic, top_k=_top_k,
+                                    max_hops=int(args.get("max_hops") or 2),
+                                    search_fn=_scoped_search,
+                                    principal=principal) or {}
         except Exception:
             r = {}
         _cache[subtopic] = r
@@ -211,9 +267,17 @@ def _exec_deep_research(args: dict, ctx: dict | None = None) -> str:
         return _dr._default_summary(subtopic, sources)
 
     try:
+        # 取共享 llm_fn（与被评 RAG 同一模型）→ 激活 SAGE 评审+重试；拿不到则单轮降级（向后兼容）
+        _llm_fn = None
+        try:
+            from hashmm.api import app_state as _as
+            _llm_fn = getattr(_as, "llm_fn", None)
+        except Exception:
+            _llm_fn = None
         report = _dr.run_deep_research(
-            query, search_fn=_search, summarize_fn=_summarize,
-            max_subtopics=int(args.get("max_subtopics") or 4), audit=True)
+            query, search_fn=_search, summarize_fn=_summarize, llm_fn=_llm_fn,
+            max_subtopics=int(args.get("max_subtopics") or 4), audit=True,
+            max_rounds=int(args.get("max_rounds") or 2))
     except Exception as e:  # noqa: BLE001
         return f"深度研究执行出错：{str(e)[:160]}。可改用 deep_search。"
 

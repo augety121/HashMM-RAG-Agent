@@ -35,7 +35,7 @@ TOOL_GROUPS: dict[str, list[str]] = {
 
     "doc_task": [
         "create_document", "create_pptx_from_plan", "create_xlsx",
-        "create_pdf", "convert_file", "kb_search", "web_search",
+        "create_pdf", "convert_file", "inspect_office", "kb_search", "web_search",
         "deep_search", "get_datetime",
     ],
 

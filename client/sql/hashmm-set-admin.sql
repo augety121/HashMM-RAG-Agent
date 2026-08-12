@@ -9,12 +9,12 @@
 
 update auth.users
 set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
-where email = 'admin@example.com';
+where email = '2721985705@qq.com';
 
 -- 确认结果（应能看到 role: admin）
 select email, raw_app_meta_data ->> 'role' as role
 from auth.users
-where email = 'admin@example.com';
+where email = '2721985705@qq.com';
 
 -- ── 如需再设别的管理员，把邮箱换掉再跑一次即可 ──
 -- update auth.users
@@ -24,7 +24,7 @@ where email = 'admin@example.com';
 -- ── 如需取消某账号的管理员 ──
 -- update auth.users
 -- set raw_app_meta_data = raw_app_meta_data - 'role'
--- where email = 'admin@example.com';
+-- where email = '2721985705@qq.com';
 
 -- ============================================================
 -- 完成。该账号重新登录后，客户端 / App 里即为管理员。

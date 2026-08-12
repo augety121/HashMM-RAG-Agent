@@ -90,10 +90,11 @@ export function UpgradeModal() {
               className="w-full py-2.5 rounded-xl text-center text-[13px] font-medium text-white mb-6"
               style={{ background: "var(--accent)" }}
               onClick={() => {
-                alert("Pro 版本暂未开放购买，敬请期待！");
+                // V250：去掉"暂未开放购买"的假按钮——本项目是自部署形态，装上即全功能。
+                alert("HashMM 是自部署项目：你现在跑的这套已解锁全部能力，无需购买。");
               }}
             >
-              升级至 Pro
+              自部署即全功能
             </button>
             <p className="text-[11px] font-medium mb-3" style={{ color: "var(--text-primary)" }}>
               除免费版所有功能外，还包括：

@@ -47,7 +47,10 @@ def _importorskip(modname, reason=None):
         raise _SKIP(reason or f"importorskip({modname}): {e}")
 pytest.importorskip = _importorskip
 def _fixture(fn=None, **kw):
-    def wrap(f): f._is_fixture=True; f._autouse=kw.get("autouse",False); return f
+    def wrap(f):
+        f._is_fixture=True; f._autouse=kw.get("autouse",False)
+        f._scope=kw.get("scope","function")   # V311: autouse 需按 scope 区分执行
+        return f
     return wrap(fn) if fn else wrap
 pytest.fixture = _fixture
 sys.modules["pytest"] = pytest
@@ -104,18 +107,39 @@ class MonkeyPatch:
                     except Exception: pass
         self._undo=[]
 
+class _ModuleExitError(Exception):
+    """测试文件在 import 期间调用了 sys.exit()——这是配置错误，按失败暴露。"""
+
+
 def run_file(path):
-    spec = importlib.util.spec_from_file_location(path.stem, path)
-    mod = importlib.util.module_from_spec(spec)
-    # inject conftest fixtures
-    spec.loader.exec_module(mod)
-    fixtures = {n:f for n,f in vars(mod).items() if getattr(f,"_is_fixture",False)}
-    # load conftest fixtures
+    # ★ V311：conftest 必须先于测试模块加载（pytest 的真实语义）。
+    #   此前顺序颠倒：测试模块先 exec、conftest（负责把项目根塞进 sys.path）后加载，
+    #   导致按字母序排第一的测试文件在模块级 `import hashmm` 必然 ModuleNotFoundError，
+    #   被误判成"沙箱缺依赖"整文件跳过（test_adaptive_rag 就这样假跳过）。
+    conf_mod = None
     conf_path = path.parent/"conftest.py"
     if conf_path.exists():
         cspec = importlib.util.spec_from_file_location("conftest", conf_path)
-        cmod = importlib.util.module_from_spec(cspec); cspec.loader.exec_module(cmod)
-        for n,f in vars(cmod).items():
+        conf_mod = importlib.util.module_from_spec(cspec)
+        cspec.loader.exec_module(conf_mod)
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    mod = importlib.util.module_from_spec(spec)
+    # V308 修 P0-6：exec_module 若在模块【顶层】遇到 sys.exit()，会抛 SystemExit。
+    # SystemExit 继承 BaseException 而非 Exception，原先主循环的 `except Exception`
+    # 抓不到它 → 整个 runner 进程被 exit(0) 提前终止、退出码 0 → 后续测试文件全部
+    # 未运行却报“成功”，形成假绿。这里显式捕获并转成普通异常向上抛，让主循环按
+    # “该文件失败”统计（而不是让整个套件静默通过）。
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit as se:
+        raise _ModuleExitError(
+            f"{path.name} 在 import 期间调用了 sys.exit({se.code!r})——"
+            f"测试文件不应在顶层退出进程"
+        ) from se
+    fixtures = {n:f for n,f in vars(mod).items() if getattr(f,"_is_fixture",False)}
+    # conftest fixtures（模块自己的同名 fixture 优先）
+    if conf_mod is not None:
+        for n,f in vars(conf_mod).items():
             if getattr(f,"_is_fixture",False): fixtures.setdefault(n,f)
     tests = [(n,f) for n,f in vars(mod).items() if n.startswith("test_") and callable(f)]
     passed=failed=skipped=0; fails=[]
@@ -133,6 +157,22 @@ def run_file(path):
             mp=MonkeyPatch(); gens=[]
             try:
                 sig = inspect.signature(fn); kwargs=dict(pkw)
+                # ★ V311：真正执行 autouse fixture。此前第 50 行只记录 _autouse 标记、
+                #   从未运行，导致靠 autouse 做环境准备的测试在沙箱里假失败
+                #   （test_tool_retrieval 的 _reset 没跑 → 检索开关没开 → 断言必挂）。
+                #   仅执行 function 级；session 级维持旧行为（跳过），避免连带风险。
+                for _an, _af in fixtures.items():
+                    if not getattr(_af, "_autouse", False): continue
+                    if getattr(_af, "_scope", "function") != "function": continue
+                    if _an in sig.parameters: continue      # 已按参数注入的不双跑
+                    _ask = inspect.signature(_af); _afk = {}
+                    if "monkeypatch" in _ask.parameters: _afk["monkeypatch"] = mp
+                    if "tmp_path" in _ask.parameters:
+                        import tempfile as _tf2
+                        _afk["tmp_path"] = Path(_tf2.mkdtemp(prefix="mtp_"))
+                    _r = _af(**_afk)
+                    if inspect.isgenerator(_r):
+                        gens.append(_r); next(_r)
                 for pn in sig.parameters:
                     if pn in pkw: continue
                     if pn=="monkeypatch": kwargs[pn]=mp; continue
@@ -174,8 +214,24 @@ if __name__=="__main__":
             continue
         try:
             p,f,s,fails=run_file(tf)
+        except _ModuleExitError as e:
+            # 顶层 sys.exit：真实配置错误，计为失败并让套件非 0 退出（不再假绿）。
+            print(f"  ✗ {tf.name}: FAIL（{e}）")
+            total_f += 1
+            continue
+        except (SyntaxError, IndentationError) as e:
+            # 语法错误也是真实失败，不能当“缺依赖”跳过。
+            print(f"  ✗ {tf.name}: FAIL（{type(e).__name__}: {e}）")
+            total_f += 1
+            continue
+        except (ImportError, ModuleNotFoundError) as e:
+            # 仅【导入缺失】才按沙箱跳过（真机 pytest 有完整依赖会真跑）。
+            print(f"  ○ {tf.name}: SKIP（{type(e).__name__}: {e} —— 沙箱缺依赖，真机 pytest 真跑）")
+            continue
         except Exception as e:
-            print(f"  ○ {tf.name}: SKIP（{type(e).__name__}: 沙箱缺依赖）")
+            # 其余未预期异常：保守暴露为失败而非跳过，避免再次掩盖问题。
+            print(f"  ✗ {tf.name}: FAIL（{type(e).__name__}: {e}）")
+            total_f += 1
             continue
         status="✔" if f==0 else "✗"
         print(f"  {status} {tf.name}: {p} passed, {f} failed, {s} skipped")

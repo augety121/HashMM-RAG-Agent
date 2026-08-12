@@ -3,10 +3,36 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" /><!-- V174: 语音输入（系统语音识别） -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 电脑端向手机要照片：读取相册（Android 13+ 用 READ_MEDIA_IMAGES，旧版用 READ_EXTERNAL_STORAGE） -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
+    <!-- V176: targetSdk>=30 的包可见性过滤下，必须声明对语音识别服务的查询，
+         否则 SpeechRecognizer.isRecognitionAvailable() 会误报「设备不支持」（即便系统有语音服务）。 -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <!-- Office 兼容边界：只通过 Android 标准 ACTION_VIEW 与已安装应用交接。
+             vivo 办公套件或其它办公应用只要注册这些 MIME 类型即可被选择，不依赖私有包名或协议。 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+        </intent>
+    </queries>
 
     <application
         android:name=".HashMMApplication"
@@ -18,7 +44,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.HashMM"
-        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="31">
 
         <activity

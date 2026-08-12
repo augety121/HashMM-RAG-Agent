@@ -40,7 +40,7 @@ class KGRepository @Inject constructor(
     private val settings: SettingsStore,
     private val auth: AuthRepository,
 ) {
-    private val http = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
+    private val http = SharedHttp.base.newBuilder().callTimeout(15, TimeUnit.SECONDS).build()
 
     private suspend fun base(): String {
         val b = settings.clientUrl.first().trim().trimEnd('/')

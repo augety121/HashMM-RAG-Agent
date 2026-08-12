@@ -35,6 +35,10 @@ FEATURE_DEFAULTS: dict[str, bool] = {
     "HASHMM_KG_PPR":             False,  # KG PPR 多跳(97)：较重
     "HASHMM_SUBAGENTS":          False,  # 子代理(104)：约 15× token，显式开
     "HASHMM_AGENTIC_LOCAL_LOOPS": False, # 循环走本地 Qwen(106)：需配好本地模型再开
+    "HASHMM_DEBATE":             False,  # 去中心化辩论(277)：N 对等 agent 多轮互纠，约 R×N 次调用
+    "HASHMM_PARENT_CHILD":       False,  # 父子块检索(277,5.4.2)：需入库侧持久化父块映射后才生效
+    "HASHMM_MULTI_VECTOR":       False,  # 多向量表示(277,5.4.3)：需入库侧为补充表示建向量后才生效
+    "HASHMM_MEMORY_REFLECT":     False,  # 记忆自进化(278,11.4.4)：周期反思沉淀长期记忆，约每10次工具调用+1次LLM
 }
 
 

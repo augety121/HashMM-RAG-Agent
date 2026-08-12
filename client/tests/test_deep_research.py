@@ -93,4 +93,21 @@ rep4 = DR.run_deep_research("比亚迪营收", search_fn=grounded_search,
 ck("审计产出 grounding 分(0~1或None)", rep4.grounding is None or (0.0 <= rep4.grounding <= 1.0))
 
 print(f"\n{'='*46}\n结果：PASS={P}  FAIL={F}")
-sys.exit(1 if F else 0)
+
+# ── V308 修 P0-6（测试假绿）──────────────────────────────────────────
+# 原先此处是【顶层裸 sys.exit()】。测试文件被 import 时（pytest 收集阶段、
+# 自制 runner 的 exec_module）会立即抛 SystemExit 杀死宿主进程：
+#   · 真 pytest → INTERNALERROR: mainloop: caught unexpected SystemExit
+#   · _mini_runner → SystemExit 不是 Exception 子类，except Exception 抓不到，
+#     整个套件以退出码 0 提前终止 → 后续测试文件从未运行却报“全绿”。
+# 且本文件的 ck()/ok() 只累加计数、【不抛异常】，故即使不崩，pytest 也只会
+# 报 "no tests ran"——检查结果永远变不成测试结论。
+# 修法：补一个真正的 pytest 入口断言（读取 import 期已算好的失败计数），
+# 并把 sys.exit 收进 __main__ 保护，保留 `python tests/test_deep_research.py` 直跑的能力。
+def test_all():
+    """pytest 入口：任一检查失败即断言失败（不再依赖 sys.exit 传递结果）。"""
+    assert F == 0, f"{F} 项检查未通过（详见上方 ✗ 行）"
+
+
+if __name__ == "__main__":
+    sys.exit(1 if F else 0)

@@ -1,0 +1,32 @@
+--- /tmp/b-adv.kt	2026-07-04 00:02:15.761955068 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/AdvancedScreen.kt	2026-07-04 00:01:30.012528442 +0000
+@@ -141,6 +141,29 @@
+                                 lastMsg = if (okd) "✓ $msg" else msg } }) { Text("切副屏", fontSize = 12.5.sp) }
+                         }
+                     } }
++                    item { SectionCard(Icons.Outlined.Description, "文件夹哨兵", badge = "自动", badgeTone = KitTone.Success) {
++                        Text("电脑上这个目录一有新文件 → 自动 POST 触发 URL（在桌面「高级能力·触发器」创建并复制）",
++                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                        Spacer(Modifier.height(6.dp))
++                        var sentryDir by remember { mutableStateOf("") }
++                        var sentryUrl by remember { mutableStateOf("") }
++                        OutlinedTextField(value = sentryDir, onValueChange = { sentryDir = it }, singleLine = true,
++                            placeholder = { Text("电脑目录，如 D:\\下载", fontSize = 12.sp) }, modifier = Modifier.fillMaxWidth())
++                        Spacer(Modifier.height(6.dp))
++                        OutlinedTextField(value = sentryUrl, onValueChange = { sentryUrl = it }, singleLine = true,
++                            placeholder = { Text("触发 URL（https://…/api/hooks/t/…）", fontSize = 12.sp) }, modifier = Modifier.fillMaxWidth())
++                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
++                            TextButton(enabled = sentryDir.isNotBlank() && sentryUrl.startsWith("http"), onClick = { scope.launch {
++                                val (okd, msg) = viewModel.dispatch("watch_dir",
++                                    org.json.JSONObject().put("dir", sentryDir.trim()).put("url", sentryUrl.trim()))
++                                lastMsg = if (okd) "✓ $msg" else msg
++                            } }) { Text("上岗", fontSize = 12.5.sp) }
++                            TextButton(onClick = { scope.launch {
++                                val (okd, msg) = viewModel.dispatch("watch_stop", org.json.JSONObject().put("all", true))
++                                lastMsg = if (okd) "✓ $msg" else msg
++                            } }) { Text("全部撤岗", fontSize = 12.5.sp) }
++                        }
++                    } }
+                     item { SectionCard(Icons.Outlined.Image, "会话图库",
+                         badge = if (d.imageCount >= 0) "${d.imageCount}" else "",
+                         badgeTone = KitTone.Neutral) {

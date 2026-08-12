@@ -132,7 +132,82 @@ def user_quota_used(user_id: str, days: int = 30) -> dict:
     with db._conn() as c:
         r = c.execute(
             "SELECT COUNT(*) n, COALESCE(SUM(tokens_in+tokens_out),0) tok, "
+            "COALESCE(SUM(tokens_in),0) ti, COALESCE(SUM(tokens_out),0) tout, "
             "COALESCE(SUM(cost),0) cost FROM usage_log WHERE user_id=? AND ts>=?",
             (user_id, since)).fetchone()
+        models = c.execute(
+            "SELECT model, COUNT(*) requests, COALESCE(SUM(tokens_in+tokens_out),0) tokens, "
+            "COALESCE(SUM(cost),0) cost FROM usage_log WHERE user_id=? AND ts>=? "
+            "GROUP BY model ORDER BY tokens DESC LIMIT 12", (user_id, since)).fetchall()
     d = dict(r)
-    return {"requests": d["n"], "tokens": d["tok"], "cost": round(d["cost"], 4)}
+    return {
+        "days": days,
+        "requests": d["n"],
+        "tokens": d["tok"],
+        "tokens_in": d["ti"],
+        "tokens_out": d["tout"],
+        "cost": round(d["cost"], 4),
+        "currency": "CNY",
+        "by_model": [{**dict(row), "cost": round(dict(row)["cost"], 4)} for row in models],
+    }
+
+
+def overview_for(user: dict, days: int = 30) -> dict:
+    """Return one stable, user-facing usage contract for every client.
+
+    Administrators receive the team aggregate; everyone else receives only
+    their own rows.  Both branches expose the same totals/model keys so mobile
+    does not have to guess which endpoint shape it received.
+    """
+    safe_days = max(1, min(int(days or 30), 365))
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    if is_admin:
+        raw = summary(safe_days)
+        models = [
+            {
+                "model": str(row.get("model") or "未标注模型"),
+                "requests": int(row.get("n") or row.get("requests") or 0),
+                "tokens": int(row.get("tok") or row.get("tokens") or 0),
+                "cost": round(float(row.get("cost") or 0), 4),
+            }
+            for row in (raw.get("by_model") or [])
+        ]
+        users = [
+            {
+                "username": str(row.get("username") or "未标注成员"),
+                "requests": int(row.get("n") or row.get("requests") or 0),
+                "tokens": int(row.get("tok") or row.get("tokens") or 0),
+                "cost": round(float(row.get("cost") or 0), 4),
+            }
+            for row in (raw.get("by_user") or [])
+        ]
+        tokens_in = int(raw.get("total_tokens_in") or 0)
+        tokens_out = int(raw.get("total_tokens_out") or 0)
+        return {
+            "contract": "hashmm.usage-overview.v1",
+            "scope": "team",
+            "days": safe_days,
+            "requests": int(raw.get("total_requests") or 0),
+            "tokens": tokens_in + tokens_out,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "cost": round(float(raw.get("total_cost") or 0), 4),
+            "currency": str(raw.get("currency") or "CNY"),
+            "by_model": models,
+            "by_user": users,
+        }
+
+    raw = user_quota_used(str(user.get("uid") or ""), safe_days)
+    return {
+        "contract": "hashmm.usage-overview.v1",
+        "scope": "personal",
+        "days": safe_days,
+        "requests": int(raw.get("requests") or 0),
+        "tokens": int(raw.get("tokens") or 0),
+        "tokens_in": int(raw.get("tokens_in") or 0),
+        "tokens_out": int(raw.get("tokens_out") or 0),
+        "cost": round(float(raw.get("cost") or 0), 4),
+        "currency": str(raw.get("currency") or "CNY"),
+        "by_model": raw.get("by_model") or [],
+        "by_user": [],
+    }

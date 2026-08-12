@@ -142,6 +142,7 @@ class RemoteServer {
    *   injectInput?: (ev)=>Promise<void>|void,   // 注入一次输入（宿主接 cu-driver）
    *   frameMeta?: ()=>{sw:number,sh:number,fw:number,fh:number},  // 屏幕/帧尺寸（坐标换算）
    *   pairing?: PairingManager,                 // 注入便于测试；默认自建
+   *   trustedDevices?: {verify:(id:string,token:string)=>boolean,issue:(id:string)=>string|null},
    *   fps?: number,                             // 推流帧率（默认 8，远程桌面够用、带宽友好）
    *   name?: string,                            // 宿主显示名
    * }} [opts]
@@ -151,6 +152,7 @@ class RemoteServer {
     this.injectInput = opts.injectInput || (() => {});
     this.frameMeta = opts.frameMeta || (() => ({ sw: 0, sh: 0, fw: 0, fh: 0 }));
     this.pairing = opts.pairing || new PairingManager();
+    this.trustedDevices = opts.trustedDevices || null;
     this.fps = Math.max(1, Math.min(30, opts.fps || 8));
     this.name = opts.name || "HashMM";
     this.conns = new Set();
@@ -160,7 +162,7 @@ class RemoteServer {
     this._sending = false;
     // ── WebRTC 信令（二期：P2P 视频）──
     // 宿主端的「投屏渲染进程」(host-renderer) 也作为一个 WS 客户端连进来，凭 hostToken 注册为 host；
-    // 服务端只在 viewer 与 host 之间**中继** offer/answer/ICE，真正的视频流是 viewer↔host 直连 P2P。
+    // 服务端只在 viewer 与 host 之间**中继** offer/answer/ICE，真正的视频流是 viewer 与 host 直连 P2P。
     this.hostConn = null;                 // 已注册的投屏渲染进程连接
     this._vidSeq = 1;                     // 给每个 viewer 连接分配的会话 id
     this.hostToken = opts.hostToken || crypto.randomBytes(16).toString("hex");
@@ -168,7 +170,7 @@ class RemoteServer {
     // 对称 NAT 等少数情况需 TURN 中继——可由 setIceServers 注入（含免费公共 TURN）。
     this.iceServers = Array.isArray(opts.iceServers) && opts.iceServers.length
       ? opts.iceServers
-      : [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }, { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }];
+      : [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
     this.viewerHtml = opts.viewerHtml || null;   // 查看端网页（main.js 读盘注入），GET / 直接吐出
     this.jpegQuality = Math.max(30, Math.min(95, opts.jpegQuality || 70));   // V103.51 MJPEG 画质（真彩≈高质量）
   }
@@ -276,11 +278,26 @@ class RemoteServer {
   _onMessage(conn, msg) {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "ping") { conn.sendText({ type: "pong", t: msg.t }); return; }
+    if (msg.type === "resume") {
+      const trusted = !!(this.trustedDevices && this.trustedDevices.verify(msg.deviceId, msg.trustToken));
+      if (!trusted) { conn.sendText({ type: "resumeRejected", reason: "untrusted" }); return; }
+      conn.authed = true;
+      conn.deviceId = String(msg.deviceId || "").slice(0, 128);
+      conn.sendText({ type: "paired", trusted: true, resumed: true });
+      try { conn.sendText(Object.assign({ type: "meta" }, this.frameMeta())); } catch (_e) {}
+      if (this.hostConn && this.hostConn.alive) {
+        try { this.hostConn.sendText({ type: "viewerJoined", vid: conn.vid }); } catch (_e) {}
+      }
+      return;
+    }
     if (msg.type === "pair") {
       const r = this.pairing.verify(msg.code);
       if (r.ok) {
         conn.authed = true;
-        conn.sendText({ type: "paired", token: r.token });
+        conn.deviceId = String(msg.deviceId || "").slice(0, 128);
+        const trustToken = this.trustedDevices ? this.trustedDevices.issue(conn.deviceId) : null;
+        conn.sendText({ type: "paired", token: r.token, trustToken: trustToken || undefined,
+          deviceId: conn.deviceId || undefined, trusted: !!trustToken });
         try { conn.sendText(Object.assign({ type: "meta" }, this.frameMeta())); } catch (_e) {}
         // 配对成功 → 若投屏渲染进程在线，通知它「有新查看端就绪」，由 host 发起 WebRTC offer。
         if (this.hostConn && this.hostConn.alive) {

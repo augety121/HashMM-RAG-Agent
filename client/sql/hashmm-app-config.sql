@@ -10,10 +10,15 @@ create table if not exists public.app_config (
 
 alter table public.app_config enable row level security;
 
--- 所有已登录用户可读（App 读 backend_url）
+-- 已登录用户只能读取非敏感的后端发现信息。
 drop policy if exists "app_config_read" on public.app_config;
 create policy "app_config_read" on public.app_config
-  for select to authenticated using (true);
+  for select to authenticated using (
+    key in ('backend_url', 'backend_protocol', 'backend_region', 'backend_updated_at')
+  );
+
+-- 清理旧版本可能写入的客户端共享模型凭据。
+delete from public.app_config where key = 'direct_llm';
 
 -- 写入由后端用 service_role key 完成（service role 绕过 RLS，无需额外 policy）。
 

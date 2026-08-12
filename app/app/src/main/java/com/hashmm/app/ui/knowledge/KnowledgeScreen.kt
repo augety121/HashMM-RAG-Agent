@@ -5,7 +5,6 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,22 +13,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hashmm.app.data.remote.CorpusStats
 import com.hashmm.app.data.remote.KbDoc
-import com.hashmm.app.ui.components.HashMascot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -84,7 +81,7 @@ fun KnowledgeScreen(onBack: () -> Unit, viewModel: KnowledgeViewModel = hiltView
             }
         },
         topBar = {
-            ScreenHeader(title = "知识库", onBack = onBack) {
+            ScreenHeader(title = "知识库", subtitle = "索引资料 · 查看状态 · 上传文档", onBack = onBack) {
                 IconButton(onClick = { viewModel.load() }) {
                         Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                     }
@@ -93,7 +90,12 @@ fun KnowledgeScreen(onBack: () -> Unit, viewModel: KnowledgeViewModel = hiltView
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                ui.loading && ui.stats == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                ui.loading && ui.stats == null -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                    Spacer(Modifier.height(8.dp))
+                    com.hashmm.app.ui.components.HmmSkeletonCard(lines = 3)
+                    Spacer(Modifier.height(12.dp))
+                    com.hashmm.app.ui.components.HmmSkeletonList(count = 4)
+                }
                 ui.stats == null -> EmptyKnowledge(ui.error, onRetry = { viewModel.load() })
                 else -> LazyColumn(
                     Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -101,10 +103,11 @@ fun KnowledgeScreen(onBack: () -> Unit, viewModel: KnowledgeViewModel = hiltView
                 ) {
                     item { Spacer(Modifier.height(4.dp)); StatsCard(ui.stats!!) }
                     item {
+                        // V244：分区标题改灰色小字（全 App 同规）
                         Text(
                             "已索引文档 ${ui.documents.size}",
-                            fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, letterSpacing = 0.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 2.dp, top = 6.dp),
                         )
                     }
@@ -117,7 +120,19 @@ fun KnowledgeScreen(onBack: () -> Unit, viewModel: KnowledgeViewModel = hiltView
                             )
                         }
                     } else {
-                        items(ui.documents) { d -> DocCard(d) }
+                        // V244：文档从"每个一张描边卡"收进一张分组白卡（行 + 发丝线）
+                        item {
+                            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.fillMaxWidth()) {
+                                Column {
+                                    ui.documents.forEachIndexed { i, d ->
+                                        if (i > 0) Box(Modifier.fillMaxWidth().padding(start = 49.dp).height(0.5.dp)
+                                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)))
+                                        DocRow(d)
+                                    }
+                                }
+                            }
+                        }
                     }
                     item { Spacer(Modifier.height(12.dp)) }
                 }
@@ -128,17 +143,18 @@ fun KnowledgeScreen(onBack: () -> Unit, viewModel: KnowledgeViewModel = hiltView
 
 @Composable
 private fun StatsCard(s: CorpusStats) {
+    // V244：去描边（无边白卡），当前模型 chip 改米色（品牌"AI 语气"面色）
     Surface(
-        color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.fillMaxWidth().padding(18.dp)) {
-            Text("知识切片", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("知识切片", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(2.dp))
             Text(
                 "${s.totalChunks}",
-                fontSize = 34.sp, fontWeight = FontWeight.Bold,
+                fontSize = 24.sp, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(14.dp))
@@ -149,9 +165,10 @@ private fun StatsCard(s: CorpusStats) {
             }
             if (s.activeModel.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp)) {
+                Surface(color = com.hashmm.app.ui.theme.WarmBeige, shape = RoundedCornerShape(10.dp)) {
                     Text(
-                        s.activeModel, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        s.activeModel, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                        color = com.hashmm.app.ui.theme.OnWarmBeige,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     )
                 }
@@ -183,49 +200,30 @@ private fun StatCell(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun DocCard(d: KbDoc) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Outlined.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(d.filename, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    "${d.chunks} 切片" + if (d.modalities.isNotEmpty()) " · " + d.modalities.joinToString("/") else "",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+private fun DocRow(d: KbDoc) {
+    // V244：分组卡内的行——图标裸放墨黑（去描边卡与灰底图标盒）
+    Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.Description, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(d.filename, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "${d.chunks} 切片" + if (d.modalities.isNotEmpty()) " · " + d.modalities.joinToString("/") else "",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
 @Composable
 private fun EmptyKnowledge(error: String?, onRetry: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        HashMascot(Modifier.size(92.dp))
-        Spacer(Modifier.height(18.dp))
-        Text("知识库暂不可用", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            error ?: "请确认客户端后端在线，并在「我的」里填好客户端地址。",
-            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(20.dp))
-        OutlinedButton(onClick = onRetry) { Text("重试") }
-    }
+    com.hashmm.app.ui.components.HmmStateView(
+        kind = com.hashmm.app.ui.components.HmmStateKind.Error,
+        icon = Icons.Outlined.Storage,
+        title = "知识库暂不可用",
+        message = error ?: "请确认客户端后端在线，并在「我的」里填好客户端地址。",
+        onRetry = onRetry,
+    )
 }

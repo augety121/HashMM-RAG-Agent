@@ -1,98 +1,133 @@
 package com.hashmm.app.ui.usage
-import com.hashmm.app.ui.components.ScreenHeader
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BarChart
-import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hashmm.app.ui.components.HmmBadge
+import com.hashmm.app.ui.components.HmmCard
+import com.hashmm.app.ui.components.HmmCardHeader
+import com.hashmm.app.ui.components.HmmChip
+import com.hashmm.app.ui.components.HmmPageScaffold
+import com.hashmm.app.ui.components.HmmSectionTitle
+import com.hashmm.app.ui.components.HmmSkeletonCard
+import com.hashmm.app.ui.components.HmmStateKind
+import com.hashmm.app.ui.components.HmmStateView
+import com.hashmm.app.ui.components.HmmStatCard
+import com.hashmm.app.ui.components.HmmTone
+import com.hashmm.app.ui.theme.AppSpacing
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UsageScreen(onBack: () -> Unit, viewModel: UsageViewModel = hiltViewModel()) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
-    Scaffold(
-        topBar = {
-            ScreenHeader(title = "用量", onBack = onBack) {
-                IconButton(onClick = { viewModel.load(ui.days) }) { Icon(Icons.Outlined.Refresh, contentDescription = "刷新") }
+    HmmPageScaffold(
+        title = "使用概览",
+        subtitle = "了解 HashMM 为你和团队完成了多少工作",
+        onBack = onBack,
+        actions = {
+            IconButton(onClick = { viewModel.load(ui.days) }) {
+                Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
             }
         },
-        containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            // 时间窗切换
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
+                .padding(horizontal = AppSpacing.page, vertical = AppSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.md),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                 listOf(7, 30, 90).forEach { d ->
-                    val sel = ui.days == d
-                    Surface(
-                        color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { viewModel.load(d) },
-                    ) {
+                    HmmChip("近 $d 天", onClick = { viewModel.load(d) }, selected = ui.days == d)
+                }
+            }
+
+            val s = ui.stat
+            when {
+                ui.loading && s == null -> repeat(3) { HmmSkeletonCard(lines = 2) }
+                s?.error != null -> HmmStateView(
+                    kind = HmmStateKind.Error,
+                    icon = Icons.Outlined.BarChart,
+                    title = "暂时无法读取使用情况",
+                    message = s.error,
+                    onRetry = { viewModel.load(ui.days) },
+                )
+                s == null -> Unit
+                else -> {
+                    HmmCard {
+                        HmmCardHeader(
+                            title = if (s.scope == "team") "团队使用情况" else "我的使用情况",
+                            sub = "统计来自真实对话和任务，不包含演示数据",
+                            icon = if (s.scope == "team") Icons.Outlined.Groups else Icons.Outlined.AutoAwesome,
+                            right = { HmmBadge(if (s.scope == "team") "整个团队" else "仅自己", HmmTone.Accent) },
+                        )
+                        Spacer(Modifier.height(AppSpacing.lg))
                         Text(
-                            "近 $d 天",
-                            fontSize = 13.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            if (s.requests > 0) "已完成 ${s.requests} 次模型调用" else "这段时间还没有产生新的模型调用",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.height(AppSpacing.xs))
+                        Text(
+                            if (s.requests > 0) "共处理 ${formatTokens(s.tokens)} 内容单元，估算花费 ${formatMoney(s.cost, s.currency)}"
+                            else "开始一次对话、资料整理或长任务后，这里会自动出现真实记录。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                }
-            }
 
-            if (ui.loading && ui.stat == null) {
-                Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else {
-                val s = ui.stat
-                if (s?.error != null && s.requests == 0 && s.tokens == 0L) {
-                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)), modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.BarChart, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(36.dp))
-                            Spacer(Modifier.height(10.dp))
-                            Text(s.error, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                        HmmStatCard("已完成", s.requests.toString(), Modifier.weight(1f), "次调用", Icons.Outlined.AutoAwesome, HmmTone.Accent)
+                        HmmStatCard("处理量", formatTokens(s.tokens), Modifier.weight(1f), "内容单元", Icons.Outlined.BarChart)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                        HmmStatCard("发送给模型", formatTokens(s.tokensIn), Modifier.weight(1f), icon = Icons.Outlined.BarChart)
+                        HmmStatCard("模型生成", formatTokens(s.tokensOut), Modifier.weight(1f), icon = Icons.Outlined.BarChart)
+                    }
+                    HmmStatCard("估算花费", formatMoney(s.cost, s.currency), unit = "按当前模型单价估算", icon = Icons.Outlined.Payments)
+
+                    if (s.byMember.isNotEmpty()) {
+                        HmmSectionTitle("团队成员")
+                        s.byMember.take(8).forEach { member ->
+                            HmmCard {
+                                HmmCardHeader(member.username, "${member.requests} 次工作 · ${formatTokens(member.tokens)}", Icons.Outlined.Groups) {
+                                    Text(formatMoney(member.cost, s.currency), style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
                         }
                     }
-                } else {
-                    UsageCard(Icons.Outlined.BarChart, "调用次数", (s?.requests ?: 0).toString(), "次请求")
-                    UsageCard(Icons.Outlined.Bolt, "Token 用量", formatTokens(s?.tokens ?: 0L), "输入 + 输出")
-                    UsageCard(Icons.Outlined.Payments, "估算花费", "$" + String.format("%.4f", s?.cost ?: 0.0), "按模型单价累计")
+                    if (s.byModel.isNotEmpty()) {
+                        HmmSectionTitle("使用的模型")
+                        s.byModel.forEach { model ->
+                            HmmCard {
+                                HmmCardHeader(model.model, "${model.requests} 次调用 · ${formatTokens(model.tokens)}", Icons.Outlined.AutoAwesome) {
+                                    Text(formatMoney(model.cost, s.currency), style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun UsageCard(icon: ImageVector, label: String, value: String, sub: String) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-            }
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(2.dp))
-                Text(value, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
-            }
-            Text(sub, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -102,3 +137,6 @@ private fun formatTokens(t: Long): String = when {
     t >= 1_000 -> String.format("%.1fK", t / 1_000.0)
     else -> t.toString()
 }
+
+private fun formatMoney(value: Double, currency: String): String =
+    "${if (currency == "CNY") "¥" else "$"}${String.format("%.4f", value)}"

@@ -19,25 +19,24 @@ import type { ReactNode, CSSProperties } from "react";
 /* ── 页面外壳：统一外边距 + 纵向滚动 ─────────────────────────── */
 export function PanelShell({ children, className = "", style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   return (
-    <div className={`flex-1 overflow-y-auto ${className}`} style={{ background: "var(--canvas)", padding: "28px 32px 64px", ...style }}>
-      <div className="mx-auto" style={{ maxWidth: 1100 }}>{children}</div>
+    <div className={`flex-1 overflow-y-auto ${className}`} style={{ background: "var(--bg-secondary)", padding: "28px 32px 64px", ...style }}>
+      <div className="mx-auto" style={{ maxWidth: 1040 }}>{children}</div>
     </div>
   );
 }
 
-/* ── 页头：图标章 + 标题 + 副标题 + 右侧操作区。所有面板统一开头 ─── */
+/* ── 页头：图标作为语义标记裸放，不再套彩色底座。 ───────────── */
 export function PageHeader({ icon: Icon, title, subtitle, actions, accent = "var(--accent)" }: {
   icon: LucideIcon; title: string; subtitle?: ReactNode; actions?: ReactNode; accent?: string;
 }) {
   return (
-    <div className="flex items-start gap-4 mb-6 pb-5" style={{ borderBottom: "1px solid var(--hairline)" }}>
-      <div className="w-12 h-12 rounded-[14px] flex items-center justify-center flex-shrink-0 text-white"
-        style={{ background: "var(--accent-grad)", boxShadow: "0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent)" }}>
-        <Icon size={22} strokeWidth={2} aria-hidden />
+    <div className="flex items-start gap-3 mb-7">
+      <div className="w-6 h-8 flex items-center justify-center flex-shrink-0" style={{ color: accent }}>
+        <Icon size={17} strokeWidth={1.8} aria-hidden />
       </div>
-      <div className="flex-1 min-w-0 pt-0.5">
-        <h1 className="text-[19px] font-bold leading-tight tracking-[-0.02em]" style={{ color: "var(--text-primary)" }}>{title}</h1>
-        {subtitle && <div className="text-[12.5px] mt-1.5 leading-relaxed" style={{ color: "var(--text-tertiary)" }}>{subtitle}</div>}
+      <div className="flex-1 min-w-0">
+        <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.025em]" style={{ color: "var(--text-primary)" }}>{title}</h1>
+        {subtitle && <div className="text-[12px] mt-1 leading-relaxed" style={{ color: "var(--text-tertiary)" }}>{subtitle}</div>}
       </div>
       {actions && <div className="flex items-center gap-2 flex-shrink-0 pt-1">{actions}</div>}
     </div>
@@ -78,7 +77,7 @@ export function Card({ children, className = "", padding = "p-5", interactive, o
 }) {
   return (
     <div onClick={onClick}
-      className={`pk-card rounded-2xl ${padding} ${interactive ? "pk-card-i cursor-pointer" : ""} ${className}`}
+      className={`pk-card rounded-xl ${padding} ${interactive ? "pk-card-i cursor-pointer" : ""} ${className}`}
       style={style}>
       {children}
     </div>
@@ -112,8 +111,7 @@ export function StatCard({ label, value, unit, icon: Icon, tone = "default", hin
       <div className="flex items-center justify-between">
         <span className="text-[11.5px] font-medium" style={{ color: "var(--text-tertiary)" }}>{label}</span>
         {Icon && (
-          <div className="w-7 h-7 rounded-[9px] flex items-center justify-center flex-shrink-0"
-            style={{ background: tone === "default" ? "var(--surface-2)" : `color-mix(in srgb, ${toneColor} 13%, transparent)` }}>
+          <div className="w-5 h-7 flex items-center justify-center flex-shrink-0">
             <Icon size={14} style={{ color: tone === "default" ? "var(--text-tertiary)" : toneColor }} />
           </div>
         )}
@@ -193,7 +191,7 @@ export function StateView({ kind, message, title, icon: Icon, onRetry, action }:
   if (kind === "error") {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3" role="alert">
-        <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: "color-mix(in srgb, var(--error) 12%, transparent)" }}>
+        <div className="w-12 h-12 flex items-center justify-center">
           <AlertCircle size={24} style={{ color: "var(--error)" }} />
         </div>
         <div className="text-[13px] text-center max-w-[380px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>{message || "加载失败"}</div>
@@ -205,8 +203,7 @@ export function StateView({ kind, message, title, icon: Icon, onRetry, action }:
   return (
     <Card className="flex flex-col items-center text-center mx-auto" padding="px-6 pt-12 pb-12" style={{ maxWidth: 560 }}>
       {Icon && (
-        <div className="w-16 h-16 rounded-[18px] flex items-center justify-center mb-4"
-          style={{ background: "var(--surface-2)", boxShadow: "inset 0 0 0 1px var(--hairline)" }}>
+        <div className="w-16 h-16 flex items-center justify-center mb-4">
           <Icon size={28} style={{ color: "var(--text-tertiary)", opacity: 0.65 }} strokeWidth={1.75} />
         </div>
       )}
@@ -226,7 +223,7 @@ export function CardGrid({ children, min = 280 }: { children: ReactNode; min?: n
 export function Row({ children, onClick, className = "" }: { children: ReactNode; onClick?: () => void; className?: string }) {
   return (
     <div onClick={onClick}
-      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${onClick ? "cursor-pointer hover:bg-[var(--bg-tertiary)]" : ""} ${className}`}>
+      className={`group flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${onClick ? "cursor-pointer hover:bg-[var(--bg-tertiary)]" : ""} ${className}`}>
       {children}
     </div>
   );

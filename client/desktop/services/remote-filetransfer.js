@@ -1,8 +1,8 @@
 // desktop/services/remote-filetransfer.js
-// 远程文件传输协议（纯逻辑层）—— 对标 UU 远程「文件传输：类型/大小无限制」。
+// 远程文件传输协议（纯逻辑层）—— 分块、校验、续传与显式资源上限。
 //
-// 设计：真正的文件字节走 viewer↔host 的 **WebRTC DataChannel**（P2P 直连，与屏幕视频同一条
-// 通道体系，不经服务器中转——所以「大小无限制」且省服务器带宽）。本模块只放**纯逻辑**：
+// 设计：真正的文件字节走 viewer 与 host 的 **WebRTC DataChannel**（P2P 直连，与屏幕视频同一条
+// 通道体系，正常路径不经服务器中转并节省服务器带宽）。本模块只放**纯逻辑**：
 //   · 把文件切成定长块（chunk），生成有序的传输描述；
 //   · offer / accept / reject / chunk / ack / done 的状态机；
 //   · 进度计算与完整性校验（每块大小 + 总块数 + 简单校验和）。
@@ -120,7 +120,10 @@ class ChunkAssembler {
  * @returns {{allowed:boolean, reason?:string}}
  */
 function checkPolicy(meta, policy = {}) {
-  const maxFileSize = policy.maxFileSize || 2 * 1024 * 1024 * 1024;   // 默认单文件上限 2GB
+  // The current receiver verifies and assembles in memory before the atomic
+  // download write. Keep the default bounded until disk-streaming assembly is
+  // implemented; claiming multi-GB support here would be unsafe.
+  const maxFileSize = policy.maxFileSize || 256 * 1024 * 1024;
   const maxConcurrent = policy.maxConcurrent || 5;
   const cur = policy.currentConcurrent || 0;
   if ((meta && meta.size || 0) > maxFileSize) {

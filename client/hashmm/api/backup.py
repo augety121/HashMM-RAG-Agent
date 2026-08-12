@@ -34,11 +34,21 @@ _SUFFIX = ".sqlite"
 
 
 def db_path() -> Path:
-    return Path(os.environ.get("HASHMM_DB_PATH", "data/hashmm.sqlite"))
+    explicit = os.environ.get("HASHMM_DB_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    data_root = os.environ.get("HASHMM_DATA_DIR", "").strip()
+    return ((Path(data_root).expanduser().resolve() if data_root else Path("data").resolve())
+            / "hashmm.sqlite")
 
 
 def backup_dir() -> Path:
-    d = Path(os.environ.get("HASHMM_BACKUP_DIR", "backups"))
+    explicit = os.environ.get("HASHMM_BACKUP_DIR", "").strip()
+    if explicit:
+        d = Path(explicit).expanduser().resolve()
+    else:
+        data_root = os.environ.get("HASHMM_DATA_DIR", "").strip()
+        d = (Path(data_root).expanduser().resolve() if data_root else Path("data").resolve()) / "backups"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

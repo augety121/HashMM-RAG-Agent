@@ -20,8 +20,13 @@ from fastapi import Request, HTTPException
 SECRET = os.environ.get("HASHMM_JWT_SECRET", "hashmm-jwt-secret-change-me")
 # Access tokens are short-lived; the refresh token keeps the session alive.
 # HASHMM_TOKEN_TTL is still honored (as the access TTL) for backward compat.
+# Access token TTL. 桌面客户端目前没有前端 refresh 逻辑，1h 的短 access token 到期后
+# /api/auth/me 会 401，客户端(shellserver)据此判定「已登出」→ 逼你重新登录。
+# 对「自己跑后端的个人工具」来说，把 access token 直接设成 30 天（与 refresh 同寿命），
+# 就不会在正常使用中掉登录。token_version 撤销机制仍然有效（改密码/强制登出照样立即失效）。
+# 想要更短寿命可用环境变量 HASHMM_ACCESS_TTL 覆盖。
 ACCESS_TTL = int(os.environ.get("HASHMM_ACCESS_TTL",
-                                os.environ.get("HASHMM_TOKEN_TTL", 3600)))      # 1h
+                                os.environ.get("HASHMM_TOKEN_TTL", 86400 * 30)))   # 默认 30d（原为 1h）
 REFRESH_TTL = int(os.environ.get("HASHMM_REFRESH_TTL", 86400 * 30))            # 30d
 TOKEN_TTL = ACCESS_TTL  # kept as an alias; some callers import this name
 
@@ -177,6 +182,11 @@ def get_current_user(request: Request) -> dict | None:
     并存策略：先验 HashMM 自带 JWT；失败且 Supabase 已配置时，再验 Supabase access token
     （统一身份——客户端与 App 共用 Supabase 账号）。未配 Supabase 则行为零变化。
     """
+    if getattr(request.state, "auth_checked", False):
+        user = getattr(request.state, "auth_user", None)
+        if user:
+            _maybe_autobind_channel_owner(user)
+        return user
     auth = request.headers.get("Authorization", "")
     token = ""
     if auth.startswith("Bearer "):
@@ -195,12 +205,55 @@ def require_auth(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="未登录或令牌已过期")
     return user
 
+
+def principal_id(user: dict) -> str:
+    """Return the canonical, provider-independent owner id.
+
+    HashMM access tokens expose ``uid`` while Supabase-backed principals may
+    also expose ``sub``.  Route code must not depend on a provider-specific
+    ``id`` key: doing so made valid Supabase sessions fail with ``KeyError``.
+    The returned value is intentionally the same owner key used by
+    conversations, remote devices and durable runs.
+    """
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="未登录或令牌已过期")
+    value = user.get("uid") or user.get("sub") or user.get("id")
+    if value is None or not str(value).strip():
+        raise HTTPException(status_code=401, detail="登录身份缺少稳定用户标识")
+    return str(value).strip()
+
+
+def require_principal_id(request: Request) -> str:
+    """Authenticate ``request`` and return its canonical owner id."""
+    return principal_id(require_auth(request))
+
 def require_admin(request: Request) -> dict:
     """Raise 403 if not admin."""
     user = require_auth(request)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
+
+
+def extract_ws_token(ws) -> str:
+    """V306: WebSocket 握手取令牌——优先 Authorization: Bearer 头（不进 URL/日志），
+    回退 Sec-WebSocket-Protocol，再回退 query ?token=（向后兼容旧客户端）。"""
+    try:
+        auth = ws.headers.get("authorization") or ws.headers.get("Authorization") or ""
+        if auth.startswith("Bearer "):
+            return auth[7:]
+        # 有的客户端把令牌放进子协议头：Sec-WebSocket-Protocol: bearer,<token>
+        proto = ws.headers.get("sec-websocket-protocol") or ""
+        if proto:
+            parts = [p.strip() for p in proto.split(",")]
+            if len(parts) == 2 and parts[0].lower() in ("bearer", "authorization"):
+                return parts[1]
+    except Exception:
+        pass
+    try:
+        return ws.query_params.get("token", "") or ""
+    except Exception:
+        return ""
 
 
 # ── v17 Phase 63: object-level authorization (fix IDOR on /conversations) ──

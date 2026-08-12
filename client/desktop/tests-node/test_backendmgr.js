@@ -52,6 +52,8 @@ if (a[0] === "-c" && !a[1].includes("uvicorn.run")) {
 if (a[0] === "-c" && a[1].includes("uvicorn.run")) {
   if (!fs.existsSync(flag)) { console.error("No module named uvicorn"); process.exit(1); }
   if (process.env.PYTHONUTF8 !== "1") { console.error("missing PYTHONUTF8"); process.exit(2); }
+  if (!process.env.HASHMM_DATA_DIR || process.env.HASHMM_DB_PATH !== path.join(process.env.HASHMM_DATA_DIR, "hashmm.sqlite")) { console.error("invalid ProjectVault env"); process.exit(4); }
+  if (process.env.HASHMM_BACKUP_DIR !== path.join(process.env.HASHMM_DATA_DIR, "backups")) { console.error("invalid backup env"); process.exit(5); }
   const src = process.env.HASHMM_SRC || "";
   if (!src || !fs.existsSync(path.join(src, "hashmm"))) {
     console.error("ModuleNotFoundError: No module named 'hashmm'"); process.exit(1);
@@ -148,8 +150,10 @@ async function main() {
   ok("标记缺失时实测 import 并自动补写");
 
   // 8. start + 健康等待 + status（同时验证 PYTHONUTF8 注入：假 uvicorn 缺它会退码 2）
-  r = await mgr.start({ home: HOME, srcDir: SRC, port: 17999, healthTimeoutMs: 15000 });
+  const DATA = path.join(TMP, "HashMM Data");
+  r = await mgr.start({ home: HOME, dataDir: DATA, srcDir: SRC, port: 17999, healthTimeoutMs: 15000 });
   assert(r.ok && r.url === "http://127.0.0.1:17999", JSON.stringify(r));
+  assert(fs.existsSync(DATA), "ProjectVault 应在启动前创建");
   let st = mgr.status(HOME);
   assert(st.running && st.port === 17999 && st.envReady);
   assert(mgr.logs().some((l) => l.includes("Uvicorn(fake) starting")));

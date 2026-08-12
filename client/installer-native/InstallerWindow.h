@@ -20,6 +20,7 @@ protected:
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
+    void resizeEvent(QResizeEvent*) override;
 
 private slots:
     void onBrowse();
@@ -59,7 +60,10 @@ private:
 
     QString installDir_;
     QString installedExe_;
+    QString installedVersion_;
     bool existing_ = false;
+    bool upgradeAvailable_ = false;
+    bool downgradeBlocked_ = false;
     QPoint dragPos_;
     bool dragging_ = false;
 };

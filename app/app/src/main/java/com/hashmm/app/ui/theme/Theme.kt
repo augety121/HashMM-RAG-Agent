@@ -12,12 +12,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val LightColors = lightColorScheme(
-    primary = Brand,
+    primary = Brand,               // 墨黑：主操作/按钮/导航
     onPrimary = Color.White,
     primaryContainer = BrandContainer,
-    onPrimaryContainer = BrandDark,
-    secondary = BrandDark,
+    onPrimaryContainer = Brand,
+    secondary = BrandRed,          // 围巾红：品牌强调（唯一强调色）
     onSecondary = Color.White,
+    secondaryContainer = BrandRedSoft,   // 暖粉容器
+    onSecondaryContainer = BrandRedDark,
+    tertiary = BrandRed,           // 高亮也用围巾红
+    onTertiary = Color.White,
+    error = BrandRed,              // 删除/退出＝围巾红（方案定）
+    onError = Color.White,
     background = LightBg,
     onBackground = LightOnSurface,
     surface = LightSurface,
@@ -26,15 +32,22 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = LightOnSurfaceVariant,
     outline = LightOutline,
     outlineVariant = LightOutlineVariant,
+    // 浮层容器族：菜单/底部抽屉/对话框统一走品牌中性灰（去掉 M3 基线紫调）
+    surfaceContainerLowest = LightContainerLowest,
+    surfaceContainerLow = LightContainerLow,
+    surfaceContainer = LightContainer,
+    surfaceContainerHigh = LightContainerHigh,
+    surfaceContainerHighest = LightContainerHighest,
+    surfaceTint = LightSurface,   // 关掉色调叠加：高程不再染色，浮层永远干净
 )
 
 private val DarkColors = darkColorScheme(
     primary = BrandLight,
-    onPrimary = Color.White,
+    onPrimary = Color(0xFF1A1A1A),   // V247: 深色主题主色是浅灰(BrandLight)，其上文字须用黑（白字会看不见）
     primaryContainer = BrandDark,
     onPrimaryContainer = Color.White,
-    secondary = Brand,
-    onSecondary = Color.White,
+    secondary = BrandLight,
+    onSecondary = Color(0xFF1A1A1A),
     background = DarkBg,
     onBackground = DarkOnSurface,
     surface = DarkSurface,
@@ -43,6 +56,12 @@ private val DarkColors = darkColorScheme(
     onSurfaceVariant = DarkOnSurfaceVariant,
     outline = DarkOutline,
     outlineVariant = DarkOutlineVariant,
+    surfaceContainerLowest = DarkContainerLowest,
+    surfaceContainerLow = DarkContainerLow,
+    surfaceContainer = DarkContainer,
+    surfaceContainerHigh = DarkContainerHigh,
+    surfaceContainerHighest = DarkContainerHighest,
+    surfaceTint = DarkSurface,
 )
 
 /**

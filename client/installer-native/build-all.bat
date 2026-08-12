@@ -1,130 +1,179 @@
 @echo off
-REM ============================================================
-REM  build-all.bat : produce a SINGLE self-extracting HashMM-Setup.exe
-REM  (like WeChat: one exe, double-click to install. No zip.)
-REM  Steps: compile Qt installer -> deploy Qt DLLs -> build app ->
-REM         assemble payload -> compile Win32 stub -> pack into ONE exe.
-REM  ONE CLICK. Just run this and wait.
-REM ============================================================
+REM HashMM V2802 deterministic native release pipeline.
+REM Produces one self-extracting installer plus SHA-256/release metadata.
 cd /d "%~dp0"
 setlocal enabledelayedexpansion
+set "FAILED_STEP="
+if not defined HASHMM_TIMESTAMP_URL set "HASHMM_TIMESTAMP_URL=http://timestamp.digicert.com"
 
 echo ============================================================
-echo   HashMM - build SINGLE installer exe (one click)
-echo   Do not close this window until you see DONE.
+echo   HashMM V2802 - verified native installer build
 echo ============================================================
-echo.
+
+where python >nul 2>&1 || (set "FAILED_STEP=Python not found" & goto :fail)
+where node >nul 2>&1 || (set "FAILED_STEP=Node.js not found" & goto :fail)
+where npm >nul 2>&1 || (set "FAILED_STEP=npm not found" & goto :fail)
 
 REM ---- locate Qt MinGW / compiler / cmake / ninja ----
 set "QT_ROOT=C:\Qt"
 if not exist "%QT_ROOT%" set "QT_ROOT=D:\Qt"
 if not exist "%QT_ROOT%" set "QT_ROOT=E:\Qt"
-if not exist "%QT_ROOT%" ( echo [ERROR] Qt root not found. Edit QT_ROOT at top. & pause & exit /b 1 )
+if not exist "%QT_ROOT%" (set "FAILED_STEP=Qt root not found; edit QT_ROOT" & goto :fail)
 
 set "QTDIR="
 for /d %%V in ("%QT_ROOT%\6.*") do if exist "%%V\mingw_64\bin\qmake.exe" set "QTDIR=%%V\mingw_64"
-if not defined QTDIR ( echo [ERROR] MinGW Qt6 not found ^(need %QT_ROOT%\6.x\mingw_64^). & pause & exit /b 1 )
-echo [OK] Qt:    %QTDIR%
-
+if not defined QTDIR (set "FAILED_STEP=Qt6 MinGW kit not found" & goto :fail)
 set "MINGW="
 for /d %%M in ("%QT_ROOT%\Tools\mingw*_64") do set "MINGW=%%M"
-if not defined MINGW ( echo [ERROR] MinGW compiler not found. & pause & exit /b 1 )
-echo [OK] MinGW: %MINGW%
-
+if not defined MINGW (set "FAILED_STEP=MinGW compiler not found" & goto :fail)
 set "CMAKEBIN=%QT_ROOT%\Tools\CMake_64\bin"
 set "NINJABIN=%QT_ROOT%\Tools\Ninja"
 if not exist "%CMAKEBIN%\cmake.exe" set "CMAKEBIN="
 if not exist "%NINJABIN%\ninja.exe" set "NINJABIN="
 set "PATH=%QTDIR%\bin;%MINGW%\bin;%CMAKEBIN%;%NINJABIN%;%PATH%"
-where cmake >nul 2>&1 || ( echo [ERROR] cmake not on PATH. & pause & exit /b 1 )
-where gcc   >nul 2>&1 || ( echo [ERROR] gcc not on PATH ^(MinGW^). & pause & exit /b 1 )
+where cmake >nul 2>&1 || (set "FAILED_STEP=cmake not found" & goto :fail)
+where gcc >nul 2>&1 || (set "FAILED_STEP=gcc not found" & goto :fail)
+echo [OK] Qt=%QTDIR%
 
-REM ---- 1/6 compile the Qt installer ----
+REM ---- 1/7 compile the native Qt installer ----
 echo.
-echo [1/6] Compiling Qt installer...
+echo [1/7] Compiling native installer...
 if exist "build-all" rmdir /s /q "build-all"
 if defined NINJABIN (
   cmake -S . -B build-all -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%QTDIR%"
 ) else (
   cmake -S . -B build-all -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%QTDIR%"
 )
-if errorlevel 1 ( echo. & echo [FAIL] CMake configure - send me the red text. & pause & exit /b 1 )
+if errorlevel 1 (set "FAILED_STEP=CMake configure" & goto :fail)
 cmake --build build-all
-if errorlevel 1 ( echo. & echo [FAIL] Compile - send me the red text. & pause & exit /b 1 )
-if not exist "build-all\HashMM-Setup.exe" ( echo [FAIL] Qt installer exe not produced. & pause & exit /b 1 )
-echo [OK] Qt installer compiled.
-
-REM ---- 2/6 deploy Qt DLLs next to the Qt installer ----
-echo.
-echo [2/6] Deploying Qt runtime DLLs...
+if errorlevel 1 (set "FAILED_STEP=native installer compile" & goto :fail)
+if not exist "build-all\HashMM-Setup.exe" (set "FAILED_STEP=native installer output missing" & goto :fail)
 "%QTDIR%\bin\windeployqt.exe" --release --no-translations --compiler-runtime build-all\HashMM-Setup.exe
+if errorlevel 1 (set "FAILED_STEP=windeployqt" & goto :fail)
 
-REM ---- 3/6 build FRONTEND (next build) + app payload (electron-builder) ----
+REM ---- 2/7 deterministic frontend dependencies + tests + production build ----
 echo.
-echo [3/6] Building frontend + app (a few minutes)...
-
-REM  3a) Build the Next.js frontend -> frontend-next\out  (electron-builder bundles this as "webui").
-REM      THIS step compiles UI changes. Without it the packaged app keeps the OLD frontend forever.
+echo [2/7] Verifying and building frontend...
 set "WEBUI=..\frontend-next"
-if not exist "%WEBUI%\package.json" ( echo [ERROR] ..\frontend-next not found. & pause & exit /b 1 )
 pushd "%WEBUI%"
-if not exist "node_modules" ( echo    First time npm install for frontend ^(slow^)... & call npm install )
-echo    Cleaning stale frontend build ^(out, .next^)...
+call npm ci --dry-run --ignore-scripts --prefer-offline --no-audit
+if errorlevel 1 (popd & set "FAILED_STEP=frontend package-lock mismatch" & goto :fail)
+if not exist "node_modules" call npm ci --prefer-offline --no-audit
+if errorlevel 1 (popd & set "FAILED_STEP=frontend npm ci" & goto :fail)
+call npm ls --depth=0
+if errorlevel 1 (popd & set "FAILED_STEP=frontend dependency tree" & goto :fail)
+call npm test
+if errorlevel 1 (popd & set "FAILED_STEP=frontend tests" & goto :fail)
+call npm run typecheck
+if errorlevel 1 (popd & set "FAILED_STEP=frontend typecheck" & goto :fail)
 if exist "out" rmdir /s /q "out"
 if exist ".next" rmdir /s /q ".next"
-echo    Running next build ^(this is what bakes your UI changes in^)...
 call npm run build
+if errorlevel 1 (popd & set "FAILED_STEP=frontend production build" & goto :fail)
 popd
-if not exist "%WEBUI%\out\index.html" ( echo. & echo [FAIL] frontend build produced no out\index.html - send me the red text above. & pause & exit /b 1 )
-echo [OK] frontend built ^(frontend-next\out^).
-echo.
-echo    Building electron app...
-set "DESKTOP=..\desktop"
-if not exist "%DESKTOP%\package.json" ( echo [ERROR] ..\desktop not found. & pause & exit /b 1 )
-pushd "%DESKTOP%"
-if not exist "node_modules" ( echo    First time npm install ^(slow^)... & call npm install )
-if not exist "node_modules\onnxruntime-node\package.json" ( echo    Installing onnxruntime-node ^(embedding service^)... & call npm install onnxruntime-node )
-if not exist "node_modules\onnxruntime-node\package.json" ( echo    [WARN] onnxruntime-node missing - embedding toggle stays off. Check network/proxy. )
-REM  3b) Packaging integrity gate: 每个启动期 require 必须在 electron-builder.yml 的 files 白名单里，
-REM      否则打包后 app.asar 缺文件、启动即崩（双击没反应）。在出包前就红，不产出坏安装包。
-echo    Checking packaging integrity ^(require vs files allowlist^)...
-call node tests-node\test_packaging_integrity.js
-if errorlevel 1 ( echo. ^& echo [FAIL] packaging integrity check failed - a startup require is missing from electron-builder.yml "files:" list. Add it there before shipping, or the packaged app crashes on launch. ^& popd ^& pause ^& exit /b 1 )
-call npx electron-builder --win --dir
-popd
-if not exist "%DESKTOP%\dist\win-unpacked" ( echo [FAIL] app not built ^(win-unpacked missing^). & pause & exit /b 1 )
-echo [OK] app built.
+if not exist "%WEBUI%\out\index.html" (set "FAILED_STEP=frontend out\index.html missing" & goto :fail)
 
-REM ---- 4/6 assemble payload\ = {Qt installer + Qt DLLs + app\} ----
+REM ---- 3/7 desktop dependencies, runtime, release gates, unpacked app ----
 echo.
-echo [4/6] Assembling payload...
+echo [3/7] Verifying desktop runtime and packaging app...
+set "DESKTOP=..\desktop"
+pushd "%DESKTOP%"
+call npm ci --dry-run --ignore-scripts --prefer-offline --no-audit
+if errorlevel 1 (popd & set "FAILED_STEP=desktop package-lock mismatch" & goto :fail)
+if not exist "node_modules" call npm ci --prefer-offline --no-audit
+if errorlevel 1 (popd & set "FAILED_STEP=desktop npm ci" & goto :fail)
+call npm ls --depth=0
+if errorlevel 1 (popd & set "FAILED_STEP=desktop dependency tree" & goto :fail)
+python scripts\prepare-runtime.py --strict
+if errorlevel 1 (popd & set "FAILED_STEP=Python runtime preparation" & goto :fail)
+node tests-node\test_packaging_integrity.js
+if errorlevel 1 (popd & set "FAILED_STEP=packaging integrity tests" & goto :fail)
+node tests-node\test_observer_v4_brand.js
+if errorlevel 1 (popd & set "FAILED_STEP=Observer V4 brand assets" & goto :fail)
+node tests-node\test_project_vault.js
+if errorlevel 1 (popd & set "FAILED_STEP=ProjectVault migration tests" & goto :fail)
+node tests-node\test_backendmgr.js
+if errorlevel 1 (popd & set "FAILED_STEP=backend manager tests" & goto :fail)
+node services\test_capability-pack.js
+if errorlevel 1 (popd & set "FAILED_STEP=capability pack tests" & goto :fail)
+node tests-node\test_install_engine.js
+if errorlevel 1 (popd & set "FAILED_STEP=installer engine tests" & goto :fail)
+node tests-node\test_repo_intelligence.js
+if errorlevel 1 (popd & set "FAILED_STEP=repository intelligence tests" & goto :fail)
+node tests-node\test_worktree_manager.js
+if errorlevel 1 (popd & set "FAILED_STEP=managed worktree tests" & goto :fail)
+python scripts\verify-release.py --source-only
+if errorlevel 1 (popd & set "FAILED_STEP=source release preflight" & goto :fail)
+if exist "dist\win-unpacked" rmdir /s /q "dist\win-unpacked"
+call npx electron-builder --win --dir
+if errorlevel 1 (popd & set "FAILED_STEP=electron-builder" & goto :fail)
+python scripts\verify-release.py --packaged dist\win-unpacked
+if errorlevel 1 (popd & set "FAILED_STEP=packaged app verification" & goto :fail)
+popd
+
+REM ---- 4/7 assemble payload ----
+echo.
+echo [4/7] Assembling verified payload...
 if exist "payload" rmdir /s /q "payload"
 mkdir "payload"
 xcopy "build-all\*" "payload\" /e /i /h /y >nul
+if errorlevel 1 (set "FAILED_STEP=copy native payload" & goto :fail)
 xcopy "%DESKTOP%\dist\win-unpacked" "payload\app\" /e /i /h /y >nul
-echo [OK] payload assembled ^(installer + DLLs + app^).
+if errorlevel 1 (set "FAILED_STEP=copy app payload" & goto :fail)
+python "%DESKTOP%\scripts\verify-release.py" --packaged payload\app
+if errorlevel 1 (set "FAILED_STEP=assembled payload verification" & goto :fail)
 
-REM ---- 5/6 compile the Win32 self-extracting stub ----
+REM ---- 5/7 compile unique-temp self-extracting bootstrap ----
 echo.
-echo [5/6] Compiling self-extractor stub...
-gcc bootstrap\bootstrap.c -o bootstrap\bootstrap.exe -O2 -mwindows -municode -lkernel32 -luser32 -lshell32
-if errorlevel 1 ( echo. & echo [FAIL] stub compile - send me the red text. & pause & exit /b 1 )
-echo [OK] stub compiled.
+echo [5/7] Compiling self-extractor...
+where windres >nul 2>&1 || (set "FAILED_STEP=windres not found" & goto :fail)
+windres "build-all\hashmm-version.rc" -O coff -o "build-all\hashmm-version.o"
+if errorlevel 1 (set "FAILED_STEP=self-extractor version resource" & goto :fail)
+gcc bootstrap\bootstrap.c "build-all\hashmm-version.o" -o bootstrap\bootstrap.exe -O2 -mwindows -municode -lkernel32 -luser32 -lshell32
+if errorlevel 1 (set "FAILED_STEP=self-extractor compile" & goto :fail)
 
-REM ---- 6/6 pack payload into the stub -> single HashMM-Setup.exe ----
+REM ---- 6/7 stream-compress payload into the single EXE ----
 echo.
-echo [6/6] Packing into a single exe ^(large, please wait^)...
-if exist "HashMM-Setup.exe" del /f /q "HashMM-Setup.exe"
+echo [6/7] Packing single installer (streaming, deterministic)...
 python "bootstrap\pack.py" --folder "payload" --stub "bootstrap\bootstrap.exe" --out "HashMM-Setup.exe"
-if errorlevel 1 ( echo. & echo [FAIL] packing failed. & pause & exit /b 1 )
+if errorlevel 1 (set "FAILED_STEP=payload packing" & goto :fail)
+
+REM ---- 7/7 optional Authenticode + mandatory SHA/release manifest ----
+echo.
+echo [7/7] Signing policy and release manifest...
+if defined HASHMM_SIGN_PFX (
+  if not exist "%HASHMM_SIGN_PFX%" (set "FAILED_STEP=HASHMM_SIGN_PFX file missing" & goto :fail)
+  where signtool >nul 2>&1 || (set "FAILED_STEP=signtool not found" & goto :fail)
+  if defined HASHMM_SIGN_PASSWORD (
+    signtool sign /fd SHA256 /tr "%HASHMM_TIMESTAMP_URL%" /td SHA256 /f "%HASHMM_SIGN_PFX%" /p "%HASHMM_SIGN_PASSWORD%" "HashMM-Setup.exe"
+  ) else (
+    signtool sign /fd SHA256 /tr "%HASHMM_TIMESTAMP_URL%" /td SHA256 /f "%HASHMM_SIGN_PFX%" "HashMM-Setup.exe"
+  )
+  if errorlevel 1 (set "FAILED_STEP=Authenticode signing" & goto :fail)
+  signtool verify /pa "HashMM-Setup.exe"
+  if errorlevel 1 (set "FAILED_STEP=Authenticode verification" & goto :fail)
+) else (
+  if "%HASHMM_REQUIRE_SIGNING%"=="1" (set "FAILED_STEP=signing required but HASHMM_SIGN_PFX is unset" & goto :fail)
+  echo [WARN] Installer is unsigned. Set HASHMM_SIGN_PFX and HASHMM_REQUIRE_SIGNING=1 for public release.
+)
+python "%DESKTOP%\scripts\verify-release.py" --artifact "HashMM-Setup.exe"
+if errorlevel 1 (set "FAILED_STEP=artifact checksum/manifest" & goto :fail)
 
 echo.
 echo ============================================================
-echo   DONE.
-echo.
-echo   THE installer to ship to users:  %~dp0HashMM-Setup.exe
-echo   It is ONE exe. Users double-click it to install.
-echo   ^(It self-extracts to %%TEMP%% then runs the installer UI.^)
+echo   DONE - verified outputs:
+echo   %~dp0HashMM-Setup.exe
+echo   %~dp0HashMM-Setup.exe.sha256
+echo   %~dp0HashMM-Setup.release.json
 echo ============================================================
+if not "%HASHMM_NO_PAUSE%"=="1" pause
+exit /b 0
+
+:fail
 echo.
-pause
+echo ============================================================
+echo   BUILD FAILED: %FAILED_STEP%
+echo   No installer from this run is approved for release.
+echo ============================================================
+if not "%HASHMM_NO_PAUSE%"=="1" pause
+exit /b 1

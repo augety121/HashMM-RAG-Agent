@@ -13,8 +13,11 @@ pytestmark = pytest.mark.unit
 def test_selftest_all_pass():
     from hashmm.tools.agent_bench import run_selftest
     report = run_selftest()
-    assert report["ran"] == 3
-    assert report["passed"] == 3, report["results"]
+    # V308：不再硬编码用例数（原断言 ran==3，但实现已增至 6 个：4 个脚本化任务
+    # + stream_delta + step_eval 两个纯函数回归）。这类硬编码每加一个自检就得改测试，
+    # 是测试漂移的温床。改为断言【语义属性】：确有用例在跑、且全部通过。
+    assert report["ran"] >= 3, f"自检用例数异常偏少: {report['ran']}"
+    assert report["passed"] == report["ran"], report["results"]
     assert report["pass_rate"] == 1.0
 
 

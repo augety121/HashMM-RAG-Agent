@@ -22,8 +22,8 @@ class VerifyResult:
     def summary(self) -> str:
         failed = self.issues
         if not failed:
-            return "✅ 全部检查通过"
-        return "❌ " + "; ".join(failed)
+            return "全部检查通过"
+        return "未通过：" + "; ".join(failed)
 
 
 def verify_output(output_format: str, content: str = "",
@@ -110,7 +110,9 @@ def _code_no_syntax_error(content, path):
     except SyntaxError as e:
         return ("syntax", False, f"语法错误: {e.msg} (行 {e.lineno})")
     except Exception as _e:
-        return ("syntax", True, "")  # Non-Python or complex, skip
+        # ``python_file`` is an explicit contract. Treating an unexpected
+        # compiler failure as a pass makes a broken artifact look verified.
+        return ("syntax", False, f"syntax validation unavailable: {type(_e).__name__}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -140,15 +142,15 @@ def error_to_user_message(error: Exception) -> str:
     if "timeout" in msg:
         return "⏰ 响应超时，请稍后重试或简化问题。"
     if "rate_limit" in msg or "rate limit" in msg or "429" in msg:
-        return "🚫 请求过于频繁，请稍等 30 秒再试。"
+        return "请求过于频繁，请稍等 30 秒再试。"
     if "400" in msg and "deserialize" in msg:
-        return "⚠️ API 请求格式错误，正在重试..."
+        return "API 请求格式错误，正在重试..."
     if "401" in msg or "unauthorized" in msg:
-        return "🔑 API 密钥无效，请在设置中检查。"
+        return "API 密钥无效，请在设置中检查。"
     if "500" in msg or "502" in msg or "503" in msg:
-        return "🔧 LLM 服务暂时不可用，请稍后重试。"
+        return "LLM 服务暂时不可用，请稍后重试。"
     if "cuda" in msg or "gpu" in msg:
-        return "⚠️ GPU 不可用，已切换到 CPU 模式。"
+        return "GPU 不可用，已切换到 CPU 模式。"
     if "connection" in msg or "network" in msg:
-        return "🌐 网络连接失败，请检查网络。"
-    return "⚠️ 处理时遇到问题，请重试。如持续出现请反馈。"
+        return "网络连接失败，请检查网络。"
+    return "处理时遇到问题，请重试。如持续出现请反馈。"

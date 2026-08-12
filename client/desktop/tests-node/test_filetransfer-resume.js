@@ -4,7 +4,7 @@
  */
 "use strict";
 const assert = require("assert");
-const { ChunkAssembler, sliceChunks, planTransfer, checksum } = require("../services/remote-filetransfer.js");
+const { ChunkAssembler, sliceChunks, planTransfer, checksum, checkPolicy } = require("../services/remote-filetransfer.js");
 const ex = require("../filetransfer-extras.js");
 
 let pass = 0;
@@ -62,5 +62,9 @@ const done = new ChunkAssembler({ id: "f3", size: fileBuf.length, totalChunks: t
 for (const c of chunks) done.addChunk(c.seq, c.data);
 ok("全收→缺块空", ex.missingChunks([...done.received.keys()], total).length === 0);
 ok("全收→resumePlan complete", ex.resumePlan([...done.received.keys()], total).complete === true);
+
+console.log("=== 场景：内存接收器资源门 ===");
+ok("256MB 文件允许", checkPolicy({ size: 256 * 1024 * 1024 }).allowed === true);
+ok("超过 256MB 默认拒绝", checkPolicy({ size: 256 * 1024 * 1024 + 1 }).allowed === false);
 
 console.log("\n结果：PASS=" + pass + (process.exitCode ? "  有失败" : "  全部通过"));

@@ -64,6 +64,15 @@ describe("renderMsg", () => {
     const html = renderMsg("visit [Google](https://google.com)");
     expect(html).toContain("href=");
     expect(html).toContain("https://google.com");
+    expect(html).toContain('data-hashmm-browser-link="1"');
+    expect(html).not.toContain('target="_blank"');
+  });
+
+  it("turns a bare URL into an embedded-browser link", () => {
+    const html = renderMsg("查看 https://example.com/docs。然后继续");
+    expect(html).toContain('href="https://example.com/docs"');
+    expect(html).toContain('data-hashmm-browser-link="1"');
+    expect(html).toContain("。然后继续");
   });
 
   it("renders lists", () => {

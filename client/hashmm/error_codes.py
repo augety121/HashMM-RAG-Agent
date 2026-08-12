@@ -30,18 +30,42 @@ _REGISTRY: dict[str, ErrorSpec] = {
     "not_found":        ErrorSpec("not_found", 404, "资源不存在", "client"),
     "rate_limited":     ErrorSpec("rate_limited", 429, "请求过于频繁，请稍后再试", "client"),
     "config_error":     ErrorSpec("config_error", 400, "配置错误", "client"),
+    "invalid_input":    ErrorSpec("invalid_input", 400, "输入格式无效", "client"),
+    "invalid_request":  ErrorSpec("invalid_request", 400, "请求无效", "client"),
+    "invalid_action":   ErrorSpec("invalid_action", 400, "操作无效", "client"),
+    "invalid_decision": ErrorSpec("invalid_decision", 400, "决策无效", "client"),
+    "invalid_status":   ErrorSpec("invalid_status", 400, "状态无效", "client"),
+    "idempotency_key_required": ErrorSpec("idempotency_key_required", 400, "写操作必须提供 Idempotency-Key", "client"),
+    "invalid_idempotency_key": ErrorSpec("invalid_idempotency_key", 400, "Idempotency-Key 格式无效", "client"),
+    "idempotency_conflict": ErrorSpec("idempotency_conflict", 409, "幂等键已被不同请求使用", "client"),
+    "request_in_progress": ErrorSpec("request_in_progress", 409, "同一幂等请求仍在执行", "client"),
+    "revision_conflict": ErrorSpec("revision_conflict", 409, "资源版本已变化", "client"),
+    "budget_exceeded":  ErrorSpec("budget_exceeded", 402, "预算不足", "client"),
+    "rate_limit_exceeded": ErrorSpec("rate_limit_exceeded", 429, "API Key 请求速率已达上限", "client"),
+    "concurrency_limit_exceeded": ErrorSpec("concurrency_limit_exceeded", 429, "API Key 并发数已达上限", "client"),
+    "quota_exceeded": ErrorSpec("quota_exceeded", 429, "API Key 配额不足", "client"),
+    "invalid_scope": ErrorSpec("invalid_scope", 400, "API Key Scope 无效", "client"),
+    "invalid_ip_rule": ErrorSpec("invalid_ip_rule", 400, "IP 访问规则无效", "client"),
+    "revision_required": ErrorSpec("revision_required", 400, "更新必须提供资源版本", "client"),
     # 鉴权类
     "auth_error":       ErrorSpec("auth_error", 401, "认证失败或令牌已过期", "auth"),
     "forbidden":        ErrorSpec("forbidden", 403, "无权访问", "auth"),
+    "invalid_api_key": ErrorSpec("invalid_api_key", 401, "API Key 无效或已失效", "auth"),
+    "insufficient_scope": ErrorSpec("insufficient_scope", 403, "API Key 权限不足", "auth"),
+    "resource_not_allowed": ErrorSpec("resource_not_allowed", 403, "API Key 无权访问该资源", "auth"),
     # 安全类
     "safety_error":     ErrorSpec("safety_error", 400, "检测到不安全内容", "safety"),
     # 上游依赖类（LLM / 检索）
     "llm_error":        ErrorSpec("llm_error", 502, "模型服务暂时不可用", "upstream"),
+    "llm_unavailable":  ErrorSpec("llm_unavailable", 503, "模型服务尚未就绪", "upstream"),
     "retrieval_error":  ErrorSpec("retrieval_error", 502, "知识检索暂时不可用", "upstream"),
     "upstream_timeout": ErrorSpec("upstream_timeout", 504, "上游服务超时", "upstream"),
     # 服务端类
     "ingest_error":     ErrorSpec("ingest_error", 500, "文档处理失败", "server"),
     "internal_error":   ErrorSpec("internal_error", 500, "服务器内部错误", "server"),
+    "idempotency_unavailable": ErrorSpec("idempotency_unavailable", 503, "幂等账本不可用", "server"),
+    "idempotency_commit_unavailable": ErrorSpec("idempotency_commit_unavailable", 503, "幂等结果无法提交", "server"),
+    "recovery_incomplete": ErrorSpec("recovery_incomplete", 503, "恢复所需的运行状态不完整", "server"),
 }
 
 

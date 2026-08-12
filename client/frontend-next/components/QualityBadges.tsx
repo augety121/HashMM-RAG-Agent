@@ -59,7 +59,7 @@ export function aggregateQualityBadges(steps: BadgeStep[]): QualityBadge[] {
 
   const verify = find("verify");
   if (verify) {
-    const ok = (verify.detail || "").includes("通过") || (verify.detail || "").includes("✓");
+    const ok = (verify.detail || "").includes("通过");
     badges.push({
       key: "verify", Icon: ShieldCheck, tone: ok ? "ok" : "warn",
       label: "语法验证", tip: verify.detail || "已对生成的代码做语法检查",

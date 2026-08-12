@@ -10,7 +10,7 @@ Usage:
 
     safe, reason = check_safety(user_query)
     if not safe:
-        return f"⚠️ {reason}"
+        return f"提示：{reason}"
 """
 from __future__ import annotations
 import re
@@ -32,6 +32,8 @@ ALLOWED_EXTENSIONS = frozenset({
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
     # Archives
     "zip", "tar", "gz",
+    # Audio (V257: 会议录音→STT→纪要，走文档工坊 audio_minutes)
+    "mp3", "wav", "m4a", "aac", "ogg", "flac",
 })
 
 BLOCKED_EXTENSIONS = frozenset({

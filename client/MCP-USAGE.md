@@ -12,13 +12,13 @@ HASHMM_MCP_SERVER=1 HASHMM_MCP_TOKEN=换成你的密钥 \
   HASHMM_EVAL_EXEC=1 CUDA_VISIBLE_DEVICES=0 \
   python -m uvicorn hashmm.api.server:app --host 0.0.0.0 --port 6006
 ```
-探活：`curl /mcp` → `{"enabled": true, "tools": [...]}`
+探活：`curl http://111.115.7.14:20014/mcp` → `{"enabled": true, "tools": [...]}`
 
 ## 2. Claude Code 一行接入
 
 ```bash
 claude mcp add hashmm -- python -m hashmm.tools.mcp_stdio \
-  --backend  --token 你的密钥
+  --backend http://111.115.7.14:20014 --token 你的密钥
 ```
 （机器上需有 HashMM 代码库或仅拷贝 `hashmm/tools/mcp_stdio.py`——它是纯标准库单文件，
 零依赖可独立运行。）

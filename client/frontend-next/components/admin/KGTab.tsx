@@ -13,6 +13,10 @@ interface KGStats {
   isolated_entities?: number;
   type_distribution: Record<string, number>;
   top_entities: Array<{ name: string; degree: number; type: string }>;
+  graph_engineering?: {
+    enabled: boolean; ready: boolean; mode?: string; evidence_limit?: number;
+    evidence_preserving?: boolean; source_join?: string;
+  };
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -93,9 +97,9 @@ export function KGTab() {
     <div>
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>知识图谱</h3>
+          <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>图工程</h3>
           <p className="text-[11px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-            {empty ? "从已索引的文档切片中提取实体和关系" : `${stats!.entities} 实体 · ${stats!.relations} 关系`}
+            {empty ? "从已索引文档提取关系，再为 Chat 构建查询时证据图" : `${stats!.entities} 实体 · ${stats!.relations} 关系 · 原文切片可追溯`}
           </p>
         </div>
         <div className="flex gap-2">
@@ -116,17 +120,41 @@ export function KGTab() {
       </div>
 
       {msg && (
+        // V203：旧判断依赖消息里的失败标记，但消息文案早已去掉该标记 → 失败也渲染成绿色。
+        // 改为按文案判定，并用主题变量（原硬编码浅色 hex 在暗色主题下刺眼）。
         <div className="mb-4 px-4 py-2.5 rounded-lg text-[12px]"
-          style={{ background: msg.includes("❌") ? "#fef2f2" : "#f0fdf4",
-                   color: msg.includes("❌") ? "#ef4444" : "#059669" }}>
+          style={{ background: /失败|出错/.test(msg) ? "color-mix(in srgb, var(--error) 10%, transparent)" : "color-mix(in srgb, var(--success) 10%, transparent)",
+                   color: /失败|出错/.test(msg) ? "var(--error)" : "var(--success)" }}>
           {msg}
         </div>
       )}
 
+      <div className="mb-4 rounded-xl p-4 flex items-start gap-3" style={{ border: "1px solid var(--border)", background: "var(--bg-secondary)" }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--accent-light)", color: "var(--accent)" }}>
+          <Network size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>查询时证据图</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: stats?.graph_engineering?.ready ? "color-mix(in srgb, var(--success) 12%, transparent)" : "var(--bg-tertiary)", color: stats?.graph_engineering?.ready ? "var(--success)" : "var(--text-tertiary)" }}>
+              {stats?.graph_engineering?.ready ? "已接入 Chat" : empty ? "等待构建知识图谱" : "未启用"}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+            每次提问只展开与当前问题相关的实体、关系和原始切片；新增证据仍经过文档权限过滤，模型看到的是可核对原文，不是图谱摘要代替事实。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+            <span>按 chunk_id 回接原文</span><span>·</span>
+            <span>每轮最多 {stats?.graph_engineering?.evidence_limit ?? 4} 条图关联证据</span><span>·</span>
+            <span>结果写入运行清单</span>
+          </div>
+        </div>
+      </div>
+
       {empty ? (
         <div className="text-center py-16">
           <Network size={44} className="mx-auto mb-3" style={{ color: "var(--text-tertiary)", opacity: 0.4 }} />
-          <div className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>知识图谱为空</div>
+          <div className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>图工程尚未就绪</div>
           <div className="text-[12px] mt-2 max-w-[420px] mx-auto leading-relaxed" style={{ color: "var(--text-tertiary)" }}>
             点击上方「一键构建」从已索引的文档切片中自动提取实体和关系。
             <br/>不需要重新解析 PDF，不需要 LLM，通常 3 秒内完成。

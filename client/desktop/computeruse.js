@@ -32,6 +32,12 @@ const DANGER_PATTERNS = [
   /\bcurl\b.*\|\s*(sudo\s+)?(ba)?sh/i,   // curl | sh
   /\bwget\b.*\|\s*(sudo\s+)?(ba)?sh/i,
   /\bRemove-Item\b.*-Recurse\b.*-Force\b/i,   // PS 强制递归删除
+  // V259 加固：注册表删除 / 磁盘分区 / PS 关机重启 / 删卷影副本（勒索软件标志动作）/ 启动配置
+  /\breg\s+delete\b/i,
+  /\bdiskpart\b/i,
+  /\b(Stop|Restart)-Computer\b/i,
+  /\bvssadmin\s+delete\b/i,
+  /\bbcdedit\b/i,
 ];
 
 /** 判断命令是否危险（需确认）。返回 {danger, reason}。纯函数。 */
@@ -191,7 +197,7 @@ const CONTROL_TOOLS = [
             type: "string",
             enum: ["left_click", "right_click", "middle_click", "double_click",
                    "mouse_move", "left_click_drag", "type", "key", "scroll",
-                   "cursor_position", "wait"],
+                   "cursor_position", "open_url", "wait"],
             description: "动作类型",
           },
           x: { type: "number", description: "横坐标 0..1000（点击/移动/滚动/拖拽起点需要）" },
@@ -200,9 +206,48 @@ const CONTROL_TOOLS = [
           y2: { type: "number", description: "拖拽终点纵坐标 0..1000" },
           text: { type: "string", description: "要输入的文本（type 动作）" },
           keys: { type: "string", description: "组合键，如 'ctrl+s'、'enter'、'alt+tab'（key 动作）" },
+          url: { type: "string", description: "用系统默认浏览器打开的网址（open_url 动作）。注意：若目标是【在网页里操作】（点击/输入/读取/多步浏览），请改用更可靠的 browser 工具（受控浏览器、按元素编号操作），不要走 open_url+截图+肉眼估坐标这条脆弱路径。" },
           scroll_direction: { type: "string", enum: ["up", "down", "left", "right"], description: "滚动方向（scroll）" },
           scroll_amount: { type: "number", description: "滚动格数 1..50（scroll，默认 3）" },
           ms: { type: "number", description: "等待毫秒数 0..10000（wait）" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+];
+
+// V172 Browser Use：受控浏览器自主操作（导航/点击/输入/滚动/读取）。单一 browser 工具，
+// action 字段分发；对标 Claude computer use / OpenAI Operator——把【带编号的可交互元素树 + 截图】
+// 喂给模型，模型按编号点/输入，主进程用 webContents.sendInputEvent 注入受控页面（不动真实鼠标）。
+// 相比"截屏 OCR 估坐标点系统浏览器"，命中率与稳定性是质变。仅在视觉+控制开启且模块就绪时注入。
+const BROWSER_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "browser",
+      description:
+        "在 HashMM 内置的【受控浏览器】里自主浏览并操作网页。这不是控制你电脑真实鼠标的屏幕操作，" +
+        "而是一个隔离、可后台运行的浏览器；每执行一步都会回传【当前页面可交互元素清单（每个带编号）】+【页面截图】。\n" +
+        "标准流程：先用 navigate 打开网址 → 看回传的元素清单 → 用 click(index) 点、type(index,text) 输入，" +
+        "index 就是清单里每个元素前 [n] 的编号，按编号操作，不要凭截图猜坐标。搜索框输入后用 key='enter' 或 type 时带 submit 提交。" +
+        "看长页面用 scroll，读正文用 read。相比屏幕级 computer 工具，操作网页优先用本工具，更准更稳。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["navigate", "click", "type", "key", "scroll", "back", "forward", "read", "wait"],
+            description: "动作类型",
+          },
+          url: { type: "string", description: "要打开的网址（navigate；必须 http/https）" },
+          index: { type: "number", description: "目标元素编号（click/type/定向 scroll；来自上一步回传的元素清单 [n]）" },
+          text: { type: "string", description: "要输入的文本（type）" },
+          submit: { type: "boolean", description: "type 后是否自动回车提交（可选）" },
+          keys: { type: "string", description: "要按的键或组合键，如 'enter'、'tab'、'ctrl+a'（key）" },
+          scroll_direction: { type: "string", enum: ["up", "down", "left", "right"], description: "滚动方向（scroll，默认 down）" },
+          scroll_amount: { type: "number", description: "滚动量 1..20（scroll，默认 3）" },
+          ms: { type: "number", description: "等待毫秒 0..10000（wait）" },
         },
         required: ["action"],
       },
@@ -219,6 +264,7 @@ const TOOL_META = {
   get_system_info: { label: "系统信息", readonly: true },
   locate_element: { label: "定位元素", readonly: true },
   computer:       { label: "屏幕操作", readonly: false },
+  browser:        { label: "浏览器操作", readonly: false },
 };
 
 // V100: 视觉定位执行的格式化层（纯函数，可测）。主进程对屏幕做 OCR 得到
@@ -248,13 +294,34 @@ function runLocate(elements, query, screen, opts) {
 }
 
 /** 哪些工具调用需要用户确认（写操作 + 危险 shell）。纯函数。 */
+// V318 敏感文件路径：读取这些同样危险（密钥/凭证/系统账户）。此前 read_file 被
+// 当"只读=安全"免确认，但被注入诱导读 ~/.ssh/id_rsa 会直接泄露私钥——读敏感文件也要确认。
+const SENSITIVE_READ_PATTERNS = [
+  /\.ssh[\/\\]/i, /id_rsa|id_ed25519|id_dsa/i,          // SSH 私钥
+  /\.env(\.|$)/i, /\.aws[\/\\]|\.gcloud[\/\\]/i,         // 环境变量/云凭证
+  /\/etc\/(passwd|shadow|sudoers)/i,                     // 系统账户
+  /\.(pem|key|pfx|p12|keystore)$/i,                      // 密钥文件
+  /credentials|secret|password|token/i,                 // 凭证类文件名
+  /\.git[\/\\]config$/i, /\.npmrc$|\.pypirc$/i,          // 含 token 的配置
+];
+
+function isSensitiveRead(path) {
+  const p = String(path || "");
+  return SENSITIVE_READ_PATTERNS.some(re => re.test(p));
+}
+
 function needsConfirm(toolName, args) {
   if (toolName === "write_file") return { confirm: true, reason: "写入文件: " + (args && args.path || "") };
   if (toolName === "run_shell") {
     const a = assessCommand(args && args.command);
     return { confirm: a.danger, reason: a.reason };
   }
-  return { confirm: false, reason: "" };   // read_file / list_dir 只读，免确认
+  // V318：读敏感文件也需确认（防注入诱导读取密钥/凭证外泄）
+  if ((toolName === "read_file" || toolName === "read_file_range") &&
+      isSensitiveRead(args && args.path)) {
+    return { confirm: true, reason: "读取疑似敏感文件（密钥/凭证/系统账户）: " + (args && args.path || "") };
+  }
+  return { confirm: false, reason: "" };   // 其他只读操作免确认
 }
 
-module.exports = { assessCommand, needsConfirm, TOOLS, VISION_TOOLS, SYSTEM_TOOLS, CONTROL_TOOLS, TOOL_META, DANGER_PATTERNS, runLocate, grounding };
+module.exports = { assessCommand, needsConfirm, isSensitiveRead, TOOLS, VISION_TOOLS, SYSTEM_TOOLS, CONTROL_TOOLS, BROWSER_TOOLS, TOOL_META, DANGER_PATTERNS, SENSITIVE_READ_PATTERNS, runLocate, grounding };

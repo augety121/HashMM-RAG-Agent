@@ -4,8 +4,8 @@
   "installer": { "install": "Install Now", "agree": "I have read and agree to the Terms & Privacy Policy", "path": "Install to", "space": "Space required", "done": "Installation complete", "start": "Get Started" },
   "uninstaller": { "title": "Uninstall HashMM", "confirm": "Uninstall", "cancel": "Cancel", "keepData": "Your data is kept by default and restored on reinstall", "done": "HashMM uninstalled" },
   "ui": {
-    "btnKB": "Knowledge", "btnConfig": "Config", "btnSettings": "⚙ Settings", "btnHistory": "📚 History", "btnBack": "← Connect",
-    "send": "Send", "regenerate": "↻ Regenerate", "clear": "🗑 Clear", "export": "⬇ Export",
+    "btnKB": "Knowledge", "btnConfig": "Config", "btnSettings": "Settings", "btnHistory": "History", "btnBack": "← Connect",
+    "send": "Send", "regenerate": "↻ Regenerate", "clear": "Clear", "export": "Export",
     "settingsTitle": "Appearance & Preferences", "theme": "Theme", "font": "Font size", "density": "Density",
     "themeDark": "Dark", "themeLight": "Light", "themeAuto": "System",
     "densityComfortable": "Comfortable", "densityCompact": "Compact",

@@ -89,4 +89,23 @@ ok("locate_element 工具 schema 与只读元信息");
 }
 ok("runLocate 格式化（命中坐标 / 未命中措辞 / 歧义提示）");
 
-console.log(`computeruse 纯逻辑：${pass}/7 全部通过`);
+// V318：敏感文件读取需确认（防注入诱导读取密钥/凭证外泄）
+{
+  const sens = [
+    ["read_file", { path: "/home/u/.ssh/id_rsa" }, true],
+    ["read_file", { path: "/etc/passwd" }, true],
+    ["read_file", { path: "/app/.env" }, true],
+    ["read_file", { path: "/home/u/key.pem" }, true],
+    ["read_file", { path: "/home/u/readme.md" }, false],
+    ["read_file", { path: "/app/src/main.py" }, false],
+  ];
+  for (const [tool, args, want] of sens) {
+    assert(CU.needsConfirm(tool, args).confirm === want,
+      `敏感读取确认: ${args.path} 应 confirm=${want}`);
+  }
+  assert(CU.isSensitiveRead("/home/u/.ssh/id_rsa") === true, "isSensitiveRead SSH");
+  assert(CU.isSensitiveRead("/home/u/notes.txt") === false, "isSensitiveRead 普通文件");
+}
+ok("V318 敏感文件读取确认（SSH/env/密钥/系统账户需确认，普通文件免确认）");
+
+console.log(`computeruse 纯逻辑：${pass}/8 全部通过`);

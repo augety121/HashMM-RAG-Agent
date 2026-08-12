@@ -156,7 +156,7 @@ async def list_mcp_servers(request: Request):
     """List configured MCP servers (with cached tool lists)."""
     require_admin(request)
     from hashmm.tools import mcp_client
-    return {"servers": mcp_client.list_servers()}
+    return {"servers": mcp_client.list_servers(redact_headers=True)}
 
 
 @router.post("/mcp")
@@ -173,19 +173,24 @@ async def create_mcp_server(cfg: MCPServerConfig, request: Request):
         raise HTTPException(400, f"创建失败（可能重名）: {str(e)[:120]}")
     # Best-effort discovery so tools are usable immediately
     discovered = 0
+    discovery_error = ""
     try:
         r = mcp_client.refresh_server(sid)
         discovered = r.get("count", 0)
     except Exception as _e:
         log_suppressed(_obs_logger, _e)
-    return {"ok": True, "id": sid, "discovered": discovered}
+        discovery_error = f"{type(_e).__name__}: {str(_e)[:180]}"
+    return {"ok": True, "id": sid, "discovered": discovered,
+            "status": "ready" if not discovery_error else "error",
+            "discovery_error": discovery_error}
 
 
 @router.put("/mcp/{sid}")
 async def update_mcp_server(sid: str, cfg: MCPServerConfig, request: Request):
     require_admin(request)
     from hashmm.tools import mcp_client
-    mcp_client.update_server(sid, cfg.model_dump())
+    if not mcp_client.update_server(sid, cfg.model_dump()):
+        raise HTTPException(404, "MCP 服务器不存在")
     return {"ok": True}
 
 
@@ -193,7 +198,8 @@ async def update_mcp_server(sid: str, cfg: MCPServerConfig, request: Request):
 async def delete_mcp_server(sid: str, request: Request):
     require_admin(request)
     from hashmm.tools import mcp_client
-    mcp_client.delete_server(sid)
+    if not mcp_client.delete_server(sid):
+        raise HTTPException(404, "MCP 服务器不存在")
     return {"ok": True}
 
 
@@ -202,7 +208,13 @@ async def refresh_mcp_server(sid: str, request: Request):
     """Re-discover tools from an MCP server and cache them."""
     require_admin(request)
     from hashmm.tools import mcp_client
-    return mcp_client.refresh_server(sid)
+    try:
+        result = mcp_client.refresh_server(sid)
+    except Exception as exc:
+        raise HTTPException(502, f"MCP 握手或工具发现失败: {type(exc).__name__}: {str(exc)[:160]}")
+    if result.get("error") == "server not found":
+        raise HTTPException(404, "MCP 服务器不存在")
+    return result
 
 
 @router.post("/mcp/test")

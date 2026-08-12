@@ -28,6 +28,7 @@ let _CP = null; try { _CP = require("./config-portability.js"); } catch (_e) {}
 let _CS2 = null; try { _CS2 = require("./conversation-store.js"); } catch (_e) {}
 // V103.90 命令面板模糊匹配（纯逻辑，渲染层不能 require）。
 let _CMD = null; try { _CMD = require("./command-palette.js"); } catch (_e) {}
+let _BTR = null; try { _BTR = require("./modules/browser-trajectory.js"); } catch (_e) {}
 contextBridge.exposeInMainWorld("hashmmCmd", {
   filter: (commands, query, ctx) => (_CMD ? _CMD.filterCommands(commands, query, ctx) : (commands || [])),
   moveSelection: (cur, delta, len) => (_CMD ? _CMD.moveSelection(cur, delta, len) : 0),
@@ -70,7 +71,7 @@ let _AT = null; try { _AT = require("./attachment-manager.js"); } catch (_e) {}
 contextBridge.exposeInMainWorld("hashmmAttach", {
   classify: (file) => (_AT ? _AT.classifyFile(file) : { kind: "other", canInline: false }),
   validate: (file, opts) => (_AT ? _AT.validateAttachment(file, opts) : { ok: false, reason: "unavailable" }),
-  label: (file) => (_AT ? _AT.attachmentLabel(file) : { name: "", short: "", size: "", icon: "📎" }),
+  label: (file) => (_AT ? _AT.attachmentLabel(file) : { name: "", short: "", size: "", icon: "FILE" }),
   buildTextContext: (files, opts) => (_AT ? _AT.buildTextContext(files, opts) : ""),
 });
 // V103.90 多语言界面：复用现有 i18n 引擎（desktop/i18n/i18n.js，V100），加载词典并暴露给渲染层。
@@ -111,6 +112,20 @@ contextBridge.exposeInMainWorld("hashmmNotify", {
   clearUnread: () => ipcRenderer.invoke("notify:clearUnread"),
   setEnabled: (on) => ipcRenderer.invoke("notify:setEnabled", on),
   getEnabled: () => ipcRenderer.invoke("notify:getEnabled"),
+});
+contextBridge.exposeInMainWorld("hashmmMemory", {
+  get: () => ipcRenderer.invoke("memory:get"),
+  setField: (key, value) => ipcRenderer.invoke("memory:setField", { key, value }),
+  forgetDir: (dir) => ipcRenderer.invoke("memory:forgetDir", { dir }),
+  forgetPref: (note) => ipcRenderer.invoke("memory:forgetPref", { note }),
+  clear: () => ipcRenderer.invoke("memory:clear"),
+  pickDir: () => ipcRenderer.invoke("cockpit:pickDir"),
+});
+contextBridge.exposeInMainWorld("hashmmTasks", {
+  get: () => ipcRenderer.invoke("cockpit:getTasks"),
+  onUpdate: (cb) => { const fn = (_e, list) => { try { cb(list); } catch (_e) {} }; ipcRenderer.on("cockpit:tasks", fn); return () => { try { ipcRenderer.removeListener("cockpit:tasks", fn); } catch (_e) {} }; },
+  cancel: (token) => ipcRenderer.invoke("cockpit:cancelTask", { token }),
+  dispatch: (kind, goal) => ipcRenderer.invoke("cockpit:dispatch", { kind, goal }),
 });
 contextBridge.exposeInMainWorld("hashmmConfigIO", {
   buildExportString: (parts, opts) => (_CP ? _CP.stringifyExport(parts, opts) : "{}"),
@@ -163,6 +178,19 @@ contextBridge.exposeInMainWorld("hashmmDesktop", {
   getDefaultBackend: () => ipcRenderer.invoke("hashmm:getDefaultBackend"),
   setOverlay: (dark) => ipcRenderer.invoke("hashmm:setOverlay", { dark }),
   goLocal: () => ipcRenderer.invoke("hashmm:goLocal"),
+  // Keep external navigation on the narrow desktop bridge used by the UI.
+  // Main still validates the protocol before handing the URL to the OS.
+  openExternal: (url) => ipcRenderer.invoke("shell:openExternal", { url }),
+  workCanvasCacheGet: (namespace, runId) =>
+    ipcRenderer.invoke("workspace-cache:get", { namespace, runId }),
+  workCanvasCachePut: (namespace, runId, etag, data) =>
+    ipcRenderer.invoke("workspace-cache:put", { namespace, runId, etag, data }),
+  workCanvasCacheRemove: (namespace, runId) =>
+    ipcRenderer.invoke("workspace-cache:remove", { namespace, runId }),
+  authSessionSave: (refreshToken, subject) =>
+    ipcRenderer.invoke("auth-session:save", { refreshToken, subject }),
+  authSessionRefresh: () => ipcRenderer.invoke("auth-session:refresh"),
+  authSessionClear: () => ipcRenderer.invoke("auth-session:clear"),
   // V103: 按需能力包（拆出的本地 Python 运行时等），用户需要时再下载
   packStatus: (id) => ipcRenderer.invoke("pack:status", id),
   packInstall: (id) => ipcRenderer.invoke("pack:install", id),
@@ -174,6 +202,16 @@ contextBridge.exposeInMainWorld("hashmmDesktop", {
   onConfirmClose: (cb) => { const h = () => cb(); ipcRenderer.on("app:confirmClose", h);
                             return () => ipcRenderer.removeListener("app:confirmClose", h); },
   closeChoice: (choice, remember) => ipcRenderer.send("app:closeChoice", { choice, remember }),
+  // V364 首方审批层：只能订阅主进程生成的有界请求，并按 request id 回传候选决定。
+  // 不暴露任意 channel，也不允许 renderer 自己创建系统级审批。
+  onDesktopPrompt: (cb) => { const h = (_e, prompt) => cb(prompt); ipcRenderer.on("app:desktopPrompt", h);
+                            return () => ipcRenderer.removeListener("app:desktopPrompt", h); },
+  onDesktopApprovalChanged: (cb) => { const h = (_e, snapshot) => cb(snapshot); ipcRenderer.on("app:desktopPromptChanged", h);
+                                     return () => ipcRenderer.removeListener("app:desktopPromptChanged", h); },
+  listDesktopApprovals: () => ipcRenderer.invoke("app:desktopPromptList"),
+  presentDesktopPrompt: (id) => ipcRenderer.invoke("app:desktopPromptPresent", id),
+  desktopPromptReady: () => ipcRenderer.send("app:desktopPromptReady"),
+  resolveDesktopPrompt: (id, decision) => ipcRenderer.send("app:desktopPromptDecision", { id, decision }),
 });
 
 // v1.2: 内嵌终端（node-pty）——指挥 claude / codex 等 coding agent（适配自 fanbox）
@@ -248,7 +286,7 @@ contextBridge.exposeInMainWorld("hashmmCU", {
   meta: () => ipcRenderer.invoke("cu:meta"),
   capture: (opts) => ipcRenderer.invoke("cu:capture", opts || {}),
   precapture: () => ipcRenderer.invoke("cu:precapture"),   // V103.16: 开菜单即预热抓帧，截屏瞬间出冻结层
-  exec: (name, args) => ipcRenderer.invoke("cu:exec", { name, args }),
+  exec: (name, args, taskId) => ipcRenderer.invoke("cu:exec", { name, args, taskId }),
   replay: (n) => ipcRenderer.invoke("cu:replay", { n }),            // V99 动作回放审计
   replayClear: () => ipcRenderer.invoke("cu:replayClear"),
   getSafety: () => ipcRenderer.invoke("cu:getSafety"),              // V99 安全级别
@@ -263,6 +301,32 @@ contextBridge.exposeInMainWorld("hashmmCU", {
                      return () => ipcRenderer.removeListener("llm:delta", h); },
 });
 
+// V339: first-class shared browser. The renderer receives only structured
+// state/events and narrow commands; no raw webContents or arbitrary IPC.
+contextBridge.exposeInMainWorld("hashmmBrowser", {
+  state: () => ipcRenderer.invoke("browser:state"),
+  authorizeNavigation: (url) => ipcRenderer.invoke("browser:authorizeNavigation", { url }),
+  embeddedMount: (owner, bounds) => ipcRenderer.invoke("browser:embeddedMount", { owner, bounds }),
+  embeddedBounds: (owner, bounds) => ipcRenderer.invoke("browser:embeddedBounds", { owner, bounds }),
+  embeddedNavigate: (owner, url) => ipcRenderer.invoke("browser:embeddedNavigate", { owner, url }),
+  embeddedCommand: (owner, command, options) => ipcRenderer.invoke("browser:embeddedCommand", { owner, command, options }),
+  embeddedUnmount: (owner) => ipcRenderer.invoke("browser:embeddedUnmount", { owner }),
+  embeddedState: () => ipcRenderer.invoke("browser:embeddedState"),
+  openExternal: (url) => ipcRenderer.invoke("browser:openExternal", { url }),
+  openCockpit: () => ipcRenderer.invoke("browser:openCockpit"),
+  showControlled: () => ipcRenderer.invoke("browser:showControlled"),
+  clearTrace: () => ipcRenderer.invoke("browser:clearTrace"),
+  setPolicy: (host, decision) => ipcRenderer.invoke("browser:setPolicy", { host, decision }),
+  evaluate: (events, expected, mode) => _BTR
+    ? _BTR.evaluateTrajectory(events, expected, mode)
+    : { pass: false, mode, expected: [], actual: [], matched: 0, missing: [], summary: "轨迹评测模块不可用" },
+  datasetCase: (input) => _BTR ? _BTR.buildDatasetCase(input || {}) : null,
+  onEvent: (cb) => { const h = (_e, ev) => { try { cb(ev); } catch (_e2) {} }; ipcRenderer.on("browser:event", h);
+                     return () => ipcRenderer.removeListener("browser:event", h); },
+  onEmbeddedEvent: (cb) => { const h = (_e, ev) => { try { cb(ev); } catch (_e2) {} }; ipcRenderer.on("browser:embeddedEvent", h);
+                             return () => ipcRenderer.removeListener("browser:embeddedEvent", h); },
+});
+
 // V96: 文件保存（微信式下载位置）
 contextBridge.exposeInMainWorld("hashmmFiles", {
   getSaveConfig: () => ipcRenderer.invoke("files:getSaveConfig"),
@@ -271,6 +335,10 @@ contextBridge.exposeInMainWorld("hashmmFiles", {
   save: (filename, content, isDataUrl) => ipcRenderer.invoke("files:save", { filename, content, isDataUrl: !!isDataUrl }),
   revealInFolder: (p) => ipcRenderer.invoke("files:revealInFolder", p),
   openPath: (p) => ipcRenderer.invoke("files:openPath", p),
+  officeHandoffOpen: (payload) => ipcRenderer.invoke("files:officeHandoffOpen", payload || {}),
+  officeHandoffStatus: (id) => ipcRenderer.invoke("files:officeHandoffStatus", id),
+  officeHandoffRead: (id) => ipcRenderer.invoke("files:officeHandoffRead", id),
+  officeHandoffAcknowledge: (id, sha256) => ipcRenderer.invoke("files:officeHandoffAcknowledge", { id, sha256 }),
 });
 
 // V96: 本地后端 sidecar 控制桥（Marvis 的 MarvisNode/KnowledgeBase 对应物）
@@ -300,10 +368,34 @@ contextBridge.exposeInMainWorld("hashmmLocal", {
   read: (file) => ipcRenderer.invoke("local:read", { file }),
   write: (file, text) => ipcRenderer.invoke("local:write", { file, text }),
   gitLog: (cwd, limit) => ipcRenderer.invoke("git:log", { cwd, limit }),
+  gitInspect: (cwd) => ipcRenderer.invoke("git:inspect", { cwd }),
+  gitWorktreeList: (cwd, options) => ipcRenderer.invoke("git:worktree-list", { cwd, options: options || {} }),
+  gitWorktreeCreate: (cwd, options) => ipcRenderer.invoke("git:worktree-create", { cwd, options: options || {} }),
+  gitWorktreeActivate: (cwd, target) => ipcRenderer.invoke("git:worktree-activate", { cwd, target }),
+  gitWorktreeBranch: (cwd, target, branch) => ipcRenderer.invoke("git:worktree-branch", { cwd, target, branch }),
+  gitWorktreePermanent: (cwd, target, permanent) => ipcRenderer.invoke("git:worktree-permanent", { cwd, target, permanent: !!permanent }),
+  gitWorktreeRemove: (cwd, target, expectedId) => ipcRenderer.invoke("git:worktree-remove", { cwd, target, expectedId }),
+  gitWorkspaceLeaseAcquire: () => ipcRenderer.invoke("git:workspace-lease-acquire"),
+  gitWorkspaceLeaseRelease: (token) => ipcRenderer.invoke("git:workspace-lease-release", { token }),
   agentUsage: () => ipcRenderer.invoke("local:agentUsage"),
   search: (dir, q) => ipcRenderer.invoke("local:search", { dir, q }),
   grep: (dir, q) => ipcRenderer.invoke("local:grep", { dir, q }),
   recent: (dir) => ipcRenderer.invoke("local:recent", { dir }),
+});
+
+// V173: 工作区目录（Agent 终端/文件/写文件的默认根目录，用户可选，系统目录被拒）。
+contextBridge.exposeInMainWorld("hashmmWorkspace", {
+  get: () => ipcRenderer.invoke("workspace:get"),
+  choose: () => ipcRenderer.invoke("workspace:choose"),
+  reset: () => ipcRenderer.invoke("workspace:reset"),
+});
+
+// Project folders remain a local desktop concern.  No generic filesystem
+// primitive is exposed: the renderer can only pick validated directories and
+// activate one validated directory as the current project boundary.
+contextBridge.exposeInMainWorld("hashmmProject", {
+  pickSourceFolders: () => ipcRenderer.invoke("project:pickSourceFolders"),
+  activateSource: (sourcePath) => ipcRenderer.invoke("project:activateSource", sourcePath),
 });
 
 // V103.15: 远程传输（远程桌面）宿主控制桥——零依赖 WS 服务端（main.js 接 desktopCapturer + cu-driver）
@@ -314,6 +406,8 @@ contextBridge.exposeInMainWorld("hashmmRemote", {
   status: () => ipcRenderer.invoke("remote:status"),                 // {running,port,clients,paired,hostConnected,webrtcActive,addrs}
   issueCode: () => ipcRenderer.invoke("remote:issueCode"),           // 重新签发 6 位配对码
   currentCode: () => ipcRenderer.invoke("remote:currentCode"),       // 当前码 + 剩余有效期
+  listTrustedDevices: () => ipcRenderer.invoke("remote:listTrustedDevices"),
+  revokeTrustedDevice: (deviceId) => ipcRenderer.invoke("remote:revokeTrustedDevice", deviceId),
   setIce: (iceServers) => ipcRenderer.invoke("remote:setIce", iceServers),   // 设 STUN/TURN（存配置）
   getIce: () => ipcRenderer.invoke("remote:getIce"),
   manualOffer: () => ipcRenderer.invoke("remote:manualOffer"),       // 跨网络：生成邀请码（含 ICE 候选）
@@ -324,6 +418,11 @@ contextBridge.exposeInMainWorld("hashmmRemote", {
   stopAccountHost: () => ipcRenderer.invoke("remote:stopAccountHost"),
   accountHostStatus: () => ipcRenderer.invoke("remote:accountHostStatus"),
   openAccountViewer: (opts) => ipcRenderer.invoke("remote:openAccountViewer", opts || {}),  // 打开查看端去控制其它同账号设备
+  networkBridgeStatus: () => ipcRenderer.invoke("remote:networkBridgeStatus"),               // 检测 EasyTier 等私网适配器及 RDP/Moonlight 客户端
+  openDirectViewer: (opts) => ipcRenderer.invoke("remote:openDirectViewer", opts || {}),     // 通过已验证的私网 IP 打开 HashMM 查看端
+  launchRdp: (opts) => ipcRenderer.invoke("remote:launchRdp", opts || {}),                    // 显式交给系统远程桌面
+  launchMoonlight: (opts) => ipcRenderer.invoke("remote:launchMoonlight", opts || {}),        // 显式交给 Moonlight
+  openNetworkGuide: () => ipcRenderer.invoke("remote:openNetworkGuide"),                     // EasyTier 官方下载/安装说明
   // V103.51 对标 UU 远程的扩展能力：
   wake: (mac, opts) => ipcRenderer.invoke("remote:wake", { mac, ...(opts || {}) }),          // 远程开机（WOL 魔术包）
   listWolTargets: () => ipcRenderer.invoke("remote:listWolTargets"),                         // 已保存的开机目标（名称+MAC）
@@ -334,7 +433,20 @@ contextBridge.exposeInMainWorld("hashmmRemote", {
   setPrivacy: (on) => ipcRenderer.invoke("remote:setPrivacy", !!on),                         // 隐私防护：被控端黑屏/锁输入
 });
 
-// V104 接力：接收主进程「手机交接来的对话」事件，前端据此切到该会话。
+// V1100 device resume: same conversation/run continues on this device. This
+// is intentionally separate from Chat-to-new-Chat continuation.
+contextBridge.exposeInMainWorld("hashmmDeviceResume", {
+  onOpen: (cb) => { ipcRenderer.on("hashmm-device-resume", (_e, data) => { try { cb(data); } catch (_) { /* */ } }); },
+});
+// Compatibility bridge for older packaged App clients.
 contextBridge.exposeInMainWorld("hashmmHandoff", {
   onOpen: (cb) => { ipcRenderer.on("hashmm-open-conversation", (_e, data) => { try { cb(data); } catch (_) { /* */ } }); },
+});
+
+// V300 第二期：检查点/Rewind API（前端"任务检查点"面板用）
+contextBridge.exposeInMainWorld("hashmmCheckpoint", {
+  setTask: (id) => ipcRenderer.invoke("ckpt:setTask", id),
+  list: (taskId) => ipcRenderer.invoke("ckpt:list", taskId),
+  rewind: (taskId, checkpointId) => ipcRenderer.invoke("ckpt:rewind", { taskId, checkpointId }),
+  clear: (taskId) => ipcRenderer.invoke("ckpt:clear", taskId),
 });

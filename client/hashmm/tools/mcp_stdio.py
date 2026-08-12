@@ -7,7 +7,7 @@ HTTP /mcp 端点（hashmm/api/routes/mcp_server.py），让任何 MCP 客户端
 
     # Claude Code 一行接入：
     claude mcp add hashmm -- python -m hashmm.tools.mcp_stdio \\
-        --backend  --token <HASHMM_MCP_TOKEN>
+        --backend http://111.115.7.14:20014 --token <HASHMM_MCP_TOKEN>
 
     #（后端需开 HASHMM_MCP_SERVER=1；token 与后端 HASHMM_MCP_TOKEN 一致，
     #  或后端设 HASHMM_MCP_PUBLIC=1 免 token）

@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { isDesktop } from "@/lib/desktop";
 import { getMyProfile, userIdFromToken } from "@/lib/supabase";
-import { AboutModal } from "./AboutModal";
 
 export function UserMenu() {
   const { user } = useStore();
@@ -20,7 +19,6 @@ export function UserMenu() {
     window.addEventListener("hmm-avatar-updated", h);
     return () => window.removeEventListener("hmm-avatar-updated", h);
   }, []);
-  const [aboutOpen, setAboutOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const helpCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDesktopEnv = isDesktop();   // V91: 桌面端隐藏 SaaS 痕迹（升级套餐），加「关于」
@@ -60,11 +58,12 @@ export function UserMenu() {
     setOpen(false);
     setHelpExpanded(false);
     switch (action) {
+      case "personal-home": set({ setOpen: true, adminOpen: false, desktopView: null, settingsTab: "account" }); break;
       case "upgrade": set({ upgradeOpen: true }); break;
-      case "personalize": set({ setOpen: true, settingsTab: "personalize" }); break;
+      case "personalize": set({ setOpen: true, adminOpen: false, desktopView: null, settingsTab: "personalize" }); break;
       case "profile": set({ profileOpen: true }); break;
-      case "settings": set({ setOpen: true, settingsTab: "general" }); break;
-      case "admin": set({ adminOpen: true }); break;
+      case "settings": set({ setOpen: true, adminOpen: false, desktopView: null, settingsTab: "general" }); break;
+      case "admin": set({ adminOpen: true, setOpen: false, desktopView: null }); break;
       case "help-center": set({ helpOpen: true }); break;
       case "release-notes": set({ releaseNotesOpen: true }); break;
       case "download-app":
@@ -74,7 +73,6 @@ export function UserMenu() {
       case "terms": window.open("/terms", "_blank"); break;
       case "privacy": window.open("/privacy", "_blank"); break;
       case "bug-report": set({ bugReportOpen: true }); break;
-      case "about": setAboutOpen(true); break;
       case "logout": import("@/lib/api").then(m => m.logout()); break;
     }
   }
@@ -109,7 +107,6 @@ export function UserMenu() {
 
   return (
     <div className="relative" ref={menuRef}>
-      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       {downloadOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center" style={{ background: "rgba(0,0,0,.35)" }} onClick={() => setDownloadOpen(false)}>
           <div className="rounded-2xl p-6 w-[420px] anim-fade-up"
@@ -144,22 +141,21 @@ python -m hashmm.api.server`}
           className="absolute bottom-full left-0 right-0 mb-1 z-50 rounded-xl py-1 anim-fade-up"
           style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)", minWidth: 220 }}
         >
-          {/* Admin */}
+          {/* 同一入口按服务端角色投影：普通用户=个人设置；管理员=完整管理后台。
+              高级能力只是从普通用户导航隐藏，仍完整保留在管理员控制面。 */}
+          <button onClick={() => act("personal-home")} className="user-menu-item">
+            <User size={15} /> <span>账户与偏好</span>
+          </button>
           {user?.role === "admin" && (
             <button onClick={() => act("admin")} className="user-menu-item">
               <Shield size={15} /> <span>管理后台</span>
             </button>
           )}
 
-          {/* Upgrade（web）/ 关于（桌面，对标大厂客户端） */}
+          {/* Web 保留升级入口；桌面版本信息统一归入“设置 → 关于”。 */}
           {!isDesktopEnv && (
             <button onClick={() => act("upgrade")} className="user-menu-item user-menu-accent">
               <Sparkles size={15} /> <span>升级套餐</span>
-            </button>
-          )}
-          {isDesktopEnv && (
-            <button onClick={() => act("about")} className="user-menu-item">
-              <Info size={15} /> <span>关于 HashMM</span>
             </button>
           )}
 

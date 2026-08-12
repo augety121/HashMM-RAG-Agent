@@ -17,8 +17,9 @@ behavior change by default):
    **every** tool call — actor, tenant, tool, risk, decision, redacted args,
    ok/latency, timestamp — for incident review / compliance.
 
-Domain-agnostic; never raises (a governance error fails open for availability but
-is logged).
+Domain-agnostic; never raises.  Approval/risk errors fail closed; the optional
+audit sink remains best-effort because logging availability is not authority to
+execute a tool.
 """
 from __future__ import annotations
 
@@ -64,7 +65,8 @@ def is_high_risk(tool_name: str, args: dict | None = None) -> bool:
         return classify_tool_risk(tool_name, args or {}) == "high"
     except Exception as e:
         log_suppressed(logger, e)
-        return False
+        # Unknown classifier state is not evidence that an action is safe.
+        return True
 
 
 def is_approved(ctx: dict, tool_name: str = "", args: dict | None = None) -> bool:
@@ -101,7 +103,13 @@ def approval_pre_hook(tool_name: str, args: dict, ctx: dict):
             require_approval=True, risk="high", hook="approval")
     except Exception as e:
         log_suppressed(logger, e)
-        return HookDecision(allow=True)  # fail-open for availability
+        return HookDecision(
+            allow=False,
+            reason=f"审批安全检查异常，已拒绝执行（{type(e).__name__}）",
+            require_approval=True,
+            risk="high",
+            hook="approval",
+        )
 
 
 # ── audit stream (post-hook) ──────────────────────────────────────────────
@@ -181,5 +189,5 @@ def register_governance_hooks() -> None:
     from hashmm import hooks
     if any(n == "approval" for n, _ in hooks._PRE_HOOKS):
         return
-    hooks.register_pre_hook("approval", approval_pre_hook)
+    hooks.register_pre_hook("approval", approval_pre_hook, critical=True)
     hooks.register_post_hook("audit_stream", audit_stream_post_hook)

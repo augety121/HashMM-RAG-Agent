@@ -64,8 +64,15 @@ create table if not exists public.chat_conversations (
   created_at  timestamptz default now(),
   updated_at  timestamptz default now()
 );
+-- Existing deployments must receive the same owner-scoped conversation index
+-- as fresh installs.  These are metadata only; message bodies stay lazy.
+alter table public.chat_conversations add column if not exists archived boolean default false;
+alter table public.chat_conversations add column if not exists project_id text;
+alter table public.chat_conversations add column if not exists revision bigint not null default 1;
+alter table public.chat_conversations add column if not exists sync_state text not null default 'synced';
 alter table public.chat_conversations enable row level security;
 create index if not exists idx_chatconv_user on public.chat_conversations(user_id, updated_at desc);
+create index if not exists idx_chatconv_owner_scope on public.chat_conversations(user_id, archived, project_id, pinned desc, updated_at desc, id desc);
 
 do $$ begin create policy "chatconv_select_own" on public.chat_conversations for select using (auth.uid() = user_id);
 exception when duplicate_object then null; end $$;
@@ -91,12 +98,16 @@ create table if not exists public.chat_messages (
   tool_calls  jsonb default '[]'::jsonb,
   files       jsonb default '[]'::jsonb,
   sources     jsonb default '[]'::jsonb,
+  groundings  jsonb default '{}'::jsonb,
+  run_manifest jsonb default '{}'::jsonb,
   suggestions jsonb default '[]'::jsonb,
   status      text default 'complete',
   tokens_in   int default 0,
   tokens_out  int default 0,
   created_at  timestamptz default now()
 );
+alter table public.chat_messages add column if not exists groundings jsonb default '{}'::jsonb;
+alter table public.chat_messages add column if not exists run_manifest jsonb default '{}'::jsonb;
 alter table public.chat_messages enable row level security;
 create index if not exists idx_chatmsg_conv on public.chat_messages(conv_id, created_at);
 
@@ -150,13 +161,6 @@ do $$ begin create policy "umem_update_own" on public.user_memory for update usi
 exception when duplicate_object then null; end $$;
 do $$ begin create policy "umem_delete_own" on public.user_memory for delete using (auth.uid() = user_id);
 exception when duplicate_object then null; end $$;
-
--- ============================================================
--- 6) 把 admin@example.com 的密码设为 123456
--- ============================================================
-update auth.users
-set encrypted_password = extensions.crypt('123456', extensions.gen_salt('bf'))
-where email = 'admin@example.com';
 
 -- ============================================================
 -- 完成。

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Copy, FileDown, Play, ChevronDown, ChevronUp, Check, Loader2, Terminal } from "lucide-react";
 import { highlightToLines } from "@/lib/highlight";
+import { executeConversationCode } from "@/lib/api";
 
 interface Props {
   code: string;
@@ -58,15 +59,7 @@ export function CodeBlock({ code, language, filename, lineCount, convId }: Props
     setOutput(null);
     setOutputOpen(true);
     try {
-      const token = typeof localStorage !== "undefined" ? localStorage.getItem("hmm_token") : null;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(`/api/conversations/${convId}/execute`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
+      const data = await executeConversationCode(convId, code);
       setOutput(data.output || data.error || "(无输出)");
     } catch (e) {
       setOutput(`错误: ${e instanceof Error ? e.message : String(e)}`);

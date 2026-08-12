@@ -8,7 +8,7 @@ export default function TermsPage() {
     <div style={{ height: "100vh", overflowY: "auto" }}>
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "48px 28px 80px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif", color: "#1a1a1a", lineHeight: 1.9 }}>
         <h1 style={{ fontSize: 30, fontWeight: 700, marginBottom: 8 }}>服务条款</h1>
-        <p style={{ color: "#888", fontSize: 14, marginBottom: 40 }}>最后更新日期：2026 年 6 月 26 日 · 生效日期：2026 年 6 月 26 日</p>
+        <p style={{ color: "#888", fontSize: 14, marginBottom: 40 }}>最后更新日期：2026 年 7 月 5 日 · 生效日期：2026 年 7 月 5 日 · 版本 2.1</p>
 
         <p style={{ fontSize: 14, color: "#444", marginBottom: 28 }}>欢迎使用 HashMM-RAG Agent（以下简称「本服务」或「HashMM」）。本服务条款（以下简称「本条款」）构成您（以下简称「用户」或「您」）与 HashMM-RAG 项目团队（以下简称「我们」）之间关于使用本服务的法律协议。请在使用本服务前仔细阅读本条款。使用本服务即表示您已阅读、理解并同意受本条款的约束。</p>
 
@@ -80,7 +80,9 @@ export default function TermsPage() {
             <li>您仅在<strong>您本人拥有或已获得合法授权</strong>的设备上使用远程控制与屏幕共享功能；</li>
             <li>当您在 App 中要求发送电脑上的文件时，系统会按您的指令读取并发送相应文件，您应确保对该文件拥有访问与分发的权利；</li>
             <li>因屏幕共享可能暴露敏感信息，您应自行注意所处环境与接收渠道的安全；</li>
-            <li>您对通过远程控制发起的一切操作及其后果负责，并应妥善保管帐户凭据。</li>
+            <li>您对通过远程控制发起的一切操作及其后果负责，并应妥善保管帐户凭据；</li>
+            <li>6.2 <strong>自动化任务（2026-07 新增）：</strong>云上派活、多步规划与多智能体协作会在您的设备上执行真实操作（浏览器、文件、屏幕控制等）。您应仅对自己拥有或获授权的设备下达任务，并对任务指令及其操作后果负责；</li>
+            <li>6.3 <strong>费用自担：</strong>本服务为自部署形态，服务器、Supabase 云用量与模型 API 调用（含手机直连与模型容灾链消耗的额度）均由您直接向对应服务商支付；本项目不含任何内购、订阅或付费墙。</li>
           </ul>
           <p>6.2 如发现异常或未授权的远程连接，您应立即修改密码并在管理后台强制下线相关会话。</p>
         </Section>

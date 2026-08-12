@@ -1,7 +1,7 @@
 """HashMM 功能预设（feature presets）。
 
 背景：HashMM 后端做了大量企业级高级功能（agentic 检索、HyDE、多查询、上下文压缩、
-LLM 路由、记忆服务、用户记忆、verifier 评判器、并行工具、调度、工具审计、缓存、KG 增强……），
+LLM 路由、记忆服务、用户记忆、并行工具、调度、工具审计、缓存、KG 增强……），
 但它们各自藏在 `HASHMM_*` 环境变量里、且**绝大多数默认关**。普通用户既不知道有、也无从集中
 开启，于是线上跑的是基础路径——“代码很深、体感很浅”的根因就在这里。
 
@@ -32,7 +32,6 @@ FLAG_DOCS: Dict[str, str] = {
     "HASHMM_AUDIT_TOOLS":         "工具调用审计：每次工具调用落审计日志，可回溯",
     "HASHMM_USER_MEMORY":         "用户记忆：记住用户关注领域/偏好，跨会话注入",
     "HASHMM_MEMORY_SERVICE":      "记忆服务：情景/工作记忆，召回过往成功策略",
-    "HASHMM_VERIFIER":            "验证器/评判器：对产出做独立校验（对应 loop 的验证动作）",
     "HASHMM_PARALLEL_TOOLS":      "并行工具：多工具并发执行，加速",
     "HASHMM_CONTEXT_COMPACTION":  "上下文压缩：长对话自动压缩，省窗口、抗失忆",
     "HASHMM_LLM_ROUTING":         "模型路由：按任务难度选模型 / 失败降级",
@@ -62,7 +61,6 @@ _RECOMMENDED = [
 ]
 _MAX_EXTRA = [
     # 重智能：显著提质，但多花 LLM 调用 / 延迟，或动既有路径——满血、按需开。
-    "HASHMM_VERIFIER",
     "HASHMM_PARALLEL_TOOLS",
     "HASHMM_CONTEXT_COMPACTION",
     "HASHMM_LLM_ROUTING",

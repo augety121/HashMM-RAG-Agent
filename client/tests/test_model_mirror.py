@@ -20,6 +20,21 @@ def _fresh_db(tmp_path, monkeypatch):
     return db
 
 
+@pytest.fixture(autouse=True)
+def _restore_database_module():
+    """V308 修跨文件污染：_fresh_db 的 importlib.reload(database) 是【进程级】副作用——
+    reload 时 CONV_FILES_ROOT/DATA_ROOT/DB 路径全部按【当时的环境变量】重算，且
+    monkeypatch 撤销环境变量【不会】撤销模块重算的结果。若此前有测试泄漏过
+    HASHMM_DATA_DIR（如 test_benchmarks 旧写法），database 模块就永久指向了那个
+    一次性临时目录，与其它早已 `from database import CONV_FILES_ROOT` 的模块形成双脑。
+    此 fixture 在本文件每个测试结束后把 database 再 reload 一次（此时 monkeypatch
+    已恢复环境变量），让模块状态回到与进程其余部分一致。"""
+    yield
+    import importlib
+    from hashmm.api import database as db
+    importlib.reload(db)
+
+
 def test_model_mirror_written_on_create(tmp_path, monkeypatch):
     db = _fresh_db(tmp_path, monkeypatch)
     db.init_db()
@@ -52,6 +67,34 @@ def test_model_restored_after_db_corruption(tmp_path, monkeypatch):
     assert d is not None, "DB 重建后模型应自动恢复，而不是 None"
     assert d["model_name"] == "deepseek-chat"
     assert d["api_key"] == "sk-prod-key-xyz"  # 加密 key 也恢复了
+
+
+def test_corruption_recovery_reopens_pool_and_reapplies_full_schema(
+    tmp_path, monkeypatch
+):
+    """恢复快照后不能继续复用旧 inode 的连接，所有运行表必须重新迁移。"""
+    import shutil
+    import sqlite3
+
+    db = _fresh_db(tmp_path, monkeypatch)
+    db.init_db()
+    database_path = tmp_path / "t.sqlite"
+    snapshot_path = tmp_path / "t.sqlite.snapshot"
+
+    db._close_pool()
+    shutil.copy2(database_path, snapshot_path)
+    with sqlite3.connect(snapshot_path) as conn:
+        conn.execute("DROP TABLE work_runs")
+        conn.commit()
+
+    database_path.write_text("GARBAGE NOT A DATABASE", encoding="utf-8")
+    db.init_db()
+
+    with db._conn() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='work_runs'"
+        ).fetchone()
+    assert row is not None, "恢复后的活动数据库必须包含 work_runs 全量 schema"
 
 
 def test_no_mirror_no_crash(tmp_path, monkeypatch):

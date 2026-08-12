@@ -8,32 +8,58 @@ Capabilities:
   - Precision line editing (str_replace, insert, read_range)
 """
 from __future__ import annotations
-import json, os, re, shutil, zipfile, difflib
+import hashlib, json, os, re, shutil, time, uuid, zipfile, difflib
 from pathlib import Path
 from typing import Any
 
-from hashmm.api.database import CONV_FILES_ROOT  # 统一绝对路径锚点（避免双目录/404）
+from hashmm.api import database as _dbmod  # V308：动态读锚点，杜绝 reload 双脑（见 tool_registry 同处注释）
+from hashmm.pipeline.resource_pipeline import SUPPORTED_FORMATS, TEXT_FORMATS, parse_resource
+from hashmm.pipeline.parser import detect_format
 MAX_ZIP_SIZE = 100 * 1024 * 1024  # 100MB
 MAX_FILES_PER_PROJECT = 500
 
 
 def get_workspace(conv_id: str) -> Path:
-    d = CONV_FILES_ROOT / conv_id
+    d = _dbmod.CONV_FILES_ROOT / conv_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """判断 child 是否等于 parent 或位于 parent 之下——按【路径语义】而非字符串前缀。
+
+    V308 修 P0-1：原实现用 ``str(p).startswith(str(ws) + "/")``。该写法在 Windows 上
+    永远为假（分隔符是 ``\\`` 不是 ``/``），导致工作区内的合法子文件被判非法，编辑/读取
+    全部失败。改用 ``Path.relative_to``（等价于 3.9+ 的 ``is_relative_to``），跨平台正确，
+    且天然规避 ``/ws`` vs ``/ws-evil`` 这类前缀误判。
+
+    两侧均要求已 ``resolve()``（解析符号链接 + 规范化），故本函数同时挡住通过 symlink
+    逃逸工作区的情况：symlink 目标一旦落在 ws 外，resolve 后的 relative_to 即失败。
+    """
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _safe_path(conv_id: str, filepath: str) -> Path | None:
     """V50: 解析并校验文件路径必须落在本会话工作区内。
 
-    这些函数即将暴露给 Agent 模型（filepath 由模型生成），必须防 `../` 穿越。
+    这些函数即将暴露给 Agent 模型（filepath 由模型生成），必须防 `../` 穿越与 symlink 逃逸。
     返回 None 表示路径非法（越界/解析失败），调用方应返回 Error 给模型。
     """
+    # 绝对路径直接拒绝：模型只应提供工作区【相对】路径，绝对路径是穿越信号。
+    # （Windows 上 "C:\..."、POSIX 上 "/etc/..." 一律挡掉，不给 ws/abs 拼接留后门。）
     try:
+        raw = str(filepath or "")
+        if not raw.strip():
+            return None
+        if Path(raw).is_absolute() or (os.name == "nt" and re.match(r"^[A-Za-z]:", raw)):
+            return None
         ws = get_workspace(conv_id).resolve()
-        p = (ws / filepath).resolve()
-        # Py3.8 兼容写法：必须严格位于工作区目录之下
-        return p if str(p).startswith(str(ws) + "/") or p == ws else None
+        p = (ws / raw).resolve()
+        return p if _is_within(p, ws) else None
     except Exception:
         return None
 
@@ -178,9 +204,18 @@ def read_file_range(conv_id: str, filepath: str, start: int = 1, end: int = 100)
     if not fpath.exists():
         return f"Error: 文件不存在: {filepath}"
     try:
-        lines = fpath.read_text(encoding='utf-8', errors='replace').splitlines()
+        fmt = detect_format(fpath).lower()
+        if fmt in SUPPORTED_FORMATS and fmt not in TEXT_FORMATS:
+            resource = parse_resource(fpath, display_name=fpath.name)
+            state = str(resource.get("parse_state") or "error")
+            if state != "ready":
+                detail = "；".join(str(item) for item in resource.get("warnings") or [])
+                return f"Error: 文件当前不可读（{state}）: {detail}"
+            lines = str(resource.get("text") or "").splitlines()
+        else:
+            lines = fpath.read_text(encoding='utf-8', errors='replace').splitlines()
     except Exception as e:
-        return f"Error: 读取失败: {e}"
+        return f"Error: 读取失败: {type(e).__name__}: {e}"
 
     total = len(lines)
     start = max(1, start)
@@ -227,6 +262,84 @@ def str_replace_in_file(conv_id: str, filepath: str, old_str: str, new_str: str)
     )
     diff_text = "".join(diff)
     return f"OK: 已替换 1 处。\n```diff\n{diff_text}\n```"
+
+
+def patch_canvas_block(
+    conv_id: str,
+    filepath: str,
+    old_html: str,
+    new_html: str,
+    block_id: str = "",
+    operation: str = "replace",
+) -> str:
+    """Apply one exact HTML block mutation and persist a content-free receipt.
+
+    This is the Agent-facing counterpart of the revision-checked HTTP patch
+    endpoint.  A backend Agent turn is serialized by the active-run lease, so
+    the exact old fragment is the compare-and-swap anchor: zero or multiple
+    matches abort without writing.
+    """
+    fpath = _safe_path(conv_id, filepath)
+    if fpath is None:
+        return f"Error: 非法路径 '{filepath}'（不允许越出会话工作区）"
+    if fpath.suffix.lower() not in {".html", ".htm"}:
+        return "Error: canvas_block_patch 只允许修改 .html/.htm 画布"
+    if not fpath.exists() or not fpath.is_file():
+        return f"Error: 文件不存在: {filepath}"
+    operation = str(operation or "replace").strip()
+    if operation not in {"replace", "insert_after"}:
+        return "Error: operation 仅支持 replace 或 insert_after"
+    old_html = str(old_html or "")
+    new_html = str(new_html or "")
+    if not old_html:
+        return "Error: old_html 不能为空"
+    if len(old_html.encode("utf-8")) > 500_000 or len(new_html.encode("utf-8")) > 500_000:
+        return "Error: 单个画布补丁片段不能超过 500KB"
+    content = fpath.read_text(encoding="utf-8", errors="replace")
+    count = content.count(old_html)
+    if count != 1:
+        return f"Error: 画布块锚点匹配 {count} 次；必须提供唯一、完整的 old_html"
+    replacement = new_html if operation == "replace" else old_html + new_html
+    next_content = content.replace(old_html, replacement, 1)
+    if len(next_content.encode("utf-8")) > 2_000_000:
+        return "Error: 补丁后的画布超过 2MB 上限"
+    base_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    result_sha256 = hashlib.sha256(next_content.encode("utf-8")).hexdigest()
+    if result_sha256 == base_sha256:
+        return f"OK: 画布块无变化，版本仍为 {result_sha256}"
+    tmp = fpath.with_suffix(fpath.suffix + ".patch.tmp")
+    tmp.write_text(next_content, encoding="utf-8")
+    os.replace(tmp, fpath)
+
+    receipt_dir = get_workspace(conv_id) / ".canvas-patches"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = receipt_dir / f"{fpath.name}.json"
+    history: list[dict] = []
+    try:
+        if receipt_path.exists():
+            loaded = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                history = [item for item in loaded if isinstance(item, dict)]
+    except (OSError, ValueError, json.JSONDecodeError):
+        history = []
+    history.append({
+        "schema": "hashmm.canvas-patch-receipt.v1",
+        "patch_id": str(uuid.uuid4()),
+        "block_id": re.sub(r"[^A-Za-z0-9_.:-]+", "-", str(block_id or "canvas-root"))[:128],
+        "operation": operation,
+        "base_sha256": base_sha256,
+        "result_sha256": result_sha256,
+        "old_fragment_sha256": hashlib.sha256(old_html.encode("utf-8")).hexdigest(),
+        "new_fragment_sha256": hashlib.sha256(new_html.encode("utf-8")).hexdigest(),
+        "created_at": time.time(),
+    })
+    audit_tmp = receipt_path.with_suffix(".json.tmp")
+    audit_tmp.write_text(json.dumps(history[-200:], ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(audit_tmp, receipt_path)
+    return (
+        f"OK: 已对画布块 {block_id or 'canvas-root'} 应用 {operation}；"
+        f"base={base_sha256[:12]} result={result_sha256[:12]}"
+    )
 
 
 def insert_after_line(conv_id: str, filepath: str, after_line: int, content: str) -> str:

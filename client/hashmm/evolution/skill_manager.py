@@ -9,6 +9,7 @@ Storage: SQLite table `skills` (created lazily).
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
 import uuid
@@ -32,6 +33,12 @@ class Skill:
     use_count: int = 0
     created_at: float = 0.0
     last_used: float = 0.0
+    # Learned skills are data, not application code.  Their visibility must be
+    # explicit so one user's successful conversation can never become another
+    # user's system prompt by accident.
+    owner_id: str = ""
+    scope: str = "quarantined"          # builtin | personal | shared | quarantined
+    workspace_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -70,6 +77,22 @@ class SkillManager:
                         last_used REAL
                     )
                 """)
+                columns = {str(row[1]) for row in c.execute("PRAGMA table_info(skills)").fetchall()}
+                if "owner_id" not in columns:
+                    c.execute("ALTER TABLE skills ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''")
+                if "scope" not in columns:
+                    c.execute("ALTER TABLE skills ADD COLUMN scope TEXT NOT NULL DEFAULT 'quarantined'")
+                if "workspace_id" not in columns:
+                    c.execute("ALTER TABLE skills ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''")
+                # Only source-controlled built-ins are safe to expose globally.
+                # Legacy learned rows have no trustworthy owner provenance and
+                # therefore remain quarantined until an administrator reviews
+                # and explicitly re-scopes them.
+                c.execute(
+                    "UPDATE skills SET scope='builtin' "
+                    "WHERE id LIKE 'builtin-%' AND (scope='' OR scope='quarantined')"
+                )
+                c.execute("CREATE INDEX IF NOT EXISTS idx_skills_scope_owner ON skills(scope, owner_id)")
         except Exception as e:
             logger.warning(f"Failed to create skills table: {e}")
 
@@ -94,7 +117,7 @@ class SkillManager:
 
     def should_create_skill(
         self, query: str, answer: str, feedback: str | None = None,
-        strategy: str = "grounded", n_sources: int = 0,
+        strategy: str = "grounded", n_sources: int = 0, owner_id: str = "",
     ) -> bool:
         """Decide whether a conversation is worth extracting as a Skill.
 
@@ -111,14 +134,14 @@ class SkillManager:
         if strategy not in ("grounded", "augmented"):
             return False
         # Check for existing similar skill
-        existing = self.match_skills(query)
+        existing = self.match_skills(query, owner_id=owner_id)
         if existing and existing[0].quality_score > 0.7:
             return False
         return True
 
     def create_from_conversation(
         self, query: str, answer: str, sources: list[dict] | None = None,
-        llm_fn: Any = None,
+        llm_fn: Any = None, owner_id: str = "", workspace_id: str = "",
     ) -> Skill | None:
         """Extract a skill from a successful conversation.
 
@@ -126,6 +149,10 @@ class SkillManager:
         Otherwise, use rule-based extraction.
         """
         self._load()
+        owner = str(owner_id or "").strip()[:160]
+        if not owner:
+            logger.warning("[SkillManager] Refused learned skill without an owner")
+            return None
         skill_id = uuid.uuid4().hex[:12]
         now = time.time()
 
@@ -145,6 +172,9 @@ class SkillManager:
             use_count=0,
             created_at=now,
             last_used=now,
+            owner_id=owner,
+            scope="personal",
+            workspace_id=str(workspace_id or "").strip()[:160],
         )
 
         # If LLM available, try to get a better name and description
@@ -174,16 +204,33 @@ class SkillManager:
 
     # ── Matching ──
 
-    def match_skills(self, query: str) -> list[Skill]:
+    def match_skills(self, query: str, owner_id: str = "", workspace_id: str = "") -> list[Skill]:
         """Find skills matching the current query, sorted by relevance."""
         self._load()
         scored: list[tuple[float, Skill]] = []
         q_lower = query.lower()
+        owner = str(owner_id or "").strip()
+        workspace = str(workspace_id or "").strip()
 
         for skill in self._skills:
+            visible = (
+                skill.scope == "builtin"
+                or skill.scope == "shared"
+                or (skill.scope == "personal" and owner and skill.owner_id == owner)
+                or (skill.scope == "workspace" and workspace and skill.workspace_id == workspace)
+            )
+            if not visible:
+                continue
             score = 0.0
             for pattern in skill.trigger_patterns:
-                if pattern.lower() in q_lower:
+                p = (pattern or "").lower().strip()
+                if not p:
+                    continue
+                if " " in p:                      # 多关键词触发：全部出现才算命中（修复空格触发词永不匹配的 bug）
+                    kws = [k for k in p.split() if k]
+                    if kws and all(k in q_lower for k in kws):
+                        score += 1.0
+                elif p in q_lower:
                     score += 1.0
             if score > 0:
                 score += skill.quality_score * 0.5
@@ -193,9 +240,11 @@ class SkillManager:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in scored[:3]]
 
-    def inject_skill_context(self, query: str, messages: list[dict]) -> list[dict]:
+    def inject_skill_context(
+        self, query: str, messages: list[dict], *, owner_id: str = "", workspace_id: str = "",
+    ) -> list[dict]:
         """Inject matching skill templates into the system prompt."""
-        skills = self.match_skills(query)
+        skills = self.match_skills(query, owner_id=owner_id, workspace_id=workspace_id)
         if not skills:
             return messages
 
@@ -216,19 +265,42 @@ class SkillManager:
 
         return messages
 
+    def record_use(self, skill_id: str, owner_id: str = ""):
+        """V269 单技能使用打点（对齐《How we use skills》：有使用数据才能发现
+        "欠触发/热门"技能并针对性改描述）。此前只有 inject_skills_to_messages 计数，
+        轻路径（streaming 手工注入 prompt_template）一直漏记——现在两条路径都记。"""
+        self._load()
+        for s in self._skills:
+            if s.id == skill_id:
+                if s.scope == "personal" and s.owner_id != str(owner_id or ""):
+                    return
+                if s.scope == "quarantined":
+                    return
+                s.use_count += 1
+                s.last_used = time.time()
+                self._update_skill_stats(s)
+                return
+
     # ── Feedback ──
 
-    def update_quality(self, skill_id: str, feedback: str):
+    def update_quality(self, skill_id: str, feedback: str, *, owner_id: str = "", admin: bool = False) -> bool:
         """Update skill quality based on user feedback."""
         self._load()
         for skill in self._skills:
             if skill.id == skill_id:
+                if not admin and not (
+                    skill.scope == "personal" and skill.owner_id == str(owner_id or "")
+                ):
+                    return False
                 if feedback == "up":
                     skill.quality_score = min(1.0, skill.quality_score + 0.1)
                 elif feedback == "down":
                     skill.quality_score = max(0.0, skill.quality_score - 0.15)
+                else:
+                    return False
                 self._update_skill_stats(skill)
-                break
+                return True
+        return False
 
     # ── Internal helpers ──
 
@@ -286,8 +358,9 @@ class SkillManager:
                 c.execute("""
                     INSERT OR REPLACE INTO skills
                     (id, name, description, trigger_patterns, prompt_template,
-                     examples, quality_score, use_count, created_at, last_used)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     examples, quality_score, use_count, created_at, last_used,
+                     owner_id, scope, workspace_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     skill.id, skill.name, skill.description,
                     json.dumps(skill.trigger_patterns, ensure_ascii=False),
@@ -295,6 +368,7 @@ class SkillManager:
                     json.dumps(skill.examples, ensure_ascii=False),
                     skill.quality_score, skill.use_count,
                     skill.created_at, skill.last_used,
+                    skill.owner_id, skill.scope, skill.workspace_id,
                 ))
         except Exception as e:
             logger.warning(f"Failed to save skill: {e}")
@@ -310,10 +384,99 @@ class SkillManager:
         except Exception as _e:
             log_suppressed(logger, _e)
 
-    def list_skills(self) -> list[dict]:
-        """Return all skills as dicts (for admin API)."""
+    @staticmethod
+    def prompt_hash(prompt: str) -> str:
+        return hashlib.sha256(str(prompt or "").encode("utf-8")).hexdigest()
+
+    def update_prompt(
+        self,
+        skill_id: str,
+        prompt: str,
+        *,
+        owner_id: str = "",
+        admin: bool = False,
+        expected_hash: str = "",
+    ) -> dict:
+        """Atomically replace one governed skill prompt.
+
+        Evolution decisions use compare-and-swap semantics: a candidate created
+        against an older baseline cannot overwrite a prompt that changed while
+        the review dialog was open. The method updates both SQLite and the
+        in-process cache only after the guarded write succeeds.
+        """
         self._load()
-        return [s.to_dict() for s in self._skills]
+        candidate = str(prompt or "").replace("\x00", "").strip()
+        if not candidate or len(candidate) > 12_000:
+            return {"state": "invalid"}
+        owner = str(owner_id or "")
+        target = next((skill for skill in self._skills if skill.id == skill_id), None)
+        if target is None:
+            return {"state": "missing"}
+        mutable = admin or (
+            target.scope == "personal" and owner and target.owner_id == owner
+        )
+        if not mutable:
+            return {"state": "missing"}
+        current_hash = self.prompt_hash(target.prompt_template)
+        if expected_hash and current_hash != str(expected_hash):
+            return {"state": "conflict", "current_hash": current_hash}
+        with self._db._conn() as conn:
+            row = conn.execute(
+                "SELECT prompt_template FROM skills WHERE id=?", (skill_id,),
+            ).fetchone()
+            if row is None:
+                return {"state": "missing"}
+            persisted = str(row["prompt_template"] or "")
+            persisted_hash = self.prompt_hash(persisted)
+            if expected_hash and persisted_hash != str(expected_hash):
+                return {"state": "conflict", "current_hash": persisted_hash}
+            conn.execute(
+                "UPDATE skills SET prompt_template=? WHERE id=? AND prompt_template=?",
+                (candidate, skill_id, persisted),
+            )
+            if conn.total_changes < 1:
+                return {
+                    "state": "conflict",
+                    "current_hash": self.prompt_hash(
+                        str(conn.execute(
+                            "SELECT prompt_template FROM skills WHERE id=?", (skill_id,),
+                        ).fetchone()["prompt_template"] or "")
+                    ),
+                }
+        target.prompt_template = candidate
+        return {
+            "state": "updated",
+            "previous_hash": current_hash,
+            "prompt_hash": self.prompt_hash(candidate),
+        }
+
+    def list_skills(
+        self, owner_id: str = "", workspace_id: str = "", *, include_all: bool = False,
+    ) -> list[dict]:
+        """Return only skills visible to a principal unless explicitly auditing."""
+        self._load()
+        if include_all:
+            return [s.to_dict() for s in self._skills]
+        owner = str(owner_id or "")
+        workspace = str(workspace_id or "")
+        return [
+            s.to_dict() for s in self._skills
+            if s.scope in {"builtin", "shared"}
+            or (s.scope == "personal" and owner and s.owner_id == owner)
+            or (s.scope == "workspace" and workspace and s.workspace_id == workspace)
+        ]
+
+    def get_skill(self, skill_id: str, owner_id: str = "", *, include_all: bool = False) -> Skill | None:
+        self._load()
+        for skill in self._skills:
+            if skill.id != skill_id:
+                continue
+            if include_all or skill.scope in {"builtin", "shared"}:
+                return skill
+            if skill.scope == "personal" and skill.owner_id == str(owner_id or ""):
+                return skill
+            return None
+        return None
 
     def delete_skill(self, skill_id: str) -> bool:
         """Delete a skill by ID."""

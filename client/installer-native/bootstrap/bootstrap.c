@@ -8,7 +8,7 @@
  *
  * On run:
  *   1. read the 16-byte footer -> where the appended .zip begins
- *   2. copy the .zip bytes out of ourselves into %TEMP%\HashMMSetup\payload.zip
+ *   2. copy the .zip bytes into a unique per-run directory under %TEMP%
  *   3. extract it with the OS-native unzip:
  *        a) %SystemRoot%\System32\tar.exe -xf payload.zip -C <dir>   (Win10 1803+)
  *        b) fallback: powershell Expand-Archive (any Win10+ / PS 5.1)
@@ -94,13 +94,22 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show) {
         CloseHandle(hf); fail(L"Payload offsets invalid.");
     }
 
-    /* ---- prepare %TEMP%\HashMMSetup\ ---- */
+    /* ---- prepare a UNIQUE temp directory.  The old fixed HashMMSetup path
+            allowed two installers (or stale files) to race each other. ---- */
     wchar_t temp[MAX_PATH];
     DWORD tn = GetTempPathW(MAX_PATH, temp);
     if (tn == 0 || tn > MAX_PATH) { CloseHandle(hf); fail(L"Cannot get TEMP path."); }
     wchar_t workDir[MAX_PATH], zipPath[MAX_PATH], outDir[MAX_PATH];
-    _snwprintf(workDir, MAX_PATH, L"%sHashMMSetup", temp);
-    CreateDirectoryW(workDir, NULL);
+    wchar_t uniquePath[MAX_PATH];
+    if (!GetTempFileNameW(temp, L"HMM", 0, uniquePath)) {
+        CloseHandle(hf); fail(L"Cannot allocate a unique TEMP path.");
+    }
+    DeleteFileW(uniquePath);
+    if (!CreateDirectoryW(uniquePath, NULL)) {
+        CloseHandle(hf); fail(L"Cannot create the unique TEMP directory.");
+    }
+    wcsncpy(workDir, uniquePath, MAX_PATH - 1);
+    workDir[MAX_PATH - 1] = L'\0';
     _snwprintf(zipPath, MAX_PATH, L"%s\\payload.zip", workDir);
     _snwprintf(outDir, MAX_PATH, L"%s\\payload", workDir);
     CreateDirectoryW(outDir, NULL);
@@ -176,9 +185,16 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE hp, PWSTR cmd, int show) {
                  L"Re-run build-all.bat and make sure payload\\app is NOT empty, then repack.");
     }
 
-    /* ShellExecute so the Qt installer runs detached; we can exit. */
-    HINSTANCE r = ShellExecuteW(NULL, L"open", installer, NULL, outDir, SW_SHOWNORMAL);
-    if ((INT_PTR)r <= 32) fail(L"Could not start the installer.");
-
-    return 0;
+    /* Wait for the real installer, then remove this run's extraction.  Waiting
+       prevents unbounded stale payloads and makes the bootstrap exit code useful. */
+    wchar_t launchCmd[2 * MAX_PATH + 8];
+    _snwprintf(launchCmd, 2 * MAX_PATH + 8, L"\"%s\"", installer);
+    rc = run_wait(launchCmd, outDir);
+    if (rc == (DWORD)-1) fail(L"Could not start the installer.");
+    {
+        wchar_t rmcmd[2 * MAX_PATH + 64];
+        _snwprintf(rmcmd, 2 * MAX_PATH + 64, L"cmd /c rd /s /q \"%s\"", workDir);
+        run_wait(rmcmd, temp);
+    }
+    return (int)rc;
 }

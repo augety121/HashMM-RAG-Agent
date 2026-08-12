@@ -24,7 +24,10 @@ import os
 
 # 可安全并发的只读工具（无副作用）。与 security_policy._SAFE_TOOLS 对齐。
 _PARALLELIZABLE = frozenset({
-    "kb_search", "kg_query", "web_search", "corpus_stats", "read_file", "list_files",
+    # Keep this list at the permission system's READ level. Network tools such
+    # as web_search can require human approval in strict mode and therefore
+    # must never run in the pre-guard prefetch phase.
+    "kb_search", "kg_query", "read_file", "list_files",
 })
 
 # 并发上限，防资源爆炸
@@ -37,18 +40,18 @@ def _max_concurrency() -> int:
 
 
 def parallel_enabled() -> bool:
-    # 默认开启：独立的只读工具并发执行（对标大厂 Agent，更快）。
-    # 只读+保序+错误隔离，安全；要关闭设环境变量 HASHMM_PARALLEL_TOOLS=0。
+    # 默认【关闭】（唯一产品决策，对齐 settings.py 默认 "0"、docs/CONFIG.md 与测试约定）。
+    # 理由：当前工具体系含高权限工具，默认并行会改变工具执行顺序，非幂等工具可能并发，
+    # 用户未显式开启不应进入更高风险模式。仅当显式设 HASHMM_PARALLEL_TOOLS=1（或 settings 开）
+    # 才对【声明为只读、幂等、无共享状态】的工具（见 _PARALLELIZABLE）开放并发。
     v = os.environ.get("HASHMM_PARALLEL_TOOLS")
     if v is not None and v.strip() != "":
         return v.strip().lower() in {"1", "true", "yes", "on"}
     try:
         from hashmm import settings
-        if settings.get_bool("HASHMM_PARALLEL_TOOLS"):
-            return True
+        return bool(settings.get_bool("HASHMM_PARALLEL_TOOLS"))
     except Exception:
-        pass
-    return True
+        return False
 
 
 def _tool_name(tc) -> str:
@@ -58,9 +61,14 @@ def _tool_name(tc) -> str:
         return ""
 
 
-def should_parallelize(tool_calls: list) -> bool:
+def should_parallelize(tool_calls: list, *, pre_hooks_active: bool = False) -> bool:
     """仅当开关开启、且这批调用【全是只读工具且数量≥2】时才并发。否则走串行（更安全）。"""
     if not parallel_enabled():
+        return False
+    # A pre-tool hook is allowed to deny a call. Prefetch happens before the
+    # full dispatch pipeline, so enabling it here would execute a call before
+    # that denial. Fall back to the guarded serial path instead.
+    if pre_hooks_active:
         return False
     if not tool_calls or len(tool_calls) < 2:
         return False

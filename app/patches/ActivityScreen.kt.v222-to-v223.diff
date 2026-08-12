@@ -1,0 +1,28 @@
+--- /tmp/b-ActivityScreen.kt	2026-07-03 23:31:37.027124469 +0000
++++ app/src/main/java/com/hashmm/app/ui/activity/ActivityScreen.kt	2026-07-03 23:29:53.452523623 +0000
+@@ -85,6 +85,8 @@
+     onBack: () -> Unit,
+     showBack: Boolean = true,
+     onOpenConversation: (String) -> Unit,
++    onOpenRuns: () -> Unit = {},
++    onOpenScheduled: () -> Unit = {},
+     viewModel: ActivityViewModel = hiltViewModel(),
+     toolsVm: com.hashmm.app.ui.workbench.AdminToolsViewModel = hiltViewModel(),   // V228 快捷指挥
+ ) {
+@@ -169,9 +171,13 @@
+                                     else "Agent 已执行 $runsToday 次 · 定时任务跑了 $schedToday 次 · 库内产物 ${f.files.size} 个",
+                                     fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = cs2.onSurface,
+                                 )
+-                                if (f.release.isNotBlank()) {
+-                                    Spacer(Modifier.height(3.dp))
+-                                    Text("后端 ${f.release} · 在线", fontSize = 11.sp, color = cs2.onSurfaceVariant)
++                                // V229: 简报可点跳详情（后端版本行按用户要求移除，健康态在工作台 Hub 看）
++                                Spacer(Modifier.height(6.dp))
++                                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
++                                    Text("看轨迹 ›", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
++                                        color = cs2.primary, modifier = Modifier.clickable { onOpenRuns() })
++                                    Text("看定时 ›", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
++                                        color = cs2.primary, modifier = Modifier.clickable { onOpenScheduled() })
+                                 }
+                             }
+                         }

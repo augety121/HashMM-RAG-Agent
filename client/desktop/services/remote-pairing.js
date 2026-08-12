@@ -96,4 +96,73 @@ class PairingManager {
   }
 }
 
-module.exports = { PairingManager, genCode, genToken, constantTimeEqual, DEFAULT_TTL_MS, DEFAULT_MAX_ATTEMPTS };
+/**
+ * Persistent, revocable LAN trust. Only SHA-256 token digests are stored on
+ * the host; the viewer keeps the bearer token locally. A new device must still
+ * prove the short pairing code once before it can obtain this credential.
+ */
+class TrustedDeviceStore {
+  constructor({ load = () => ({}), save = () => {}, now = Date.now, maxDevices = 32 } = {}) {
+    this._load = load;
+    this._save = save;
+    this._now = now;
+    this.maxDevices = Math.max(1, Math.min(128, Number(maxDevices) || 32));
+  }
+
+  _records() {
+    let value = {};
+    try { value = this._load() || {}; } catch (_e) {}
+    return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+  }
+
+  _deviceId(value) {
+    const id = String(value || "").trim();
+    return /^[A-Za-z0-9_.:-]{8,128}$/.test(id) ? id : "";
+  }
+
+  issue(deviceId) {
+    const id = this._deviceId(deviceId);
+    if (!id) return null;
+    const token = genToken();
+    const records = this._records();
+    const now = this._now();
+    records[id] = { tokenHash: crypto.createHash("sha256").update(token).digest("hex"), createdAt: now, lastUsedAt: now };
+    const ordered = Object.entries(records).sort((a, b) => Number(b[1].lastUsedAt || 0) - Number(a[1].lastUsedAt || 0));
+    this._save(Object.fromEntries(ordered.slice(0, this.maxDevices)));
+    return token;
+  }
+
+  verify(deviceId, token) {
+    const id = this._deviceId(deviceId);
+    const supplied = String(token || "");
+    if (!id || !/^[a-f0-9]{48}$/i.test(supplied)) return false;
+    const records = this._records();
+    const record = records[id];
+    if (!record || !/^[a-f0-9]{64}$/i.test(String(record.tokenHash || ""))) return false;
+    const digest = crypto.createHash("sha256").update(supplied).digest("hex");
+    if (!constantTimeEqual(digest, String(record.tokenHash))) return false;
+    records[id] = { ...record, lastUsedAt: this._now() };
+    this._save(records);
+    return true;
+  }
+
+  list() {
+    return Object.entries(this._records()).map(([deviceId, record]) => ({
+      deviceId,
+      createdAt: Number(record && record.createdAt || 0),
+      lastUsedAt: Number(record && record.lastUsedAt || 0),
+    })).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+  }
+
+  revoke(deviceId) {
+    const id = this._deviceId(deviceId);
+    if (!id) return false;
+    const records = this._records();
+    if (!records[id]) return false;
+    delete records[id];
+    this._save(records);
+    return true;
+  }
+}
+
+module.exports = { PairingManager, TrustedDeviceStore, genCode, genToken, constantTimeEqual, DEFAULT_TTL_MS, DEFAULT_MAX_ATTEMPTS };

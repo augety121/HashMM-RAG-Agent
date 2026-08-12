@@ -172,7 +172,7 @@ export function CuReplayPanel({ open, onClose }: { open: boolean; onClose: () =>
                 <div className="text-[12px]" style={{ color: "var(--text-primary)" }}>{e.summary}</div>
                 {!e.ok && e.error && <div className="text-[10.5px] mt-0.5" style={{ color: "var(--danger, #DC2626)" }}>{e.error}</div>}
               </div>
-              <span className="text-[9.5px] font-mono flex-shrink-0 mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+              <span className="text-[10px] font-mono flex-shrink-0 mt-0.5" style={{ color: "var(--text-tertiary)" }}>
                 {new Date(e.ts).toLocaleTimeString("zh-CN", { hour12: false })}
               </span>
             </div>

@@ -77,7 +77,7 @@ export function KBsTab() {
         </div>
       </div>
 
-      {/* V91: 数据迁移（autodl ↔ 本地一键搬家） */}
+      {/* V91: 数据迁移（autodl 与本地一键搬家） */}
       <div className="rounded-xl px-4 py-3 mb-4 flex items-center gap-3 flex-wrap" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
         <div className="flex-1 min-w-[200px]">
           <div className="text-[12px] font-medium" style={{ color: "var(--text-primary)" }}>数据迁移</div>

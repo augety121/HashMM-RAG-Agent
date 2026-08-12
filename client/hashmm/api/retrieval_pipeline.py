@@ -268,7 +268,24 @@ class RetrievalPipeline:
                 "page": r.page,
                 "section": r.section,
                 "score": round(r.score, 3),
+                "chunk_id": r.chunk_id,   # V174: 暴露给 Navigate 扩展做 seed/查找
+                "doc_id": r.doc_id,
             })
+
+        # V174 Navigate 扩展（Knowhere 派生）：沿单文档结构图（section 树 + chunk 连接）把
+        # 相邻块 / 本节首块 / 同节兄弟补进 sources，治"命中一句、答案要靠上下文/整节"的碎片化。
+        # 仅 HASHMM_NAVIGATE_EXPAND=1 时启用；语料取自向量索引 _metadata；任何异常都安全降级为原 sources。
+        try:
+            from hashmm.retrieval import section_graph as _sg
+            if _sg.navigate_enabled() and sources:
+                corpus = getattr(self.vector_index, "_metadata", None)
+                if corpus:
+                    before = len(sources)
+                    sources = _sg.enrich_sources(sources, corpus_chunks=corpus)
+                    for s in sources[before:]:
+                        s["text"] = (s.get("text") or "")[:500]   # navigate 上下文截到 500 字，避免膨胀
+        except Exception:
+            pass
 
         return SearchResponse(
             results=final,

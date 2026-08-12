@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import * as api from "@/lib/api";
-import { Wrench, ToggleLeft, ToggleRight, Hash, Search } from "lucide-react";
+import { Wrench, ToggleLeft, ToggleRight, Hash, Search, AlertCircle, RefreshCw } from "lucide-react";
 import { CustomToolsPanel } from "./CustomToolsPanel";
 import { MCPServersPanel } from "./MCPServersPanel";
 import { filterTools, sortTools, toolSummary, toolsInCategory, type ToolState, type ToolSort } from "@/lib/toolFilter";
@@ -17,6 +17,10 @@ interface ToolItem {
 export function ToolsTab() {
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [stats, setStats] = useState<{ total: number; enabled: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastVerifiedAt, setLastVerifiedAt] = useState<number | null>(null);
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   // V103.90 搜索 / 状态筛选 / 排序
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState<ToolState>("all");
@@ -25,30 +29,46 @@ export function ToolsTab() {
   const shown = useMemo(() => sortTools(filterTools(tools, { query, state: stateFilter }), sortBy), [tools, query, stateFilter, sortBy]);
 
   const load = useCallback(async () => {
-    try {
-      const r = await api.listTools();
-      setTools(r.tools || []);
-    } catch {}
-    try {
-      const s = await api.getToolStats();
-      setStats(s);
-    } catch {}
+    setLoading(true); setError(null);
+    const [toolResult, statResult] = await Promise.allSettled([api.listTools(), api.getToolStats()]);
+    const issues: string[] = [];
+    if (toolResult.status === "fulfilled") setTools(toolResult.value.tools || []);
+    else issues.push("工具列表读取失败");
+    if (statResult.status === "fulfilled") setStats(statResult.value);
+    else issues.push("调用统计读取失败");
+    if (toolResult.status === "fulfilled" || statResult.status === "fulfilled") setLastVerifiedAt(Date.now());
+    setError(issues.length ? `${issues.join("；")}。` : null);
+    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   async function handleToggle(name: string, current: boolean) {
+    if (busyKeys.has(name)) return;
+    setBusyKeys(prev => new Set(prev).add(name)); setError(null);
     try {
       await api.toggleTool(name, !current);
       setTools(prev => prev.map(t => t.name === name ? { ...t, enabled: !current } : t));
-    } catch {}
+      setLastVerifiedAt(Date.now());
+    } catch (reason) {
+      setError(`工具 ${name} 未切换：${reason instanceof Error ? reason.message : "服务未返回确认"}`);
+    } finally {
+      setBusyKeys(prev => { const next = new Set(prev); next.delete(name); return next; });
+    }
   }
 
   // V103.90 按类别批量开关
   async function toggleCategory(cat: string, enable: boolean) {
     const names = toolsInCategory(tools, cat);
-    await Promise.all(names.map(n => api.toggleTool(n, enable).catch(() => {})));
-    setTools(prev => prev.map(t => t.category === cat ? { ...t, enabled: enable } : t));
+    if (!names.length || names.some(name => busyKeys.has(name))) return;
+    setBusyKeys(prev => new Set([...prev, ...names])); setError(null);
+    const results = await Promise.allSettled(names.map(name => api.toggleTool(name, enable)));
+    const succeeded = new Set(names.filter((_, index) => results[index].status === "fulfilled"));
+    setTools(prev => prev.map(t => succeeded.has(t.name) ? { ...t, enabled: enable } : t));
+    const failed = names.length - succeeded.size;
+    if (failed) setError(`${cat || "未分类"} 中有 ${failed}/${names.length} 个工具未取得切换回执；失败项保持原状态。`);
+    if (succeeded.size) setLastVerifiedAt(Date.now());
+    setBusyKeys(prev => { const next = new Set(prev); names.forEach(name => next.delete(name)); return next; });
   }
 
   const categories = Array.from(new Set(shown.map(t => t.category)));
@@ -72,6 +92,9 @@ export function ToolsTab() {
           </div>
         )}
       </div>
+
+      {error && <div className="mb-4 flex items-start gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(180,35,24,.06)", border: "1px solid rgba(180,35,24,.16)" }}><AlertCircle size={15} className="mt-0.5 flex-shrink-0" style={{ color: "#b42318" }} /><div className="flex-1"><div className="text-[12px]" style={{ color: "#b42318" }}>{error}</div><div className="text-[10.5px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{tools.length ? "列表保留最近一次已验证状态。" : "当前没有取得可验证的工具列表。"}</div></div><button onClick={load} disabled={loading} className="inline-flex items-center gap-1 text-[11px]" style={{ color: "var(--accent)" }}><RefreshCw size={12} />重试</button></div>}
+      {lastVerifiedAt && !error && <div className="mb-3 text-[10px]" style={{ color: "var(--text-tertiary)" }}>本次已验证 · {new Date(lastVerifiedAt).toLocaleTimeString()}</div>}
 
       {/* V103.90 搜索 / 状态筛选 / 排序 */}
       {tools.length > 0 && (
@@ -105,8 +128,8 @@ export function ToolsTab() {
               {cat === "builtin" ? "内置工具" : cat === "plugin" ? "插件" : cat === "custom" ? "自定义" : cat}
               <span className="ml-1.5 font-mono normal-case">{catTools.length}</span>
             </span>
-            <button onClick={() => toggleCategory(cat || "", !allOn)} className="text-[10.5px] px-2 py-0.5 rounded-md transition-colors hover:bg-[var(--bg-tertiary)]" style={{ color: "var(--text-tertiary)" }}>
-              {allOn ? "全部禁用" : "全部启用"}
+            <button disabled={catTools.some(t => busyKeys.has(t.name))} onClick={() => toggleCategory(cat || "", !allOn)} className="text-[10.5px] px-2 py-0.5 rounded-md transition-colors hover:bg-[var(--bg-tertiary)] disabled:opacity-50" style={{ color: "var(--text-tertiary)" }}>
+              {catTools.some(t => busyKeys.has(t.name)) ? "等待回执…" : allOn ? "全部禁用" : "全部启用"}
             </button>
           </div>
           <div className="space-y-1">
@@ -129,8 +152,8 @@ export function ToolsTab() {
                       <Hash size={10} className="inline" />{t.use_count}
                     </span>
                   )}
-                  <button onClick={() => handleToggle(t.name, t.enabled)}
-                    className="transition-colors" title={t.enabled ? "禁用" : "启用"}>
+                  <button disabled={busyKeys.has(t.name)} onClick={() => handleToggle(t.name, t.enabled)}
+                    className="transition-colors disabled:opacity-50" title={t.enabled ? "禁用" : "启用"}>
                     {t.enabled
                       ? <ToggleRight size={22} style={{ color: "var(--accent)" }} />
                       : <ToggleLeft size={22} style={{ color: "var(--text-tertiary)" }} />
@@ -144,7 +167,7 @@ export function ToolsTab() {
         );
       })}
 
-      {tools.length === 0 && (
+      {!loading && tools.length === 0 && !error && (
         <div className="text-center py-12">
           <Wrench size={36} style={{ color: "var(--text-tertiary)", opacity: 0.3 }} className="mx-auto mb-3" />
           <p className="text-[13px]" style={{ color: "var(--text-secondary)" }}>暂无已注册的工具</p>

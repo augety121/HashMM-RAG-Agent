@@ -53,6 +53,7 @@ class BackendManager {
     this.port = DEFAULT_PORT;
     this.startedAt = 0;
     this.lastError = "";
+    this.activeDataDir = null;
   }
 
   onLog(cb) { this._onLine = cb; }
@@ -112,6 +113,47 @@ class BackendManager {
       ? path.join(rtDir, "python", "python.exe")
       : path.join(rtDir, "python", "bin", "python3");
     return fs.existsSync(exe) ? exe : null;
+  }
+
+  /** 当前 requirements.txt 的稳定指纹。用于防止“旧 venv/旧内置运行时有文件就算就绪”。 */
+  requirementsFingerprint(srcDir) {
+    try {
+      const raw = fs.readFileSync(path.join(srcDir, "requirements.txt"), "utf-8").replace(/^\uFEFF/, "");
+      const keep = raw.split(/\r?\n/).map((line) => line.split("#")[0].trim())
+        .filter((line) => line && !/[^\x20-\x7E]/.test(line));
+      if (!keep.length) return "";
+      return require("crypto").createHash("sha1").update(keep.join("\n")).digest("hex").slice(0, 12);
+    } catch (_e) { return ""; }
+  }
+
+  /** 校验内置运行时版本指纹与核心导入。fast=true 只做磁盘/指纹检查，供状态轮询。 */
+  validateBundledRuntime(rtDir, srcDir, opts = {}) {
+    const python = this.bundledPython(rtDir);
+    if (!python) return { ok: false, error: "内置 Python 不存在" };
+    const expected = srcDir ? this.requirementsFingerprint(srcDir) : "";
+    const infoFile = path.join(rtDir, "runtime-info.json");
+    if (fs.existsSync(infoFile)) {
+      try {
+        const info = JSON.parse(fs.readFileSync(infoFile, "utf-8"));
+        if (info.complete !== true) return { ok: false, error: "内置运行时未完成构建（complete=false）" };
+        if (expected && info.req_hash !== expected) {
+          return { ok: false, error: `内置运行时依赖已过期（${info.req_hash || "无指纹"} != ${expected}）` };
+        }
+      } catch (e) { return { ok: false, error: `runtime-info.json 无效：${e.message}` }; }
+    }
+    if (!opts.fast) {
+      try {
+        const r = this._spawnSync(
+          python,
+          ["-c", "import cryptography,fastapi,multipart,numpy,uvicorn,yaml"],
+          { encoding: "utf-8", timeout: 30000, env: this._pyEnv() });
+        if (!r || r.status !== 0) {
+          const detail = String((r && (r.stderr || r.stdout)) || "").trim().slice(-240);
+          return { ok: false, error: `内置运行时核心依赖无法导入${detail ? "：" + detail : ""}` };
+        }
+      } catch (e) { return { ok: false, error: `内置运行时校验失败：${e.message}` }; }
+    }
+    return { ok: true, python, hash: expected };
   }
 
   /** V89: 本地 JWT 密钥——首次启动生成随机值并持久化到 home/jwt.secret，
@@ -174,16 +216,25 @@ class BackendManager {
    *  无标记且 fast=false 时，实测 `import fastapi, uvicorn` 一次，通过则补写标记
    *  （兼容老用户/手工装好的环境）。 */
   envReady(home, opts = {}) {
-    if (opts.rtDir && this.bundledPython(opts.rtDir)) return true;   // V89: 内置运行时恒就绪
+    if (opts.rtDir && this.bundledPython(opts.rtDir)) {
+      return this.validateBundledRuntime(opts.rtDir, opts.srcDir, { fast: !!opts.fast }).ok;
+    }
     const vp = this.venvPython(home);
     if (!fs.existsSync(vp)) return false;
-    if (fs.existsSync(this._flagFile(home))) return true;
+    const expected = opts.srcDir ? this.requirementsFingerprint(opts.srcDir) : "";
+    if (fs.existsSync(this._flagFile(home))) {
+      try {
+        const marker = fs.readFileSync(this._flagFile(home), "utf-8").trim();
+        if (!expected || marker === `ok ${expected}`) return true;
+        this._push(`[setup] 依赖指纹已变化（${marker || "旧标记"} -> ok ${expected}），需要重新初始化`);
+      } catch (_e) { /* 继续实测 */ }
+    }
     if (opts.fast) return false;
     try {
       const r = this._spawnSync(vp, ["-c", "import fastapi, uvicorn"],
         { encoding: "utf-8", timeout: 20000, env: this._pyEnv() });
       if (r.status === 0) {
-        try { fs.writeFileSync(this._flagFile(home), "verified\n"); } catch (_e) { /* */ }
+        try { fs.writeFileSync(this._flagFile(home), expected ? `ok ${expected}\n` : "verified\n"); } catch (_e) { /* */ }
         return true;
       }
     } catch (_e) { /* */ }
@@ -209,6 +260,8 @@ class BackendManager {
   async setup(o) {
     try {
       if (o.rtDir && this.bundledPython(o.rtDir)) {
+        const valid = this.validateBundledRuntime(o.rtDir, o.srcDir);
+        if (!valid.ok) return { ok: false, error: valid.error };
         this._push("[setup] 检测到内置运行时——无需初始化，直接「启动并进入」即可");
         return { ok: true, bundled: true };
       }
@@ -242,7 +295,7 @@ class BackendManager {
       const r3 = await this._run(vp, ["-c", "import fastapi, uvicorn, numpy"], { env: this._pyEnv() });
       if (r3 !== 0) return { ok: false, error: "依赖校验未通过（fastapi/uvicorn/numpy 导入失败，看上方日志）" };
       try { fs.writeFileSync(this._flagFile(o.home), `ok ${san.hash}\n`); } catch (_e) { /* */ }
-      this._push("[setup] 初始化完成 ✔ 可以启动本地后端了");
+      this._push("[setup] 初始化完成，可以启动本地后端了");
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -285,7 +338,7 @@ class BackendManager {
 
   /**
    * 启动本地后端并等待 /api/health 就绪。
-   * @param {{home:string, srcDir:string, port?:number, env?:object}} o
+   * @param {{home:string, dataDir?:string, srcDir:string, port?:number, env?:object}} o
    */
   async start(o) {
     if (this.child) return { ok: true, url: `http://127.0.0.1:${this.port}`, already: true };
@@ -293,9 +346,12 @@ class BackendManager {
     const bp = this.bundledPython(o.rtDir);
     const vp = bp || this.venvPython(o.home);
     this.mode = bp ? "bundled" : "venv";
-    if (!bp) {
+    if (bp) {
+      const valid = this.validateBundledRuntime(o.rtDir, o.srcDir);
+      if (!valid.ok) return { ok: false, error: `${valid.error}——请重新安装 HashMM 或重建运行时` };
+    } else {
       if (!fs.existsSync(vp)) return { ok: false, error: "本地环境未初始化（先点「初始化环境」）" };
-      if (!this.envReady(o.home)) {
+      if (!this.envReady(o.home, { srcDir: o.srcDir })) {
         return { ok: false, error: "本地环境不完整（依赖未装好）——请点「初始化环境」重新安装，装完会自动校验" };
       }
     }
@@ -306,11 +362,16 @@ class BackendManager {
     if (!picked) return { ok: false, error: "17680 起连续 10 个端口都被占用，请清理后重试" };
     this.port = picked;
     fs.mkdirSync(o.home, { recursive: true });
+    const dataDir = path.resolve(o.dataDir || path.join(o.home, "data"));
+    fs.mkdirSync(dataDir, { recursive: true });
     const env = this._pyEnv({
       PYTHONPATH: o.srcDir,                          // venv 路线的双保险（embeddable 会无视它）
       HASHMM_SRC: o.srcDir,                          // V90: 引导代码显式注入 sys.path 用
       HASHMM_PORT: String(this.port),
       HASHMM_JWT_SECRET: this._jwtSecret(o.home),   // V89: 零配置消除默认密钥告警
+      HASHMM_DATA_DIR: dataDir,
+      HASHMM_DB_PATH: path.join(dataDir, "hashmm.sqlite"),
+      HASHMM_BACKUP_DIR: path.join(dataDir, "backups"),
       // V103: 功能预设。桌面端默认 recommended，解锁已有的低风险深度（提示/管线缓存、
       // agent 时间线、工具审计、用户/记忆服务）。尊重用户已在系统环境里设的 HASHMM_PRESET；
       // 想满血（评判器/HyDE/多查询/agentic 检索）设 max，想回到旧行为设 basic。
@@ -320,11 +381,13 @@ class BackendManager {
     });
     const args = ["-c", BOOT_SNIPPET];
     this._push(`[backend] 启动（${this.mode === "bundled" ? "内置运行时" : "本机 venv"}）：${vp} ` +
-               `→ hashmm.api.server @ 127.0.0.1:${this.port}（源码=${o.srcDir}，数据=${path.join(o.home, "data")}）`);
+               `→ hashmm.api.server @ 127.0.0.1:${this.port}（源码=${o.srcDir}，ProjectVault=${dataDir}）`);
     try {
       this.child = this._spawn(vp, args, { cwd: o.home, env, windowsHide: true });
+      this.activeDataDir = dataDir;
     } catch (e) {
       this.child = null;
+      this.activeDataDir = null;
       return { ok: false, error: `启动失败: ${e.message}` };
     }
     this.startedAt = Date.now();
@@ -334,6 +397,7 @@ class BackendManager {
     this.child.on("exit", (code) => {
       this._push(`[backend] 进程退出（code=${code}）`);
       this.child = null;
+      this.activeDataDir = null;
     });
 
     const url = `http://127.0.0.1:${this.port}`;
@@ -372,19 +436,21 @@ class BackendManager {
       try { this._exec(`taskkill /PID ${c.pid} /T /F`, () => {}); } catch (_e) { /* */ }
     }
     this.child = null;
+    this.activeDataDir = null;
     return { ok: true };
   }
 
-  status(home) {
+  status(home, opts = {}) {
     return {
       running: !!this.child,
       pid: this.child ? this.child.pid : null,
       port: this.port,
       mode: this.mode || "venv",
       url: `http://127.0.0.1:${this.port}`,
-      envReady: home ? this.envReady(home, { fast: true }) : undefined,
+      envReady: home ? this.envReady(home, { fast: true, rtDir: opts.rtDir, srcDir: opts.srcDir }) : undefined,
       startedAt: this.startedAt || null,
       lastError: this.lastError || "",
+      dataDir: this.child ? this.activeDataDir : null,
     };
   }
 }

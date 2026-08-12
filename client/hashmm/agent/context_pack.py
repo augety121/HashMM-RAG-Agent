@@ -52,6 +52,10 @@ def pack_sources(sources: list, budget: int = 6000,
     used = 0
     packed = 0
     dropped = 0
+    # 预留装尾提示语（"另有 N 条未展示"）的位置，保证最终文本（含提示语）**绝不超预算**。
+    # 之前提示语在预算判定后才追加、未计入 used，会让返回文本轻微越预算（撑上下文窗的隐患）。
+    _NOTE_RESERVE = 80
+    _pack_budget = max(200, budget - _NOTE_RESERVE) if len(sources or []) > full_head else budget
     for i, s in enumerate(sources or []):
         fn = str(s.get("filename", "未知"))
         page = s.get("page", "?")
@@ -64,10 +68,10 @@ def pack_sources(sources: list, budget: int = 6000,
         body = clip_at_boundary(str(s.get("text", "")), cap, marker="…")
         block = head + body
         cost = len(block) + 2                        # 块间空行
-        if used + cost > budget:
+        if used + cost > _pack_budget:
             # 装不下：若连最小条目（头+120字）都装不下 → 本条及之后全部丢弃
             min_block = head + clip_at_boundary(str(s.get("text", "")), 120, marker="…")
-            if used + len(min_block) + 2 > budget:
+            if used + len(min_block) + 2 > _pack_budget:
                 dropped = len(sources) - packed
                 break
             block = min_block

@@ -56,7 +56,30 @@ class AutoRetriever:
         self.min_score = min_score
 
     def should_retrieve(self, query: str) -> bool:
-        """Decide whether a query needs knowledge base retrieval."""
+        """Decide whether a query needs knowledge base retrieval.
+
+        V311：默认走自适应路由（hashmm.agent.adaptive_rag）——不再是二元判断，
+        而是按查询复杂度分档；HASHMM_ADAPTIVE_RAG=0 或路由不可用时回退旧规则。
+        """
+        try:
+            from hashmm.agent.adaptive_rag import classify, enabled
+            if enabled():
+                return classify(query).should_retrieve
+        except Exception:  # noqa: BLE001  路由不可用 → 旧规则兜底，绝不断链
+            pass
+        return self._should_retrieve_legacy(query)
+
+    def route_query(self, query: str):
+        """返回完整路由决策（strategy / top_k / max_iterations / reason）。
+
+        供上层做迭代检索预算控制：multi_hop ≤3 轮、complex ≤5 轮，
+        配合 adaptive_rag.EarlyExit 在自评分连续偏高时提前退出。
+        """
+        from hashmm.agent.adaptive_rag import route
+        return route(query)
+
+    def _should_retrieve_legacy(self, query: str) -> bool:
+        """V310 及以前的二元判断（保留作兜底与对照）。"""
         query = query.strip()
         if len(query) < 3:
             return False
@@ -72,18 +95,62 @@ class AutoRetriever:
             return True
         return False
 
-    def retrieve_context(self, query: str, top_k: int = 5) -> RetrievalContext:
+    def retrieve_context(self, query: str, top_k: int | None = None) -> RetrievalContext:
         """Search knowledge base and return formatted context.
+
+        top_k=None（默认）时按自适应路由取检索宽度：single=5 / multi_hop=8 /
+        complex=12（路由关闭或异常则回退 5）。显式传 top_k 的调用方行为不变。
 
         Returns:
             RetrievalContext with context text, sources list, and system prompt injection.
         """
+        decision = None
+        if top_k is None:
+            try:
+                from hashmm.agent.adaptive_rag import route
+                decision = route(query)
+                top_k = decision.top_k or 5   # no_retrieval(0) 被显式调用时给最小宽度
+            except Exception:  # noqa: BLE001
+                top_k = 5
+        top_k = max(1, int(top_k))
         if not self.retriever:
             return RetrievalContext.empty()
 
         try:
-            response = self.retriever.retrieve(query, mode="mix", top_k=top_k)
-            results = response.results
+            route_meta = None
+            if decision is not None and decision.max_iterations > 1:
+                # multi_hop/complex：多轮补检索（仅自适应路径触发；single 天然单轮，
+                # 显式传 top_k 的旧调用方 decision=None 永远不会走到这里——零差异）。
+                from hashmm.agent.iterative_retrieval import (iterative_enabled,
+                                                              run_iterative)
+                if iterative_enabled():
+                    it = run_iterative(
+                        lambda q, k: self.retriever.retrieve(q, mode="mix", top_k=k),
+                        query, decision.max_iterations, top_k)
+                    if it.first_response is None:
+                        return RetrievalContext.empty()
+                    response, results = it.first_response, it.results
+                    route_meta = {
+                        "strategy": decision.strategy.value,
+                        "rounds": it.rounds,
+                        "queries": it.queries,
+                        "coverages": it.coverages,
+                        "stop_reason": it.stop_reason,
+                        "top_k": top_k,
+                    }
+                else:
+                    response = self.retriever.retrieve(query, mode="mix", top_k=top_k)
+                    results = response.results
+                    route_meta = {"strategy": decision.strategy.value,
+                                  "rounds": 1, "stop_reason": "iterative_off",
+                                  "top_k": top_k}
+            else:
+                response = self.retriever.retrieve(query, mode="mix", top_k=top_k)
+                results = response.results
+                if decision is not None:
+                    route_meta = {"strategy": decision.strategy.value,
+                                  "rounds": 1, "stop_reason": "single",
+                                  "top_k": top_k}
 
             if not results:
                 return RetrievalContext.empty()
@@ -130,6 +197,7 @@ class AutoRetriever:
                 kg_context=response.kg_context,
                 community_context=response.community_context,
                 elapsed_ms=response.elapsed_ms,
+                route_meta=route_meta,
             )
 
         except Exception as e:
@@ -142,13 +210,17 @@ class RetrievalContext:
 
     def __init__(self, context: str = "", sources: list[dict] | None = None,
                  injection: str = "", kg_context: str = "",
-                 community_context: str = "", elapsed_ms: int = 0):
+                 community_context: str = "", elapsed_ms: int = 0,
+                 route_meta: dict | None = None):
         self.context = context
         self.sources = sources or []
         self.injection = injection
         self.kg_context = kg_context
         self.community_context = community_context
         self.elapsed_ms = elapsed_ms
+        # V311：自适应路由观测元数据（strategy/rounds/queries/coverages/stop_reason）。
+        # 仅自适应路径填充；显式 top_k 的旧调用方拿到 None。
+        self.route_meta = route_meta
 
     @classmethod
     def empty(cls) -> "RetrievalContext":

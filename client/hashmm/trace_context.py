@@ -60,3 +60,23 @@ def with_trace(record: dict | None = None) -> dict:
     if tid:
         d.setdefault("trace_id", tid)
     return d
+
+
+# ── V205 P0-2：会话级 conv_id 上下文 ─────────────────────────────────────
+# trace 落盘时自动带上当前会话 ID，诊断助手即可"按会话过滤"而非全局尾巴。
+_conv_id: contextvars.ContextVar[str] = contextvars.ContextVar("hashmm_conv_id", default="")
+
+
+def set_conv_id(cid: str) -> None:
+    """请求/循环入口调用：绑定本次执行所属会话。空串=清除。"""
+    try:
+        _conv_id.set((cid or "").strip())
+    except Exception:
+        pass
+
+
+def current_conv_id() -> str:
+    try:
+        return _conv_id.get()
+    except Exception:
+        return ""

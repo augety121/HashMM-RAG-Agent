@@ -21,7 +21,7 @@
   .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; background:var(--bg); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:26px 24px; width:360px; max-width:92vw; box-shadow:0 10px 34px rgba(24,24,27,.08); }
   .card .brand { display:flex; align-items:center; gap:9px; margin-bottom:18px; }
-  .card .brand .logo { width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#7c5cff,#6366f1); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:15px; color:#fff; }
+  .card .brand .logo { width:34px; height:34px; background:url("./assets/brand/hashmm-app-tile.svg") center/contain no-repeat; flex-shrink:0; }
   .card .brand b { font-size:15px; } .card .brand span { font-size:11px; color:var(--sub); }
   .tabs { display:flex; gap:4px; margin-bottom:18px; background:#f0f1f3; padding:4px; border-radius:10px; }
   .tabs button { flex:1; padding:7px 4px; font-size:12px; border-radius:7px; border:none; background:transparent; color:var(--sub); cursor:pointer; transition:all .15s; }
@@ -91,34 +91,34 @@
     <div id="capture"></div>
 
     <div class="toolbar" id="toolbar">
-      <button id="fileBtn" title="发送文件到被控端（走 P2P 数据通道，大小无限制）">⇪ 传文件</button>
-      <button id="monBtn" title="切换被控端显示器（多屏）">▦ 显示器</button>
-      <button id="qualBtn" title="画质：流畅 / 均衡 / 真彩">◐ 画质</button>
-      <button id="recBtn" title="录制本次远程会话到本地视频文件">⏺ 录制</button>
-      <button id="pasteBtn" title="把本机剪贴板内容粘贴到被控端">📋 粘贴到远端</button>
-      <button id="fsBtn">⛶ 全屏</button>
-      <button id="discBtn">⏏ 断开</button>
+      <button id="fileBtn" title="发送文件到被控端（优先走加密 P2P 数据通道）">传文件</button>
+      <button id="monBtn" title="切换被控端显示器（多屏）">显示器</button>
+      <button id="qualBtn" title="画质：流畅 / 均衡 / 真彩">画质</button>
+      <button id="recBtn" title="录制本次远程会话到本地视频文件">录制</button>
+      <button id="pasteBtn" title="把本机剪贴板内容粘贴到被控端">粘贴到远端</button>
+      <button id="fsBtn">全屏</button>
+      <button id="discBtn">断开</button>
     </div>
     <input type="file" id="fileInput" multiple style="display:none" />
 
     <!-- 文件传输面板（会话内） -->
     <div class="sheet" id="fileSheet">
-      <div class="sheet-h">文件传输<span class="sheet-x" id="fileClose">✕</span></div>
+      <div class="sheet-h">文件传输<span class="sheet-x" id="fileClose">×</span></div>
       <div class="sheet-b" id="fileDrop">
-        <div class="drop-hint" id="dropHint">拖拽文件到此，或<button class="link" id="filePick">选择文件</button><br/><span class="dim">经 P2P 数据通道直传被控端，大小无限制、不过服务器</span></div>
+        <div class="drop-hint" id="dropHint">拖拽文件到此，或<button class="link" id="filePick">选择文件</button><br/><span class="dim">优先经加密 P2P 数据通道直传；单文件上限 256MB，断线可续传</span></div>
         <div id="fileList"></div>
       </div>
     </div>
 
     <!-- 多屏选择面板 -->
     <div class="sheet" id="monSheet">
-      <div class="sheet-h">选择被控端显示器<span class="sheet-x" id="monClose">✕</span></div>
+      <div class="sheet-h">选择被控端显示器<span class="sheet-x" id="monClose">×</span></div>
       <div class="sheet-b" id="monList"><div class="dim" style="padding:8px 0">正在获取显示器…</div></div>
     </div>
 
     <!-- 画质面板 -->
     <div class="sheet" id="qualSheet">
-      <div class="sheet-h">画质<span class="sheet-x" id="qualClose">✕</span></div>
+      <div class="sheet-h">画质<span class="sheet-x" id="qualClose">×</span></div>
       <div class="sheet-b">
         <div class="seg" id="qualSeg">
           <button data-fps="12" data-jpeg="55">流畅</button>
@@ -131,7 +131,7 @@
 
     <div class="overlay" id="gate">
       <div class="card">
-        <div class="brand"><span class="logo">H</span><div><b>HashMM 远程</b><br><span id="brandSub">连接到被控电脑</span></div></div>
+        <div class="brand"><span class="logo" role="img" aria-label="HashMM Observer"></span><div><b>HashMM 远程</b><br><span id="brandSub">连接到被控电脑</span></div></div>
 
         <div class="tabs">
           <button id="tabAccount" class="on">我的设备</button>
@@ -182,7 +182,8 @@
 //   · 手动（零服务器·跨网络）：互换邀请码/应答码。
 // 收不到 WebRTC 视频自动回退 MJPEG。输入采集归一化 0..1000 经信令通道发回被控端注入。
 //
-// 启动参数（HashMM 从应用内打开本页做账号直连时带上）：?mode=account&signal=<wss>&token=<jwt>&target=<deviceId>&name=<n>
+// 启动参数只包含非敏感路由信息：?mode=account&signal=<wss>&target=<deviceId>&name=<n>。
+// 账号令牌由主进程经窄 preload 注入，不进入 file:// URL、历史记录或诊断截图。
 
 const $ = (id) => document.getElementById(id);
 const Q = new URLSearchParams(location.search);
@@ -190,36 +191,76 @@ const dot = $("dot"), stat = $("stat");
 const video = $("video"), mjpeg = $("mjpeg"), capture = $("capture"), gate = $("gate");
 
 let signalWS = null;          // 信令通道（局域网=同源 WS；账号=后端中继 WS）
-let pc = null, iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" }];
+let pc = null, iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
 let paired = false, rtcUp = false, inputActive = false, remoteW = 0, remoteH = 0;
 let mode = Q.get("mode") || "lan";   // lan | account | manual
 let manualPC = null;
 const pendingRemoteIce = [];
+let reconnectAttempt = 0, reconnectTimer = null, signalGeneration = 0, authRejected = false;
+let activeSessionId = "", relayTicket = "", controlChannel = null, pointerChannel = null, fileChannel = null, controlSeq = 0;
+let grantedScopes = new Set();
+let AUTH_TOKEN = "";          // injected by the narrow Electron preload; never placed in file:// URLs
+let SOCKET_TICKET = "", ATTEMPT_ID = "", TRACE_ID = "", REMOTE_SIGNAL = Q.get("signal") || "";
+let viewerStarted = false;
+let DEVICE_ID = "";
+try {
+  DEVICE_ID = localStorage.getItem("hmm_remote_viewer_id") || "";
+  if (!DEVICE_ID) {
+    DEVICE_ID = "viewer-" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+    localStorage.setItem("hmm_remote_viewer_id", DEVICE_ID);
+  }
+} catch (_e) { DEVICE_ID = "viewer-" + Math.random().toString(36).slice(2); }
+const LAN_TRUST_KEY = "hmm_remote_trust:" + location.host;
+function readLanTrust() { try { return localStorage.getItem(LAN_TRUST_KEY) || ""; } catch (_e) { return ""; } }
+function writeLanTrust(token) { try { if (token) localStorage.setItem(LAN_TRUST_KEY, String(token)); } catch (_e) {} }
 
 const setDot = (c) => { dot.style.background = c; };
 const setStat = (t) => { stat.textContent = t; };
 const enc = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
 const dec = (s) => JSON.parse(decodeURIComponent(escape(atob(String(s).trim()))));
 const send = (o) => { try { if (signalWS && signalWS.readyState === 1) signalWS.send(JSON.stringify(o)); } catch (_e) {} };
+const sendMilestone = (milestone, detail) => {
+  if (!activeSessionId) return;
+  send({ type: "milestone", sessionId: activeSessionId, milestone, detail: detail || {} });
+};
 
 // ── 信令通道：局域网=同源；账号=后端 ─────────────────────────
 function signalUrl() {
-  if (mode === "account") { return Q.get("signal") || ""; }
+  if (mode === "account") { return REMOTE_SIGNAL; }
   return (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/";
 }
 function connectSignal() {
   const url = signalUrl();
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  const generation = ++signalGeneration;
   if (!url) { setStat("缺少信令地址"); return; }
   setDot("var(--warn)"); setStat("连接中…");
   signalWS = new WebSocket(url); signalWS.binaryType = "arraybuffer";
   signalWS.onopen = () => {
+    if (generation !== signalGeneration) return;
+    reconnectAttempt = 0; authRejected = false;
     setStat("已连接");
     if (mode === "account") {
       // 账号模式：先用 token 认证并加入账号房间
-      send({ type: "auth", token: Q.get("token") || "", role: "viewer", name: Q.get("name") || "查看端" });
+      send({
+        type: "auth", token: AUTH_TOKEN, ticket: SOCKET_TICKET, role: "viewer",
+        deviceId: DEVICE_ID, name: Q.get("name") || "查看端", platform: navigator.platform || "",
+        protocol: "hashmm.remote.v4", attemptId: ATTEMPT_ID, traceId: TRACE_ID,
+      });
     }
   };
-  signalWS.onclose = () => { setDot("var(--err)"); setStat("已断开"); rtcUp = false; };
+  signalWS.onclose = () => {
+    if (generation !== signalGeneration) return;
+    setDot("var(--warn)"); rtcUp = false; paired = false;
+    if (mode === "manual" || authRejected) {
+      setStat(authRejected ? "账号认证失效，请重新登录" : "已断开");
+      return;
+    }
+    const delays = [1000, 2000, 4000, 8000, 15000];
+    const delay = delays[Math.min(reconnectAttempt++, delays.length - 1)];
+    setStat(`连接中断，${Math.ceil(delay / 1000)} 秒后重连`);
+    reconnectTimer = setTimeout(renewAdmissionAndConnect, delay);
+  };
   signalWS.onerror = () => { setDot("var(--err)"); setStat("连接失败"); };
   signalWS.onmessage = (ev) => {
     if (typeof ev.data !== "string") { onMjpeg(ev.data); return; }
@@ -228,21 +269,63 @@ function connectSignal() {
   };
 }
 
+async function renewAdmissionAndConnect() {
+  if (mode !== "account" || !window.hashmmRemoteViewer || !window.hashmmRemoteViewer.renewAdmission) {
+    connectSignal(); return;
+  }
+  try {
+    const next = await window.hashmmRemoteViewer.renewAdmission(DEVICE_ID);
+    if (!next || !next.ok) { setStat("安全凭证刷新失败"); return; }
+    applyAdmission(next);
+    connectSignal();
+  } catch (_e) { setStat("安全凭证刷新失败"); }
+}
+
+function applyAdmission(payload) {
+  if (!payload || typeof payload !== "object") return;
+  if (payload.token && typeof payload.token === "string") AUTH_TOKEN = payload.token;
+  if (payload.ticket && typeof payload.ticket === "string") SOCKET_TICKET = payload.ticket;
+  if (payload.deviceId) DEVICE_ID = String(payload.deviceId).slice(0, 128);
+  ATTEMPT_ID = String(payload.attemptId || "").slice(0, 80);
+  TRACE_ID = String(payload.traceId || "").slice(0, 80);
+  if (payload.signalUrl && /^wss:\/\//.test(payload.signalUrl)) REMOTE_SIGNAL = payload.signalUrl;
+}
+
 async function onMsg(m) {
-  if (m.type === "hello") { if (Array.isArray(m.iceServers) && m.iceServers.length) iceServers = m.iceServers; return; }
+  if (m.type === "hello") {
+    if (Array.isArray(m.iceServers) && m.iceServers.length) iceServers = m.iceServers;
+    const trustToken = mode === "lan" ? readLanTrust() : "";
+    if (trustToken) { send({ type: "resume", deviceId: DEVICE_ID, trustToken }); setLanMsg("", "正在恢复受信任连接…"); }
+    return;
+  }
   if (m.type === "authOk") { if (Array.isArray(m.iceServers) && m.iceServers.length) iceServers = m.iceServers; refreshDevices(); if (Q.get("target")) requestDevice(Q.get("target")); return; }
-  if (m.type === "authFail") { $("accMsg").className = "msg err"; $("accMsg").textContent = "账号认证失败，请在 HashMM 内重新登录后重试"; return; }
+  if (m.type === "authFail") { authRejected = true; $("accMsg").className = "msg err"; $("accMsg").textContent = "账号认证失败，请在 HashMM 内重新登录后重试"; return; }
   if (m.type === "devices") { renderDevices(m.list || []); return; }
-  if (m.type === "paired") { paired = true; setLanMsg("ok", "配对成功，正在建立画面…"); setDot("var(--ok)"); setStat("已配对"); ensureMjpegVisible(); enterControl(); setTimeout(resumeTransfers, 300); return; }
-  if (m.type === "ready") { paired = true; setStat("已连接，建立画面…"); ensureMjpegVisible(); enterControl(); setTimeout(resumeTransfers, 300); return; }  // 账号模式：被控端已接受
+  if (m.type === "permissionPending") {
+    activeSessionId = m.sessionId || "";
+    $("accMsg").className = "msg"; $("accMsg").textContent = "已发送请求，等待对方在电脑上确认权限…";
+    setStat("等待电脑确认"); return;
+  }
+  if (m.type === "resumeRejected") { setLanMsg("", "此设备需要重新输入一次配对码"); return; }
+  if (m.type === "paired") {
+    if (m.trustToken) writeLanTrust(m.trustToken);
+    paired = true; setLanMsg("ok", m.resumed ? "受信任设备已自动连接" : "配对成功，已记住这台设备");
+    setDot("var(--ok)"); setStat("已配对"); ensureMjpegVisible(); enterControl(); setTimeout(resumeTransfers, 300); return;
+  }
+  if (m.type === "ready") {
+    activeSessionId = m.sessionId || activeSessionId; relayTicket = m.ticket || relayTicket;
+    grantedScopes = new Set(Array.isArray(m.scopes) ? m.scopes : []);
+    paired = true; setStat("已授权，正在尝试端到端直连…"); scheduleLegacyFallback(m.legacyRelayAfterMs); enterControl(); setTimeout(resumeTransfers, 300); return;
+  }
+  if (m.type === "ticket" && m.sessionId === activeSessionId) { relayTicket = m.ticket || relayTicket; return; }
   if (m.type === "pairFail") {
-    const r = { mismatch: "配对码错误", expired: "配对码已过期", locked: "尝试过多已锁定", none: "暂无有效配对码", offline: "对方设备不在线", busy: "对方正忙" };
+    const r = { mismatch: "配对码错误", expired: "配对码已过期", locked: "尝试过多已锁定", none: "暂无有效配对码", offline: "对方设备不在线", busy: "对方正忙", denied: "对方拒绝了本次连接", permission_invalid: "授权请求已失效" };
     setLanMsg("err", (r[m.reason] || "连接失败") + (m.remainingAttempts != null ? `（剩余 ${m.remainingAttempts} 次）` : ""));
     $("accMsg").className = "msg err"; $("accMsg").textContent = r[m.reason] || "连接失败";
     return;
   }
   if (m.type === "meta") { remoteW = m.sw || 0; remoteH = m.sh || 0; return; }
-  if (m.type === "rtcUnavailable") { ensureMjpegVisible(); setStat("投屏未就绪，已用 MJPEG"); return; }
+  if (m.type === "rtcUnavailable") { activateLegacyRelay("端到端通道不可用，已启用应急中继"); return; }
   if (m.type === "rtcSignal") { await onRtc(m.kind, m.data); return; }
   // V103.52 会话内扩展能力的回传
   if (m.type === "monitorList") { renderMonitors(m.monitors || [], m.current); return; }
@@ -255,8 +338,16 @@ async function onMsg(m) {
 }
 
 // ── 账号设备列表 ──────────────────────────────────────────────
+const clientRequestId = (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function")
+  ? globalThis.crypto.randomUUID()
+  : `viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 function refreshDevices() { send({ type: "listDevices" }); }
-function requestDevice(id) { send({ type: "connect", target: id }); $("accMsg").className = "msg"; $("accMsg").textContent = "正在连接所选设备…"; }
+function requestDevice(id) {
+  send({ type: "connect", target: id, clientRequestId,
+    transportMode: Q.get("transportMode") === "turn-only" ? "turn-only" : "auto",
+    scopes: ["view", "control", "clipboard", "file_write", "audio", "power"] });
+  $("accMsg").className = "msg"; $("accMsg").textContent = "正在向所选设备申请连接…";
+}
 function renderDevices(list) {
   const box = $("devList"); box.innerHTML = "";
   if (!list.length) { box.innerHTML = '<div class="empty">暂无其他在线设备。在另一台电脑用同一账号登录 HashMM 并在「远程」开启「允许本机被远程」。</div>'; return; }
@@ -270,41 +361,177 @@ function renderDevices(list) {
 
 // ── WebRTC ────────────────────────────────────────────────────
 function newPC() {
-  const p = new RTCPeerConnection({ iceServers });
-  p.ontrack = (e) => { video.srcObject = e.streams[0]; video.style.display = "block"; mjpeg.style.display = "none"; rtcUp = true; send({ type: "rtcOn" }); setStat("P2P 已连接"); enterControl(); try { video.play(); } catch (_e) {} };
-  p.onicecandidate = (e) => { if (e.candidate && mode !== "manual") send({ type: "rtcSignal", kind: "ice", data: e.candidate }); };
-  p.onconnectionstatechange = () => { const s = p.connectionState; if (s === "connected") setDot("var(--ok)"); if (s === "failed" || s === "disconnected") { rtcUp = false; send({ type: "rtcOff" }); ensureMjpegVisible(); setStat("P2P 断开，回退 MJPEG"); } };
+  const p = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2, bundlePolicy: "max-bundle" });
+  const candidateCounts = { host: 0, srflx: 0, prflx: 0, relay: 0 };
+  p.ondatachannel = (event) => {
+    if (!event.channel) return;
+    if (event.channel.label === "hashmm-control-v1") {
+      controlChannel = event.channel;
+      controlChannel.onclose = () => { if (controlChannel === event.channel) controlChannel = null; };
+    } else if (event.channel.label === "hashmm-pointer-v1") {
+      pointerChannel = event.channel;
+      pointerChannel.onclose = () => { if (pointerChannel === event.channel) pointerChannel = null; };
+    } else if (event.channel.label === "hashmm-file-v1") {
+      fileChannel = event.channel;
+      fileChannel.onclose = () => { if (fileChannel === event.channel) fileChannel = null; };
+    }
+  };
+  p.ontrack = (e) => {
+    video.srcObject = e.streams[0]; video.style.display = "block";
+    sendMilestone("track_received", { stage: "media" });
+    setStat("媒体通道已连接，正在等待首帧…"); enterControl();
+    let rendered = false;
+    const onFirstFrame = () => {
+      if (rendered) return; rendered = true; rtcUp = true;
+      cancelLegacyFallback(); stopCompatPreview(); mjpeg.style.display = "none";
+      send({ type: "rtcOn" });
+      sendMilestone("first_frame_rendered", { stage: "media", width: video.videoWidth || 0, height: video.videoHeight || 0 });
+      setStat("端到端画面已连接"); setDot("var(--ok)");
+    };
+    if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback(onFirstFrame);
+    else video.addEventListener("loadeddata", onFirstFrame, { once: true });
+    try { video.play(); } catch (_e) {}
+  };
+  p.onicecandidate = (e) => {
+    if (!e.candidate) return;
+    try { const found = String(e.candidate.candidate || "").match(/ typ (host|srflx|prflx|relay)(?: |$)/); if (found) candidateCounts[found[1]] += 1; } catch (_e) {}
+    if (mode !== "manual") send({ type: "rtcSignal", kind: "ice", data: e.candidate });
+  };
+  p.onicegatheringstatechange = () => { if (p.iceGatheringState === "complete") sendMilestone("candidates_gathered", { stage: "ice", candidateCounts }); };
+  p.onconnectionstatechange = () => {
+    const s = p.connectionState;
+    if (s === "connected") { sendMilestone("dtls_connected", { stage: "dtls" }); reportSelectedTransport(p); }
+    if (s === "failed") {
+      rtcUp = false; send({ type: "rtcOff" });
+      sendMilestone("terminal_error", { stage: "ice", errorCode: "ICE_ALL_PAIRS_FAILED" });
+      activateLegacyRelay("端到端连接失败，正在启动兼容预览");
+    } else if (s === "disconnected") {
+      rtcUp = false; send({ type: "rtcOff" }); scheduleLegacyFallback(3000); setStat("连接波动，正在恢复端到端通道…");
+    }
+  };
   return p;
+}
+let lastTransportReportAt = 0;
+async function reportSelectedTransport(target) {
+  if (mode !== "account" || !activeSessionId || !target || !target.getStats || Date.now() - lastTransportReportAt < 60000) return;
+  try {
+    const raw = await target.getStats(), entries = []; raw.forEach((entry) => entries.push(entry));
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    let pair = entries.find((entry) => entry.type === "candidate-pair" && entry.selected);
+    if (!pair) { const transport = entries.find((entry) => entry.type === "transport" && entry.selectedCandidatePairId); if (transport) pair = byId.get(transport.selectedCandidatePairId); }
+    if (!pair) pair = entries.find((entry) => entry.type === "candidate-pair" && entry.nominated && entry.state === "succeeded");
+    const local = pair ? byId.get(pair.localCandidateId) : null;
+    lastTransportReportAt = Date.now();
+    send({ type: "transportReport", sessionId: activeSessionId, report: {
+      candidateType: (local && local.candidateType) || "unknown",
+      protocol: (local && (local.protocol || local.relayProtocol)) || "unknown",
+      rttMs: pair && Number.isFinite(pair.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
+      bytesSent: pair && Number.isFinite(pair.bytesSent) ? pair.bytesSent : null,
+      bytesReceived: pair && Number.isFinite(pair.bytesReceived) ? pair.bytesReceived : null,
+    }});
+    sendMilestone("candidate_pair_selected", {
+      stage: "ice", candidateType: (local && local.candidateType) || "unknown",
+      protocol: (local && (local.protocol || local.relayProtocol)) || "unknown",
+      rttMs: pair && Number.isFinite(pair.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
+    });
+  } catch (_e) {}
 }
 async function onRtc(kind, data) {
   if (!pc) pc = newPC();
   try {
     if (kind === "offer") {
+      sendMilestone("offer_received", { stage: "signaling" });
       await pc.setRemoteDescription(data);
       for (const c of pendingRemoteIce.splice(0)) { try { await pc.addIceCandidate(c); } catch (_e) {} }
       const ans = await pc.createAnswer(); await pc.setLocalDescription(ans);
+      sendMilestone("answer_created", { stage: "signaling" });
       send({ type: "rtcSignal", kind: "answer", data: pc.localDescription });
     } else if (kind === "ice") { if (pc.remoteDescription) { try { await pc.addIceCandidate(data); } catch (_e) {} } else pendingRemoteIce.push(data); }
-  } catch (e) { setStat("协商失败：" + ((e && e.message) || e)); ensureMjpegVisible(); }
+  } catch (e) {
+    sendMilestone("terminal_error", { stage: "signaling", errorCode: "ANSWER_NOT_DELIVERED" });
+    activateLegacyRelay("协商失败，正在启动兼容预览");
+  }
 }
 function waitIce(p) { return new Promise((res) => { if (p.iceGatheringState === "complete") return res(); const t = setTimeout(res, 4000); p.addEventListener("icegatheringstatechange", () => { if (p.iceGatheringState === "complete") { clearTimeout(t); res(); } }); }); }
 
 // ── MJPEG 回退 ────────────────────────────────────────────────
-let mjpegUrl = null;
+let mjpegUrl = null, legacyFallbackTimer = null, legacyRelayActive = false, compatPollTimer = null;
 function onMjpeg(buf) { if (rtcUp) return; const url = URL.createObjectURL(new Blob([buf], { type: "image/jpeg" })); mjpeg.onload = () => { if (mjpegUrl) URL.revokeObjectURL(mjpegUrl); mjpegUrl = url; }; mjpeg.src = url; }
-function ensureMjpegVisible() { if (rtcUp) return; mjpeg.style.display = "block"; video.style.display = "none"; }
+function cancelLegacyFallback() {
+  if (legacyFallbackTimer) clearTimeout(legacyFallbackTimer);
+  legacyFallbackTimer = null;
+}
+function scheduleLegacyFallback(delayMs) {
+  cancelLegacyFallback();
+  const delay = Math.max(3000, Number(delayMs) || 12000);
+  legacyFallbackTimer = setTimeout(() => activateLegacyRelay("直连与 TURN 尚未出画面，正在启动兼容预览"), delay);
+}
+function activateLegacyRelay(message) {
+  cancelLegacyFallback();
+  legacyRelayActive = true;
+  sendMilestone("fallback_started", { stage: "compat_preview" });
+  send({ type: "compatReady", sessionId: activeSessionId });
+  ensureMjpegVisible();
+  setStat(message || "正在启动兼容预览");
+  if (mode === "account" && activeSessionId) send({ type: "transportReport", sessionId: activeSessionId,
+    report: { candidateType: "legacy-http", protocol: "https-mjpeg", rttMs: null } });
+}
+function stopCompatPreview() {
+  if (compatPollTimer) clearTimeout(compatPollTimer);
+  compatPollTimer = null; legacyRelayActive = false;
+}
+function ensureMjpegVisible() {
+  if (rtcUp) return;
+  if (mode === "account" && activeSessionId && relayTicket) {
+    const started = Date.now(); let first = false;
+    const poll = async () => {
+      if (!legacyRelayActive || rtcUp) return;
+      try {
+        const base = (REMOTE_SIGNAL || Q.get("signal") || "").replace(/^ws/, "http").replace(/\/api\/remote\/(?:v\d+\/)?ws.*$/, "");
+        const response = await fetch(base + "/api/remote/relay/" + encodeURIComponent(activeSessionId) + "/frame", {
+          headers: { Authorization: "Remote " + relayTicket }, cache: "no-store",
+        });
+        if (response.status === 401 || response.status === 403) {
+          sendMilestone("terminal_error", { stage: "compat_preview", errorCode: response.status === 401 ? "RELAY_HTTP_401" : "RELAY_HTTP_403" });
+          setStat("兼容预览权限已失效，请重新连接"); stopCompatPreview(); return;
+        }
+        if (response.ok) {
+          const blob = await response.blob(), url = URL.createObjectURL(blob);
+          mjpeg.onload = () => { if (mjpegUrl) URL.revokeObjectURL(mjpegUrl); mjpegUrl = url; };
+          mjpeg.src = url;
+          if (!first) {
+            first = true; sendMilestone("fallback_first_frame", { stage: "compat_preview" });
+            setStat("兼容预览已出画面");
+          }
+        }
+      } catch (_e) { /* deadline below produces the terminal result */ }
+      if (!first && Date.now() - started >= 8000) {
+        sendMilestone("terminal_error", { stage: "compat_preview", errorCode: "RELAY_HOST_NOT_PUSHING" });
+        setStat("兼容预览 8 秒内没有首帧，请检查电脑抓屏权限"); stopCompatPreview(); return;
+      }
+      compatPollTimer = setTimeout(poll, first ? 250 : 400);
+    };
+    stopCompatPreview(); legacyRelayActive = true; poll();
+  }
+  mjpeg.style.display = "block"; video.style.display = "none";
+}
 
 // ── 进入控制（隐藏面板 + 开输入）─────────────────────────────
 function enterControl() {
   gate.style.display = "none"; capture.style.display = "block"; inputActive = true; $("toolbar").style.opacity = "";
 }
 function leaveControl() {
+  cancelLegacyFallback(); stopCompatPreview();
   inputActive = false; capture.style.display = "none"; gate.style.display = "flex";
   rtcUp = false; paired = false;
-  try { if (pc) pc.close(); } catch (_e) {} pc = null;
+  try { if (pc) pc.close(); } catch (_e) {} pc = null; controlChannel = null; pointerChannel = null; fileChannel = null;
   video.style.display = "none"; mjpeg.style.display = "none";
   send({ type: "rtcOff" }); setStat("已断开"); setDot("var(--sub)");
 }
+setInterval(() => {
+  try { if (mode === "account" && paired && activeSessionId) send({ type: "refreshTicket" }); } catch (_e) {}
+}, 90000);
+setInterval(() => { if (pc && pc.connectionState === "connected") reportSelectedTransport(pc); }, 60000);
 
 // ── 输入采集（归一化 0..1000）─────────────────────────────────
 const activeEl = () => (video.style.display !== "none") ? video : mjpeg;
@@ -316,7 +543,15 @@ function contentRect() {
   return { left: r.left + (r.width - cw) / 2, top: r.top + (r.height - ch) / 2, w: cw, h: ch };
 }
 function toNorm(cx, cy) { const c = contentRect(), cl = (v) => v < 0 ? 0 : v > 1000 ? 1000 : v; return { x: Math.round(cl(((cx - c.left) / c.w) * 1000)), y: Math.round(cl(((cy - c.top) / c.h) * 1000)) }; }
-const sendInput = (o) => send(Object.assign({ type: "input" }, o));
+const sendInput = (o) => {
+  const message = Object.assign({ type: "input", sessionId: activeSessionId, seq: ++controlSeq, timestamp: Date.now() }, o);
+  const fast = ["mouse_move", "scroll"].includes(String(o.action || ""));
+  const channel = fast && pointerChannel && pointerChannel.readyState === "open" ? pointerChannel : controlChannel;
+  if (channel && channel.readyState === "open" && grantedScopes.has("control") && !["device", "system", "clipboard_set"].includes(String(o.action || ""))) {
+    try { channel.send(JSON.stringify(message)); return; } catch (_e) { /* authenticated WS fallback */ }
+  }
+  send(message);
+};
 
 let lastMove = 0, downPt = null, moved = false;
 capture.addEventListener("mousemove", (e) => { const now = performance.now(); if (now - lastMove < 40) return; lastMove = now; const p = toNorm(e.clientX, e.clientY); if (downPt) moved = true; else sendInput({ action: "mouse_move", x: p.x, y: p.y }); });
@@ -391,10 +626,10 @@ $("recBtn").addEventListener("click", () => {
         setTimeout(() => URL.revokeObjectURL(url), 5000);
         setStat("录制已保存：" + name);
       } catch (_e) { setStat("录制保存失败"); }
-      $("recBtn").textContent = "⏺ 录制";
+      $("recBtn").textContent = "录制";
     };
     _rec.start(1000);   // 每秒切一个数据块
-    $("recBtn").textContent = "⏹ 停止录制";
+    $("recBtn").textContent = "停止录制";
     setStat("正在录制本次会话…");
   } catch (_e) { setStat("录制启动失败：" + ((_e && _e.message) || _e)); }
 });
@@ -432,7 +667,7 @@ function renderMonitors(list, current) {
   for (const mo of list) {
     const el = document.createElement("div");
     el.className = "mon-item" + ((current != null && mo.id === current) || mo.primary && current == null ? " on" : "");
-    el.innerHTML = `<span class="mon-ico">🖵</span><div class="mon-t">${(mo.label || ("显示器 " + (mo.index + 1))).replace(/[<>&]/g, "")}<div class="mon-d">${mo.width || "?"}×${mo.height || "?"}${mo.primary ? " · 主屏" : ""}</div></div>`;
+    el.innerHTML = `<span class="mon-ico">屏</span><div class="mon-t">${(mo.label || ("显示器 " + (mo.index + 1))).replace(/[<>&]/g, "")}<div class="mon-d">${mo.width || "?"}×${mo.height || "?"}${mo.primary ? " · 主屏" : ""}</div></div>`;
     el.onclick = () => {
       send({ type: "selectMonitor", monitor: mo.id, index: mo.index });
       box.querySelectorAll(".mon-item").forEach(x => x.classList.remove("on"));
@@ -443,11 +678,18 @@ function renderMonitors(list, current) {
   }
 }
 
-// 文件传输：分块经信令转发（被控端落盘）。大小无限制，48KB/块以适配 WS 帧。
+// 文件传输：批准后优先走加密 WebRTC DataChannel；信令通道仅作断线兼容回退。
 const FT_CHUNK = 48 * 1024;
 const _transfers = new Map();   // ftid -> {file, sent, total, rowEl, barEl, pctEl, started}
 function fnv1a(bytes) { let h = 0x811c9dc5; for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; } return h >>> 0; }
 function b64(buf) { let s = ""; const b = new Uint8Array(buf); const CH = 0x8000; for (let i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH)); return btoa(s); }
+function sendFile(message) {
+  const payload = Object.assign({ sessionId: activeSessionId }, message);
+  if (fileChannel && fileChannel.readyState === "open" && grantedScopes.has("file_write")) {
+    try { fileChannel.send(JSON.stringify(payload)); return true; } catch (_e) { /* authenticated fallback */ }
+  }
+  send(payload); return _wsAlive();
+}
 
 function addFileRow(name, ftid) {
   const row = document.createElement("div"); row.className = "frow";
@@ -477,7 +719,7 @@ async function startSendFile(file) {
   const ui = addFileRow(file.name, ftid);
   _transfers.set(ftid, { file, sent: 0, total, ...ui, accepted: false });
   // 先发 offer，等被控端 accept 再发块（避免对方没准备好落盘）
-  send({ type: "fileOffer", ftid, name: file.name, size: file.size, mime: file.type || "application/octet-stream", totalChunks: total, chunkSize: FT_CHUNK });
+  sendFile({ type: "fileOffer", ftid, name: file.name, size: file.size, mime: file.type || "application/octet-stream", totalChunks: total, chunkSize: FT_CHUNK });
   ui.pctEl.textContent = "等待…";
 }
 function onFileAccept(ftid) {
@@ -495,6 +737,7 @@ function onRemoteFileProgress(ftid, pct) { const t = _transfers.get(ftid); if (t
 
 // V103.90 断点续传：连接是否真正可用（WS 已连 + 已配对）
 function _wsAlive() { return !!(signalWS && signalWS.readyState === 1 && paired); }
+function _fileAlive() { return !!(paired && ((fileChannel && fileChannel.readyState === "open") || _wsAlive())); }
 function _rangeFrom(start, end) { const a = []; for (let i = start; i < end; i++) a.push(i); return a; }
 
 /**
@@ -510,7 +753,7 @@ async function _pumpFile(ftid, onlySeqs) {
   const len = seqs ? seqs.length : t.total;
   for (let i = 0; i < len; i++) {
     const seq = seqs ? seqs[i] : i;
-    if (!_wsAlive()) {   // 断线 → 暂停
+    if (!_fileAlive()) {   // 断线 → 暂停
       t.paused = true;
       t.pctEl.textContent = "中断，等待重连…"; t.pctEl.style.color = "#ffb454";
       return;
@@ -518,14 +761,15 @@ async function _pumpFile(ftid, onlySeqs) {
     const blob = file.slice(seq * FT_CHUNK, Math.min((seq + 1) * FT_CHUNK, file.size));
     const buf = await blob.arrayBuffer();
     let guard = 0;
-    while (signalWS && signalWS.bufferedAmount > 4 * 1024 * 1024 && guard++ < 600) { await new Promise(r => setTimeout(r, 20)); }
-    if (!_wsAlive()) { t.paused = true; t.pctEl.textContent = "中断，等待重连…"; t.pctEl.style.color = "#ffb454"; return; }
-    send({ type: "fileChunk", ftid, seq, data: b64(buf), crc: fnv1a(new Uint8Array(buf)) });
+    while (((fileChannel && fileChannel.readyState === "open" ? fileChannel.bufferedAmount : 0) > 4 * 1024 * 1024
+        || (signalWS ? signalWS.bufferedAmount : 0) > 4 * 1024 * 1024) && guard++ < 600) { await new Promise(r => setTimeout(r, 20)); }
+    if (!_fileAlive()) { t.paused = true; t.pctEl.textContent = "中断，等待重连…"; t.pctEl.style.color = "#ffb454"; return; }
+    sendFile({ type: "fileChunk", ftid, seq, data: b64(buf), crc: fnv1a(new Uint8Array(buf)) });
     t.sentSet.add(seq);
     setRowPct(t, t.sentSet.size / t.total);
   }
-  if (!_wsAlive()) { t.paused = true; return; }
-  send({ type: "fileDone", ftid, checksum: await fileChecksum(file) });
+  if (!_fileAlive()) { t.paused = true; return; }
+  sendFile({ type: "fileDone", ftid, checksum: await fileChecksum(file) });
   t.done = true;
   t.pctEl.textContent = "完成"; t.pctEl.style.color = "#3ddc84";
   setStat(`已发送 ${file.name}`);
@@ -537,7 +781,7 @@ function resumeTransfers() {
   for (const [ftid, t] of _transfers) {
     if (t.accepted && !t.done && t.paused) {
       t.pctEl.textContent = "重连，正在续传…"; t.pctEl.style.color = "#ffb454";
-      send({ type: "fileResumeQuery", ftid });
+      sendFile({ type: "fileResumeQuery", ftid });
     }
   }
 }
@@ -548,10 +792,10 @@ async function onFileResumeState(ftid, missing) {
     // 被控端丢失了该传输（如它重启过）→ 从头重发：重新 offer，等 accept 再全量 pump
     t.accepted = false; t.paused = false; t.sentSet = new Set();
     t.pctEl.textContent = "对端已重置，重新发送…";
-    send({ type: "fileOffer", ftid, name: t.file.name, size: t.file.size, mime: t.file.type || "application/octet-stream", totalChunks: t.total, chunkSize: FT_CHUNK });
+    sendFile({ type: "fileOffer", ftid, name: t.file.name, size: t.file.size, mime: t.file.type || "application/octet-stream", totalChunks: t.total, chunkSize: FT_CHUNK });
   } else if (missing.length === 0) {
     // 全部已收，补一个 fileDone 收尾
-    if (_wsAlive()) { send({ type: "fileDone", ftid, checksum: await fileChecksum(t.file) }); t.done = true; t.pctEl.textContent = "完成"; t.pctEl.style.color = "#3ddc84"; _transfers.delete(ftid); }
+    if (_fileAlive()) { sendFile({ type: "fileDone", ftid, checksum: await fileChecksum(t.file) }); t.done = true; t.pctEl.textContent = "完成"; t.pctEl.style.color = "#3ddc84"; _transfers.delete(ftid); }
   } else {
     // 只重传缺块
     _pumpFile(ftid, missing);
@@ -578,7 +822,7 @@ drop.addEventListener("drop", (e) => { const fs = e.dataTransfer && e.dataTransf
 $("pairBtn").addEventListener("click", () => {
   const code = ($("codeIn").value || "").replace(/\D/g, "");
   if (code.length < 4) { setLanMsg("err", "请输入配对码"); return; }
-  send({ type: "pair", code }); setLanMsg("", "正在配对…");
+  send({ type: "pair", code, deviceId: DEVICE_ID }); setLanMsg("", "正在配对…");
 });
 $("codeIn").addEventListener("keydown", (e) => { if (e.key === "Enter") $("pairBtn").click(); });
 $("codeIn").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6); });
@@ -615,14 +859,38 @@ $("ansBtn").addEventListener("click", async () => {
 $("copyAnsBtn").addEventListener("click", () => { const v = $("answerOut").value; if (v) { try { navigator.clipboard.writeText(v); $("manMsg").className = "msg ok"; $("manMsg").textContent = "已复制"; } catch (_e) {} } });
 
 // ── 启动 ──────────────────────────────────────────────────────
-(function init() {
+function startViewer() {
+  if (viewerStarted) return;
+  viewerStarted = true;
   if (mode === "account") { tab("account"); $("brandSub").textContent = "账号直连（跨网络）"; connectSignal(); }
   else if (mode === "manual") { tab("manual"); }
   else { tab("lan"); connectSignal(); $("brandSub").textContent = "连接到被控电脑"; }
   // 局域网/手动也允许切到账号标签，但账号标签需要 HashMM 应用内带 token 打开才有效。
   if (mode !== "account") { $("tabAccount").style.opacity = ".5"; $("tabAccount").title = "请在 HashMM 应用内打开以使用账号直连"; }
   setTimeout(() => { try { $("codeIn") && $("codeIn").focus(); } catch (_e) {} }, 200);
-})();
+}
+
+if (mode === "account" && window.hashmmRemoteViewer) {
+  window.hashmmRemoteViewer.onBootstrap((payload) => {
+    const t = payload && payload.token;
+    if (!t || typeof t !== "string") return;
+    applyAdmission(payload);
+    startViewer();
+  });
+  window.hashmmRemoteViewer.onToken((payload) => {
+    const t = payload && payload.token;
+    if (!t || typeof t !== "string") return;
+    AUTH_TOKEN = t;
+    if (authRejected || !signalWS || signalWS.readyState > 1) {
+      authRejected = false;
+      reconnectAttempt = 0;
+      renewAdmissionAndConnect();
+    }
+  });
+  setStat("正在恢复安全登录状态…");
+} else {
+  startViewer();
+}
 </script>
 </body>
 </html>

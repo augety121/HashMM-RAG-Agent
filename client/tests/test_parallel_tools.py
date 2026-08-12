@@ -40,6 +40,16 @@ def test_side_effect_tools_stay_serial(clean_env, monkeypatch):
     assert PT.should_parallelize([_TC("execute_code"), _TC("kb_search")]) is False
 
 
+def test_network_and_pre_hook_calls_never_prefetch_before_guard(clean_env, monkeypatch):
+    """Strict-mode network approval and pre-hooks must run before execution."""
+    from hashmm.agent import parallel_tools as PT
+    monkeypatch.setenv("HASHMM_PARALLEL_TOOLS", "1")
+    assert PT.should_parallelize([_TC("web_search"), _TC("web_search")]) is False
+    assert PT.should_parallelize(
+        [_TC("kb_search"), _TC("kg_query")], pre_hooks_active=True
+    ) is False
+
+
 def test_single_tool_serial(clean_env, monkeypatch):
     """单个工具不并发。"""
     from hashmm.agent import parallel_tools as PT

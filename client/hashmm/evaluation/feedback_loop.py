@@ -15,6 +15,19 @@ import re
 from typing import Sequence
 
 
+REASON_TO_CATEGORY = {
+    "wrong_tool": "agent_tool",
+    "retrieval_miss": "retrieval",
+    "unsupported": "grounding",
+    "unsafe": "security",
+    "too_slow": "efficiency",
+    "instruction_miss": "instruction_following",
+    "incomplete": "task_completion",
+    "incorrect": "factual",
+    "other": "analytical",
+}
+
+
 def collect_negative_signals(messages: Sequence[dict] | None = None,
                              samples: Sequence[dict] | None = None,
                              quality_threshold: float = 0.5) -> list[dict]:
@@ -77,6 +90,38 @@ def propose_golden_from_feedback(candidates: Sequence[dict]) -> list[dict]:
             "status": "candidate",
         })
     return out
+
+
+def build_reviewed_eval_case(candidate: dict, reference_answer: str) -> dict:
+    """Convert one human-reviewed production failure into a held-out case.
+
+    The failed answer is evidence only and is deliberately never copied into
+    ``reference_answer``. A human must provide the trusted target first.
+    """
+    reference = str(reference_answer or "").strip()
+    if len(reference) < 5:
+        raise ValueError("a trusted reference_answer is required")
+    cid = str(candidate.get("id") or "").strip()
+    query = str(candidate.get("query") or "").strip()
+    if not cid or not query:
+        raise ValueError("candidate id and query are required")
+    reason = str(candidate.get("reason_code") or "other")
+    label = str(candidate.get("reason_label") or reason)
+    rubric = f"来自真实用户失败回灌。按人工参考答案判断核心事实和任务要求是否满足；重点防止再次出现：{label}。"
+    if candidate.get("comment"):
+        rubric += "用户补充：" + str(candidate["comment"])[:500]
+    return {
+        "id": f"feedback_{cid}",
+        "query": query[:4000],
+        "category": REASON_TO_CATEGORY.get(reason, "analytical"),
+        "reference_answer": reference[:12000],
+        "rubric": rubric,
+        "must_cite": reason in ("unsupported", "retrieval_miss"),
+        "min_sources": 1 if reason in ("unsupported", "retrieval_miss") else 0,
+        "retrieval_mode": "mix",
+        # Production failures stay held out from tuning to avoid teaching to the test.
+        "split": "heldout",
+    }
 
 
 def summarize(candidates: Sequence[dict], proposals: Sequence[dict]) -> dict:

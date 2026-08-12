@@ -4,8 +4,8 @@
   "installer": { "install": "立即安装", "agree": "已阅读并同意《用户协议与隐私政策》", "path": "安装路径", "space": "安装所需空间", "done": "安装完成", "start": "开始使用" },
   "uninstaller": { "title": "卸载 HashMM", "confirm": "卸载", "cancel": "取消", "keepData": "你的知识库、对话、登录状态默认保留，重装即可恢复", "done": "已卸载 HashMM" },
   "ui": {
-    "btnKB": "知识库", "btnConfig": "配置", "btnSettings": "⚙ 设置", "btnHistory": "📚 历史", "btnBack": "← 连接后端",
-    "send": "发送", "regenerate": "↻ 重新生成", "clear": "🗑 清空对话", "export": "⬇ 导出",
+    "btnKB": "知识库", "btnConfig": "配置", "btnSettings": "设置", "btnHistory": "历史", "btnBack": "← 连接后端",
+    "send": "发送", "regenerate": "↻ 重新生成", "clear": "清空对话", "export": "导出",
     "settingsTitle": "外观与偏好", "theme": "主题", "font": "字号", "density": "密度",
     "themeDark": "深色", "themeLight": "浅色", "themeAuto": "跟随系统",
     "densityComfortable": "舒适", "densityCompact": "紧凑",

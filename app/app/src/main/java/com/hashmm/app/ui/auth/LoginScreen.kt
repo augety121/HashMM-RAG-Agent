@@ -88,7 +88,7 @@ fun LoginScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(24.dp))
-            HashMascot(Modifier.size(110.dp))
+            HashMascot(Modifier.size(120.dp))
             Spacer(Modifier.height(18.dp))
             Text(
                 if (ui.awaitingCode) "输入验证码" else if (register) "注册 HashMM" else "登录 HashMM",

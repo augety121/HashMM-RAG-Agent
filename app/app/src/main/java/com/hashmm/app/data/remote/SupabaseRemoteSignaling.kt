@@ -102,7 +102,9 @@ class SupabaseRemoteSignaling(
         // 通知 host 有 viewer 接入 → host 会回 offer
         send("connect", null)
         // 无服务器 ready 消息，本地直接进入协商（VM 建 peer 等 offer）
-        listener.onReady()
+        // Legacy adapter retained for migration tests only; product runtime uses
+        // RemoteSignalingClient.  It cannot mint a backend session ticket.
+        listener.onReady("", "", setOf("view", "control"), 12_000L)
     }
 
     fun sendRtcSignal(kind: String, data: JSONObject) = send(kind, data)

@@ -6,7 +6,7 @@
  *  ④ 步骤回调 onStep → 接入既有 liveTimeline 卡片（与后端 Agent 同一套呈现）；
  *  ⑤ 危险操作确认在主进程原生对话框（cu:exec 内置，拒绝即回传"用户拒绝"）。
  *  LLM 决策走后端 /api/llm/tools（登录即用），工具在本机执行（hashmmCU 桥）。 */
-import { getCU } from "@/lib/desktop";
+import { getCU, getLocal } from "@/lib/desktop";
 import { authHeaders } from "@/lib/api";
 import { AgentLoopController, budgetForQuery } from "@/lib/agentLoop";
 
@@ -41,9 +41,14 @@ export async function runComputerUse(query: string, opts: {
   onStep?: (s: CuStep) => void;
   shouldStop?: () => boolean;
   enableControl?: boolean;     // V99: 是否放开 GUI 控制（点击/输入）。默认开。
+  taskId?: string;             // 固定到发起 Chat；切换界面不能改变后台任务归属。
 }): Promise<string> {
   const cu = getCU();
   if (!cu) throw new Error("当前环境不支持电脑操作（需在桌面版使用）");
+  const local = getLocal();
+  const lease = local?.gitWorkspaceLeaseAcquire ? await local.gitWorkspaceLeaseAcquire() : null;
+  if (lease && !lease.ok) throw new Error(lease.error || "当前工作区正被另一个任务使用");
+  try {
   const control = opts.enableControl !== false;
   const tools = await cu.tools(true, control);     // V99: vision + （可选）GUI 控制
   // V99: 读当前安全级别，注入系统提示让模型知道权限边界（避免反复试被拒的操作）
@@ -109,7 +114,7 @@ export async function runComputerUse(query: string, opts: {
       emit(`\n\n→ 执行 ${stepDetail}`);
 
       let out: { ok?: boolean; output?: string; error?: string; image?: string } | string;
-      try { out = await cu.exec(name, args); }
+      try { out = await cu.exec(name, args, opts.taskId); }
       catch (e) { out = { ok: false, error: String((e as Error)?.message || e) }; }
 
       const o = typeof out === "string" ? { ok: true, output: out } : (out || { ok: false, error: "无返回" });
@@ -143,7 +148,7 @@ export async function runComputerUse(query: string, opts: {
         && /\b(click|type|key|press|scroll|drag|move|double|right|left|hotkey|input)\b/i.test(brief);
       if (guiChanged && !opts.shouldStop?.()) {
         try {
-          const shot = await cu.exec("capture_screen", {});
+          const shot = await cu.exec("capture_screen", {}, opts.taskId);
           const so = (shot && typeof shot === "object") ? (shot as { image?: string }) : null;
           if (so && so.image) {
             msgs.push({
@@ -162,12 +167,27 @@ export async function runComputerUse(query: string, opts: {
     }
   }
   return acc;
+  } finally {
+    if (lease?.token && local?.gitWorkspaceLeaseRelease) {
+      await local.gitWorkspaceLeaseRelease(lease.token).catch(() => null);
+    }
+  }
 }
 
-export async function cuSave(convId: string, userContent: string, assistantContent: string) {
+export async function cuSave(
+  convId: string,
+  userContent: string,
+  assistantContent: string,
+  workMethod?: { retrieval: string; effort: string; run_mode: string },
+) {
   await fetch("/api/llm/cu_save", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ conv_id: convId, user_content: userContent, assistant_content: assistantContent }),
+    body: JSON.stringify({
+      conv_id: convId,
+      user_content: userContent,
+      assistant_content: assistantContent,
+      work_method: workMethod,
+    }),
   });
 }

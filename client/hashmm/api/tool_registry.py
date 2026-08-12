@@ -9,27 +9,61 @@ import json, re, time, os
 from pathlib import Path
 from typing import Any
 
+from hashmm.pipeline.resource_pipeline import parse_resource, render_resource_context
+
 logger = get_logger("hashmm.tools.registry")
 
 # ─── File paths ───
 # 锚定到 database 的绝对数据根，确保 create_file 存盘目录与下载读取目录一致
 # （否则相对路径在 execute_code 改变 cwd 后会错位 → 预览200、下载404）。
-from hashmm.api.database import DATA_ROOT as _DATA_ROOT, CONV_FILES_ROOT  # noqa: E402
+from hashmm.api import database as _dbmod  # noqa: E402
+# V308：改为动态读 _dbmod.CONV_FILES_ROOT（模块属性），不再 import 时绑定值拷贝。
+# 值绑定是“双脑”的结构性根源：任何对 database 的 importlib.reload 都会让先绑定的
+# 模块持旧路径、后 reload 的持新路径 → 工具往 A 写、调用方在 B 查。
+_DATA_ROOT = _dbmod.DATA_ROOT  # 启动期常量（目录创建用），运行期路径一律走函数。
 FILES_DIR = (_DATA_ROOT / "files").resolve()           # Legacy global dir (backward compat)
 UPLOAD_DIR = (_DATA_ROOT / "uploads").resolve()
 WORKSPACE_DIR = (_DATA_ROOT / "workspace").resolve()
 
-for _d in (FILES_DIR, UPLOAD_DIR, WORKSPACE_DIR, CONV_FILES_ROOT):
+for _d in (FILES_DIR, UPLOAD_DIR, WORKSPACE_DIR, _dbmod.CONV_FILES_ROOT):
     _d.mkdir(parents=True, exist_ok=True)
 
 
 def get_files_dir(conv_id: str | None = None) -> Path:
     """Get the file directory for a conversation, or the global fallback."""
     if conv_id:
-        d = CONV_FILES_ROOT / conv_id
+        d = _dbmod.CONV_FILES_ROOT / conv_id
         d.mkdir(parents=True, exist_ok=True)
         return d
     return FILES_DIR
+
+
+def _ctx_files_dir(ctx: dict, conv_id: str | None = None) -> tuple[Path, str]:
+    """Resolve a server-provisioned worker branch or the formal workspace.
+
+    A client-provided ``cwd`` is never enough.  The root must be embedded in a
+    verified execution scope and remain below the owning conversation folder.
+    """
+    scope = ctx.get("execution_scope") if isinstance(ctx, dict) else None
+    branch = scope.get("workspace_branch") if isinstance(scope, dict) else None
+    if isinstance(branch, dict) and branch.get("verified"):
+        root = Path(str(branch.get("root_path") or "")).resolve()
+        formal = root.parent.parent
+        branch_id = str(branch.get("branch_id") or "")
+        owner_id = str(ctx.get("user_id") or "")
+        if (
+            branch.get("schema") != "hashmm.agent-workspace-branch.v1"
+            or branch.get("mode") != "copy_on_write"
+            or root.parent.name != ".agent-branches"
+            or root.name != branch_id
+            or str(branch.get("conversation_id") or "") != str(conv_id or "")
+            or str(branch.get("owner_id") or "") != owner_id
+            or not formal.name
+        ):
+            raise ValueError("worker branch escaped conversation workspace")
+        root.mkdir(parents=True, exist_ok=True)
+        return root, branch_id
+    return get_files_dir(conv_id), ""
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -230,6 +264,126 @@ TOOL_DEFS: list[dict] = [
             },
         },
     },
+    # ── V309 浏览器内核（有状态真浏览器：JS 渲染/点击/填表/截图；对标 Claude Code 内置浏览器）──
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_open",
+            "description": (
+                "在真实浏览器（Chromium 无头）中打开网页并返回快照：标题、正文、可交互元素编号表。"
+                "与 fetch_url 的区别：这是【有状态会话】且执行 JS——适合 SPA/需要点击翻页/表单交互的站点；"
+                "只读单页文本用 fetch_url 更省。打开后可用 browser_act 点击/填表，browser_read 取全文，"
+                "browser_screenshot 截图。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要打开的网址（http/https）"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_act",
+            "description": (
+                "对当前浏览器页面执行一步操作。action：click（点击）/fill（填单个输入框）/"
+                "fill_form（批量填表，target 传 JSON 如 {\"#email\":\"a@b.com\",\"密码\":\"x\"}）/"
+                "press（按键，如 Enter）/scroll（滚动，text 填 up 或 down）/wait（等元素出现，"
+                "target 填 CSS 选择器；留空则等页面加载完成）/back（后退）/close（关闭会话）。"
+                "target 填 browser_open 返回的元素编号（推荐）或 CSS 选择器；fill/press 的内容放 text。"
+                "返回操作后的新页面快照。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["click", "fill", "fill_form", "press", "scroll",
+                                        "wait", "back", "close"],
+                               "description": "要执行的动作"},
+                    "target": {"type": "string",
+                               "description": "元素编号（如 '3'）/ CSS 选择器 / fill_form 的 JSON；back/close 可留空"},
+                    "text": {"type": "string",
+                             "description": "fill 的输入内容 / press 的按键名（默认 Enter）/ scroll 的方向"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_read",
+            "description": (
+                "读取当前浏览器页面内容。mode：text（可读正文，默认）/links（编号链接表）/"
+                "tables（把页面表格提取成结构化文本）/html（原始 HTML 片段）/title（标题+URL）。"
+                "需先 browser_open。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["text", "links", "tables", "html", "title"],
+                             "description": "读取模式，默认 text"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": (
+                "对当前浏览器页面截图（PNG），保存到会话工作区供用户预览/下载。"
+                "适合：把网页当前状态展示给用户、留证、调试页面布局。需先 browser_open。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "文件名（可选，默认 page_时间戳.png）"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "video_transcript",
+            "description": (
+                "获取 YouTube / B站 视频的字幕文本（不下载视频）。用户贴视频链接问"
+                "\"讲了什么/总结一下\"时用这个；拿到字幕后据此回答，没有字幕会明确报错，"
+                "此时如实告知拿不到内容，绝不编造。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "视频页链接（youtube.com/watch、youtu.be、bilibili.com/video）"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "image_search",
+            "description": (
+                "在当前账号已上传的图片中按文件名、标签和图片说明检索。"
+                "只返回当前用户自己的图片元数据，不读取其他账号，也不会凭空描述未命中的图片。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "要查找的图片主题或关键词"},
+                    "top_k": {"type": "integer", "description": "最多返回几张，默认 5，最大 20"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -282,6 +436,27 @@ TOOL_DEFS: list[dict] = [
                     },
                 },
                 "required": ["filename", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_office",
+            "description": (
+                "确定性检查当前会话中的 Word、PowerPoint 或 Excel 文件，返回真实解析到的"
+                "结构、SHA-256、密度/标题等风险和建议。编辑或交付 Office 文件前先调用；"
+                "它不调用模型，也不会把推测当作验证结果。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "当前会话文件区内的 .docx、.pptx 或 .xlsx 文件名",
+                    },
+                },
+                "required": ["filename"],
             },
         },
     },
@@ -350,6 +525,24 @@ TOOL_DEFS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "repository_map",
+            "description": (
+                "为当前会话工作区生成按查询聚焦的代码结构图。"
+                "返回文件内容哈希、符号、依赖和解析可信度；不会读取工作区外路径。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "当前代码任务或要定位的符号"},
+                    "max_files": {"type": "integer", "description": "最多扫描文件数，默认 1000"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "str_replace",
             "description": "精确字符串替换：在文件中查找 old_str 并替换为 new_str（只改匹配的部分，不重写整个文件）。old_str 必须在文件中唯一存在。",
             "parameters": {
@@ -360,6 +553,29 @@ TOOL_DEFS: list[dict] = [
                     "new_str": {"type": "string", "description": "替换后的新文本"},
                 },
                 "required": ["filepath", "old_str", "new_str"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canvas_block_patch",
+            "description": (
+                "精确修改已有 HTML 工作画布的一个块，并生成可审计修订回执。"
+                "必须先用 read_file_range 读取真实内容；old_html 必须完整且唯一。"
+                "局部改画布时使用本工具，不得用 create_file 整页覆盖。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {"type": "string", "description": "画布相对路径（.html/.htm）"},
+                    "block_id": {"type": "string", "description": "稳定块标识，如 summary 或 evidence-2"},
+                    "operation": {"type": "string", "enum": ["replace", "insert_after"],
+                                  "description": "replace 替换块；insert_after 在锚点后插入"},
+                    "old_html": {"type": "string", "description": "唯一、精确的原 HTML 片段"},
+                    "new_html": {"type": "string", "description": "替换或插入的 HTML 片段"},
+                },
+                "required": ["filepath", "block_id", "old_html", "new_html"],
             },
         },
     },
@@ -405,7 +621,7 @@ TOOL_DEFS: list[dict] = [
         "type": "function",
         "function": {
             "name": "run_shell",
-            "description": "执行 Shell 命令。支持 pip/python/node/gcc/git/ls/cat 等。用于安装依赖、运行脚本、查看文件。",
+            "description": "执行 Shell 命令（平台自适应：Windows 走 PowerShell，Linux/macOS 走 bash）。工作目录钉死在会话文件区；用于安装依赖、运行脚本、查看/整理文件。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -521,12 +737,118 @@ def register_executor(name: str, fn):
     _EXECUTORS[name] = fn
 
 
+def get_executor(name: str):
+    """公共访问器：按名取已注册的执行器（V281：测试中枢与外部调用不再直捅私有 _EXECUTORS）。"""
+    return _EXECUTORS.get(str(name or ""))
+
+
 def get_tool_definitions() -> list[dict]:
     """Return all tool definitions (for DeepSeek API `tools` param)."""
     return TOOL_DEFS
 
 
-def _execute_tool_core(name: str, args: dict, ctx: dict | None = None):
+# ── V274 工具 schema 索引 + 参数校验（资料 Agent 2.2 失败预防）──────────────
+_SCHEMA_BY_NAME: dict[str, dict] = {}
+for _td in TOOL_DEFS:
+    try:
+        _fn = _td.get("function") or {}
+        if _fn.get("name"):
+            _SCHEMA_BY_NAME[_fn["name"]] = _fn.get("parameters") or {}
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _validate_tool_args(name: str, args: dict) -> list[str]:
+    """返回缺失的必填参数名列表（空=通过）。只查 required + 非空，不做类型强校验
+    （类型宽容，避免误伤"数字传成字符串"这类可用调用）。"""
+    schema = _SCHEMA_BY_NAME.get(name)
+    if not schema:
+        return []
+    required = schema.get("required") or []
+    miss = []
+    for k in required:
+        v = args.get(k)
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            miss.append(k)
+    return miss
+
+
+def _arg_hint(name: str, miss: list[str]) -> str:
+    """给缺失参数补一句"它是什么"，取自 schema 的 description。"""
+    schema = _SCHEMA_BY_NAME.get(name) or {}
+    props = schema.get("properties") or {}
+    hints = []
+    for k in miss:
+        desc = (props.get(k) or {}).get("description") or ""
+        if desc:
+            hints.append(f"{k}={desc}")
+    return ("（参数说明：" + "；".join(hints) + "）") if hints else ""
+
+
+# ── V274 工具能力标注（MCP Tool Annotations，资料 Agent 4.4 第四条）────────────
+# 四属性：read_only（只读）/ destructive（破坏性）/ idempotent（幂等）/
+# open_world（与外部世界交互）。Client（cu-guard / 前端）据此决定是否弹确认框——
+# 只读工具可自动执行，破坏性工具应二次确认。这不影响执行逻辑，只做安全决策依据。
+TOOL_ANNOTATIONS: dict[str, dict] = {
+    "kb_search":       {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "知识库检索"},
+    "kg_query":        {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "知识图谱查询"},
+    "read_file":       {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "读取文件"},
+    "read_file_range": {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "读取文件片段"},
+    "repository_map":  {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "理解代码仓库"},
+    "list_files":      {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "列出文件"},
+    "file_tree":       {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "文件树"},
+    "memory_recall":   {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "回忆记忆"},
+    "web_search":      {"read_only": True,  "destructive": False, "idempotent": False, "open_world": True,  "title": "联网搜索"},
+    "fetch_url":       {"read_only": True,  "destructive": False, "idempotent": False, "open_world": True,  "title": "抓取网页"},
+    "browser_open":    {"read_only": True,  "destructive": False, "idempotent": False, "open_world": True,  "title": "打开浏览器"},
+    "browser_act":     {"read_only": False, "destructive": False, "idempotent": False, "open_world": True,  "title": "浏览器操作"},
+    "browser_read":    {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": True,  "title": "读取页面"},
+    "browser_screenshot": {"read_only": True, "destructive": False, "idempotent": False, "open_world": False, "title": "页面截图"},
+    "image_search":    {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "检索我的图片"},
+    "create_file":     {"read_only": False, "destructive": False, "idempotent": False, "open_world": False, "title": "创建文件"},
+    "create_document": {"read_only": False, "destructive": False, "idempotent": False, "open_world": False, "title": "生成文档"},
+    "inspect_office":  {"read_only": True,  "destructive": False, "idempotent": True,  "open_world": False, "title": "检查 Office 文件"},
+    "create_pptx_from_plan": {"read_only": False, "destructive": False, "idempotent": False, "open_world": False, "title": "生成演示"},
+    "str_replace":     {"read_only": False, "destructive": True,  "idempotent": False, "open_world": False, "title": "编辑文件"},
+    "canvas_block_patch": {"read_only": False, "destructive": True, "idempotent": False, "open_world": False, "title": "修订工作画布"},
+    "edit_file":       {"read_only": False, "destructive": True,  "idempotent": False, "open_world": False, "title": "编辑文件"},
+    "update_todo":     {"read_only": False, "destructive": False, "idempotent": True,  "open_world": False, "title": "更新待办"},
+    "remember_preference": {"read_only": False, "destructive": False, "idempotent": True, "open_world": False, "title": "记住偏好"},
+    "execute_code":    {"read_only": False, "destructive": True,  "idempotent": False, "open_world": True,  "title": "执行代码"},
+    "run_shell":       {"read_only": False, "destructive": True,  "idempotent": False, "open_world": True,  "title": "执行命令"},
+    "spawn_worker":    {"read_only": False, "destructive": False, "idempotent": False, "open_world": False, "title": "派子任务"},
+}
+
+
+def tool_annotation(name: str) -> dict:
+    """返回工具的能力标注（未登记的工具按'非只读、可能有副作用'保守处理）。"""
+    if str(name or "").startswith("mcp__"):
+        try:
+            from hashmm.tools.mcp_client import get_tool_annotation
+            dynamic = get_tool_annotation(name)
+            if dynamic:
+                return dynamic
+        except Exception as exc:
+            log_suppressed(logger, exc, "MCP tool annotation")
+    try:
+        from hashmm.api.plugins import get_plugin_manager
+        dynamic = get_plugin_manager().get_tool_annotation(name)
+        if dynamic:
+            return dynamic
+    except Exception as exc:
+        log_suppressed(logger, exc, "plugin tool annotation")
+    return TOOL_ANNOTATIONS.get(name, {"read_only": False, "destructive": False,
+                                       "idempotent": False, "open_world": True, "title": name})
+
+
+def tool_needs_confirm(name: str) -> bool:
+    """Client 安全决策：破坏性 或 与外部世界交互的写操作 → 建议确认。"""
+    a = tool_annotation(name)
+    return bool(a.get("destructive")) or (not a.get("read_only") and a.get("open_world"))
+
+
+def _execute_tool_core(name: str, args: dict, ctx: dict | None = None, *,
+                       executor_override=None):
     """执行工具并返回【原始结果】（dict 或 str），过 hooks + 遥测。
 
     这是 execute_tool / execute_tool_structured 的共同核心：
@@ -536,9 +858,38 @@ def _execute_tool_core(name: str, args: dict, ctx: dict | None = None):
     返回 ("denied"/"error" 字符串) 或 executor 的原始返回值。
     """
     import time as _time
-    executor = _EXECUTORS.get(name)
+    # Dynamic tools (MCP / admin-configured API tools / skill tools) are bound
+    # per AgentLoop and intentionally are not inserted into this process-global
+    # registry.  They still MUST cross this exact hook/security/telemetry
+    # boundary; callers may therefore supply the already-resolved executor.
+    executor = executor_override or _EXECUTORS.get(name)
     if not executor:
         return f"Error: unknown tool '{name}'"
+    _ctx = ctx or {}
+    if _ctx.get("execution_scope") is not None:
+        try:
+            from hashmm.agent.execution_scope import check_execution_scope
+            _scope_ok, _scope_reason = check_execution_scope(
+                _ctx.get("execution_scope"), name, args or {},
+                user_id=str(_ctx.get("user_id") or ""),
+                conversation_id=str(_ctx.get("conv_id") or _ctx.get("session_id") or ""),
+            )
+            if not _scope_ok:
+                return f"Error: 任务执行范围拒绝：{_scope_reason}"
+        except Exception as _scope_error:
+            log_suppressed(logger, _scope_error)
+            return "Error: 任务执行范围校验异常，已按拒绝处理"
+    # ── V274 参数预校验闸（资料 Agent 2.2「工具调用失败」第 6 条：调用前验证参数、
+    # 失败信息回传让 LLM 重试）。缺必填参数时**不执行**，直接返回结构化提示——省掉一次
+    # 注定失败的执行，且给模型精确的"缺哪个/要什么"，它下一轮就能补对。纯查表零成本、
+    # 永不误伤（校验本身异常则放行，绝不因校验挂掉正常调用）。
+    try:
+        _miss = _validate_tool_args(name, args if isinstance(args, dict) else {})
+        if _miss:
+            return ("ToolArgError: 调用 %s 缺少必填参数 %s。请补齐后重试。%s"
+                    % (name, "、".join(_miss), _arg_hint(name, _miss)))
+    except Exception:  # noqa: BLE001
+        pass
     _post = None
     try:
         from hashmm.hooks import run_pre_tool_hooks, run_post_tool_hooks
@@ -548,22 +899,26 @@ def _execute_tool_core(name: str, args: dict, ctx: dict | None = None):
             return f"Error: 工具调用被安全策略拒绝（{decision.reason}）"
     except Exception as _e:
         log_suppressed(logger, _e)
+        return ("Error: Hook 安全检查异常，已按拒绝处理；"
+                "请检查服务日志并修复安全裁决链。")
 
-    # S1-3: 统一安全策略三层收口（Guardian→sandbox→policy）。
-    # 默认配置下全放行（与现状完全一致）；仅当显式开启 HASHMM_TOOL_APPROVAL 且高风险工具
-    # 未获批准时才拒绝。永不抛错：评估自身异常时放行（不阻断正常工具）。
+    # 统一安全策略入口。安全评估自身异常时必须拒绝，不能通过制造
+    # policy 异常绕开权限；执行隔离由 agent.sandbox 在具体执行器中强制。
     try:
         from hashmm import security_policy as _sp
-        _ctx = ctx or {}
         _decision = _sp.evaluate(
             name, args,
             user_id=str(_ctx.get("user_id", "")),
             approved=bool(_ctx.get("approved", False)),
+            permission_prechecked=bool(_ctx.get("permission_prechecked", False)),
+            cwd=str(_ctx.get("cwd", "")),
+            conv_id=str(_ctx.get("conv_id") or _ctx.get("session_id") or ""),
         )
         if not _decision.allowed:
             return f"Error: 工具调用被安全策略拒绝（{_decision.layer}: {_decision.reason}）"
     except Exception as _e:
         log_suppressed(logger, _e)
+        return "Error: 安全策略校验异常，已按拒绝处理"
     _t0 = _time.time()
     ok = False
     try:
@@ -587,10 +942,13 @@ def _execute_tool_core(name: str, args: dict, ctx: dict | None = None):
             log_suppressed(logger, _e)
 
 
-def execute_tool_structured(name: str, args: dict, ctx: dict | None = None):
+def execute_tool_structured(name: str, args: dict, ctx: dict | None = None, *,
+                            executor_override=None):
     """像 execute_tool，但返回【原始结果】（保留 dict 的 file 等结构化字段）。
     供 Agent Loop 使用，使 create_document 等的 file 信息能触发 "file" 事件。"""
-    return _execute_tool_core(name, args, ctx)
+    return _execute_tool_core(
+        name, args, ctx, executor_override=executor_override,
+    )
 
 
 def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
@@ -643,12 +1001,16 @@ def _exec_create_file(args: dict, ctx: dict) -> str:
     if not filename or filename.startswith('.'):
         return "Error: 非法文件名"
     conv_id = ctx.get("session_id") or ctx.get("conv_id")
-    fdir = get_files_dir(conv_id)
+    fdir, branch_id = _ctx_files_dir(ctx, conv_id)
     fpath = fdir / filename
     _save_file_version(fpath)  # v25: version history
     fpath.write_text(content, encoding="utf-8")
     # Build download URL
-    if conv_id:
+    if branch_id:
+        # Candidate files are not public artifacts until an integrator promotes
+        # their content hash into the formal conversation workspace.
+        dl_url = ""
+    elif conv_id:
         dl_url = f"/api/conversations/{conv_id}/download/{filename}"
     else:
         dl_url = f"/api/files/{filename}"
@@ -659,10 +1021,15 @@ def _exec_create_file(args: dict, ctx: dict) -> str:
     # （对齐 create_document）。execute_tool 仍会 str() 包装以保持对 LLM 的字符串契约。
     return {
         "status": "ok",
-        "message": f"✅ 文件 {filename} 已创建（{len(content)} 字符，{n_lines} 行）。下载链接: {dl_url}",
+        "message": (
+            f"候选文件 {filename} 已写入独立分支 {branch_id}"
+            if branch_id else
+            f"文件 {filename} 已创建（{len(content)} 字符，{n_lines} 行）。下载链接: {dl_url}"
+        ),
         "file": {
             "filename": filename,
             "download_url": dl_url,
+            "candidate_branch_id": branch_id,
             "mtime": _now,            # 生成时间（前端显示用）
             "created_at": _now,
             "lines": n_lines,
@@ -671,42 +1038,99 @@ def _exec_create_file(args: dict, ctx: dict) -> str:
     }
 
 
-def _exec_read_file(args: dict, ctx: dict) -> str:
-    filepath = args.get("filepath", "")
-    # Search in multiple locations
-    candidates = [
-        FILES_DIR / filepath,
-        UPLOAD_DIR / filepath,
-        WORKSPACE_DIR / filepath,
-        Path(filepath),
-    ]
-    resolved = None
-    for c in candidates:
-        try:
-            p = c.resolve()
-            # Security: must be under allowed directories
-            allowed = [FILES_DIR.resolve(), UPLOAD_DIR.resolve(), WORKSPACE_DIR.resolve()]
-            if any(str(p).startswith(str(a)) for a in allowed) and p.exists():
-                resolved = p
-                break
-        except Exception as _e:
-            continue
+def _path_below(root: Path, candidate: Path) -> bool:
+    """Return True only when *candidate* is contained by *root*.
 
-    if not resolved:
-        return f"Error: 文件 '{filepath}' 不存在。请用 list_files 查看可用文件。"
+    String-prefix checks are unsafe (``files-evil`` starts with ``files``), so
+    all file tools use the path hierarchy itself as the security boundary.
+    """
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_conversation_file(filepath: str, ctx: dict) -> tuple[Path | None, str | None]:
+    """Resolve one file without leaking files from another conversation.
+
+    Exact relative paths win.  A basename fallback is accepted only when it is
+    unique inside the current conversation workspace.  Ambiguity is observable
+    instead of silently picking an unrelated attachment.
+    """
+    raw = str(filepath or "").strip().replace("\\", "/")
+    if not raw:
+        return None, "文件路径为空。请先用 list_files 查看当前会话文件。"
+    conv_id = str(ctx.get("session_id") or ctx.get("conv_id") or "").strip()
+    root, _branch_id = _ctx_files_dir(ctx, conv_id or None)
+    root = root.resolve()
+
+    relative = Path(raw)
+    if relative.is_absolute():
+        # Never let model prose introduce an arbitrary host path.  An absolute
+        # path is useful only when it already points into the verified root.
+        exact = relative.resolve()
+    else:
+        exact = (root / relative).resolve()
+    if _path_below(root, exact) and exact.is_file():
+        return exact, None
+
+    basename = relative.name
+    matches = sorted(
+        (item.resolve() for item in root.rglob(basename) if item.is_file()),
+        key=lambda item: str(item).casefold(),
+    )
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
+        choices = ", ".join(str(item.relative_to(root)) for item in matches[:8])
+        return None, f"文件名 '{basename}' 不唯一，请提供相对路径。候选：{choices}"
+
+    # Legacy global folders are consulted only for legacy calls that genuinely
+    # have no conversation.  A live conversation must never see another chat's
+    # uploads through a shared fallback directory.
+    if not conv_id:
+        for legacy_root in (FILES_DIR.resolve(), UPLOAD_DIR.resolve(), WORKSPACE_DIR.resolve()):
+            candidate = (legacy_root / relative).resolve()
+            if _path_below(legacy_root, candidate) and candidate.is_file():
+                return candidate, None
+    return None, f"文件 '{filepath}' 不在当前会话工作区。请用 list_files 查看可用文件。"
+
+
+def _exec_read_file(args: dict, ctx: dict) -> str:
+    filepath = str(args.get("filepath") or "")
+    resolved, error = _resolve_conversation_file(filepath, ctx)
+    if resolved is None:
+        return f"Error: {error}"
 
     try:
-        content = resolved.read_text(encoding="utf-8", errors="replace")
-    except Exception as _e:
-        return f"Error: 无法读取 '{filepath}'（可能是二进制文件）"
+        resource = parse_resource(resolved, display_name=resolved.name)
+    except Exception as exc:
+        return f"Error: 无法解析 '{resolved.name}'（{type(exc).__name__}: {exc}）"
 
-    lines = content.splitlines()
-    total_lines = len(lines)
-    # Truncate very long files
-    if len(content) > 12000:
-        content = content[:5000] + "\n\n... (省略中间部分) ...\n\n" + content[-3000:]
+    state = str(resource.get("parse_state") or "error")
+    if state != "ready":
+        if state == "needs_ocr":
+            try:
+                from hashmm.pipeline.ocr_queue import enqueue
+                enqueue(user_id=str(ctx.get("user_id") or ctx.get("owner_id") or ""),
+                        conv_id=str(ctx.get("session_id") or ctx.get("conv_id") or ""),
+                        filename=resolved.name, source_path=str(resolved),
+                        sha256=str(resource.get("sha256") or ""))
+            except Exception:
+                pass
+        warnings = "；".join(str(item) for item in resource.get("warnings") or [])
+        return (
+            f"Error: 文件 '{resolved.name}' 当前不可读（状态: {state}）。"
+            f"{warnings or '解析器没有返回正文。'}"
+        )
 
-    return f"文件: {resolved.name} ({total_lines} 行, {len(content)} 字符)\n```\n{content}\n```"
+    context = render_resource_context(resource, max_chars=80_000)
+    return (
+        f"文件已真实解析: {resolved.name}；类型 {resource.get('detected_type') or 'unknown'}；"
+        f"页数 {resource.get('page_count') or 0}；SHA-256 {resource.get('sha256')}\n"
+        f"{context}"
+    )
 
 
 def _exec_edit_file(args: dict, ctx: dict) -> str:
@@ -739,83 +1163,36 @@ def _exec_edit_file(args: dict, ctx: dict) -> str:
 
 
 def _exec_list_files(args: dict, ctx: dict) -> str:
-    lines = []
-    total = 0
-    for label, d in [("📁 已创建文件", FILES_DIR), ("📁 用户上传", UPLOAD_DIR)]:
-        if d.exists():
-            items = sorted(d.iterdir())
-            files = [f for f in items if f.is_file()]
-            if files:
-                lines.append(f"{label} [{len(files)} 个]")
-                for f in files[:50]:
-                    sz = f.stat().st_size
-                    sz_str = f"{sz/1024:.1f}K" if sz > 1024 else f"{sz}B"
-                    lines.append(f"  {f.name} ({sz_str})")
-                    total += 1
-                lines.append("")
-    if not lines:
+    conv_id = str(ctx.get("session_id") or ctx.get("conv_id") or "").strip()
+    root, branch_id = _ctx_files_dir(ctx, conv_id or None)
+    root = root.resolve()
+    files = sorted(
+        (item.resolve() for item in root.rglob("*") if item.is_file() and ".versions" not in item.parts),
+        key=lambda item: str(item.relative_to(root)).casefold(),
+    )
+    if not files:
         return "工作区为空。用户可上传文件，或用 create_file 创建。"
-    return f"共 {total} 个文件:\n" + "\n".join(lines)
-
-
-def _auto_install_missing(code: str):
-    """v11: Auto pip install missing packages before code execution.
-
-    Scans import statements, checks if packages are installed,
-    installs missing ones (with allowlist for safety).
-    """
-    import ast as _ast, importlib
-
-    ALLOWED_PACKAGES = {
-        "numpy", "pandas", "matplotlib", "seaborn", "plotly", "scipy",
-        "sklearn", "scikit-learn", "openpyxl", "xlsxwriter", "pillow",
-        "requests", "beautifulsoup4", "lxml", "jieba", "wordcloud",
-        "networkx", "sympy", "tabulate", "pyyaml", "tqdm",
-    }
-    # Map import name → pip package name
-    IMPORT_TO_PIP = {
-        "sklearn": "scikit-learn", "cv2": "opencv-python",
-        "PIL": "pillow", "yaml": "pyyaml", "bs4": "beautifulsoup4",
-    }
-
-    needed = set()
-    try:
-        tree = _ast.parse(code)
-        for node in _ast.walk(tree):
-            if isinstance(node, _ast.Import):
-                for alias in node.names:
-                    pkg = alias.name.split(".")[0]
-                    needed.add(pkg)
-            elif isinstance(node, _ast.ImportFrom) and node.module:
-                pkg = node.module.split(".")[0]
-                needed.add(pkg)
-    except Exception:
-        return
-
-    for pkg in needed:
-        pip_name = IMPORT_TO_PIP.get(pkg, pkg)
-        if pip_name.lower() not in ALLOWED_PACKAGES:
-            continue
-        try:
-            importlib.import_module(pkg)
-        except ImportError:
-            try:
-                import subprocess, sys
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--quiet",
-                     "--break-system-packages", pip_name],
-                    capture_output=True, timeout=60,
-                )
-                logger.info(f"[AutoInstall] Installed {pip_name}")
-            except Exception as e:
-                logger.warning(f"[AutoInstall] Failed to install {pip_name}: {e}")
+    lines = [f"当前会话工作区共 {len(files)} 个文件" + (f"（候选分支 {branch_id}）" if branch_id else "") + ":"]
+    for item in files[:100]:
+        size = item.stat().st_size
+        size_text = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B"
+        lines.append(f"- {item.relative_to(root)} ({size_text})")
+    if len(files) > 100:
+        lines.append(f"- 另有 {len(files) - 100} 个文件未展示")
+    return "\n".join(lines)
 
 
 def _exec_execute_code(args: dict, ctx: dict) -> str:
-    """v30: Hardened code execution sandbox."""
-    import subprocess, tempfile, ast as _ast
+    """Execute Python through the single OS sandbox broker.
+
+    Static analysis below is defense in depth only.  The security boundary is
+    ``SandboxBroker``; dependency installation is intentionally not performed
+    during an Agent turn.
+    """
+    import tempfile, ast as _ast
+    from hashmm.agent.sandbox import SandboxBroker, SandboxPolicy, SandboxUnavailable
     code = args.get("code", "")
-    timeout = min(args.get("timeout", 15), 30)
+    timeout = max(1, min(int(args.get("timeout") or 15), 30))
 
     if not code.strip():
         return "Error: 代码为空"
@@ -863,44 +1240,46 @@ def _exec_execute_code(args: dict, ctx: dict) -> str:
         # Replace plt.show() with pass (non-interactive backend)
         code = code.replace("plt.show()", "pass  # plt.show() disabled in headless mode")
 
-    # v11: Auto pip install for missing packages
-    _auto_install_missing(code)
-
+    tmp_path = ""
     try:
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-            f.write(code)
-            tmp_path = f.name
-
         import sys
         conv_id = ctx.get("session_id") or ctx.get("conv_id")
-        cwd = str(get_files_dir(conv_id).resolve()) if conv_id else str(FILES_DIR.resolve())
-
-        # v30: Resource limits (Linux only)
-        def _set_limits():
-            try:
-                import resource
-                resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-            except Exception as _e:
-                log_suppressed(logger, _e)
-
-        # Track files before execution
+        cwd_path = get_files_dir(conv_id).resolve() if conv_id else FILES_DIR.resolve()
+        cwd_path.mkdir(parents=True, exist_ok=True)
+        # Keep the script inside the only writable mount. A host /tmp file is
+        # intentionally invisible once bubblewrap mounts its own tmpfs.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", prefix=".hashmm-code-", delete=False,
+            dir=str(cwd_path), encoding="utf-8",
+        ) as f:
+            f.write(code)
+            tmp_path = f.name
         import time as _time
         t_start = _time.time()
-
-        result = subprocess.run(
+        result = SandboxBroker().run(
             [sys.executable, tmp_path],
-            capture_output=True, text=True, timeout=timeout,
-            cwd=cwd,
-            env={**dict(os.environ), "PYTHONDONTWRITEBYTECODE": "1",
-                 "PYTHONPATH": cwd, "MPLBACKEND": "Agg"},
-            preexec_fn=_set_limits,
+            SandboxPolicy(
+                cwd=cwd_path,
+                timeout=timeout,
+                network="deny",
+                memory_mb=512,
+                cpu_seconds=timeout,
+                pids=32,
+                extra_env={"PYTHONPATH": str(cwd_path), "MPLBACKEND": "Agg"},
+            ),
+            container_command=["python", f"/workspace/{Path(tmp_path).name}"],
         )
 
-        output_parts = []
+        if result.timed_out:
+            return f"失败 · 执行超时（{timeout}s 限制，sandbox={result.backend}）"
+
+        output_parts = [
+            f"[sandbox={result.backend} isolated={'true' if result.isolated else 'false'}]",
+            f"[exit_code={result.returncode}]",
+        ]
         # V50: 显式退出码 + stderr 取【尾部】。Python traceback 的关键信息
         # （异常类型/出错行号）在 stderr 尾部，原先的截头 2000 字在长输出下恰好把它截掉，
         # 导致模型反复执行也定位不到错误（真机已观测的故障模式之一）。
-        output_parts.append(f"[exit_code={result.returncode}]")
         if result.stdout:
             output_parts.append(result.stdout[:4000])
         if result.stderr and result.returncode != 0:
@@ -908,7 +1287,6 @@ def _exec_execute_code(args: dict, ctx: dict) -> str:
 
         # v30: Detect generated files
         try:
-            cwd_path = Path(cwd)
             new_files = [f.name for f in cwd_path.iterdir()
                         if f.is_file() and f.stat().st_mtime > t_start
                         and f.name != Path(tmp_path).name]
@@ -924,7 +1302,7 @@ def _exec_execute_code(args: dict, ctx: dict) -> str:
                             shutil.copy2(str(src), str(dst))
                             output_parts.append(f"CHART_FILE:/api/files/download/{nf}")
                         except Exception:
-                            output_parts.append(f"CHART_SAVED:{cwd}/{nf}")
+                            output_parts.append(f"CHART_SAVED:{cwd_path}/{nf}")
                     elif nf.endswith(('.csv', '.xlsx', '.json', '.txt', '.md')):
                         try:
                             import shutil
@@ -936,22 +1314,25 @@ def _exec_execute_code(args: dict, ctx: dict) -> str:
         except Exception as _e:
             log_suppressed(logger, _e)
 
-        Path(tmp_path).unlink(missing_ok=True)
         output = "\n".join(output_parts)
 
         if result.returncode == 0:
-            return f"✅ 执行成功\n{output.strip() or '(无输出)'}"
+            return f"执行成功\n{output.strip() or '(无输出)'}"
         else:
             return (
-                f"❌ 执行失败 (exit code {result.returncode})\n{output.strip()}\n\n"
+                f"失败 · 执行失败 (exit code {result.returncode})\n{output.strip()}\n\n"
                 f"请分析错误原因并修复代码，然后再次用 execute_code 验证。"
             )
-    except subprocess.TimeoutExpired:
-        try: Path(tmp_path).unlink(missing_ok=True)
-        except Exception: pass
-        return f"❌ 执行超时（{timeout}s 限制）"
+    except SandboxUnavailable as e:
+        return f"Error: 代码执行被拒绝：{e}"
     except Exception as e:
-        return f"❌ 执行异常: {repr(e)}"
+        return f"失败 · 执行异常: {repr(e)}"
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except Exception as _e:
+                log_suppressed(logger, _e)
 
 
 # ── kb_search is registered externally by server.py (needs access to FAISS index) ──
@@ -1222,6 +1603,92 @@ def _search_tavily(query: str, num: int) -> list:
     return out
 
 
+def _search_doubao(query: str, num: int, ctx: dict | None = None) -> list | None:
+    """Doubao Search compatible API.
+
+    The endpoint shape comes from the user-provided MIT-licensed adapter.  It is
+    deliberately treated as a configurable compatibility API, not as an
+    official pricing or availability promise.  Returned page text is untrusted
+    evidence and is never executed as instructions.
+    """
+    import json as _json
+    import urllib.request
+
+    from hashmm.search_integrations import get_search_integration
+
+    owner_id = str((ctx or {}).get("user_id") or (ctx or {}).get("uid") or "")
+    integration = get_search_integration(owner_id, "doubao", include_secret=True) if owner_id else None
+    if not integration or not integration.get("enabled") or not integration.get("api_key"):
+        return None
+    config = integration.get("config") or {}
+    version = str(config.get("version") or "global")
+    base_url = str(config.get("base_url") or "https://open.feedcoopapi.com/search_api").rstrip("/")
+    count = max(1, min(int(num or config.get("count") or 8), 20))
+    snippet_length = max(100, min(int(config.get("snippet_length") or 800), 2000))
+    auth_level = config.get("auth_level")
+    if version == "custom":
+        endpoint = f"{base_url}/web_search"
+        body: dict = {"Query": query, "SearchType": "web", "Count": count}
+        if auth_level is not None:
+            body["Filter"] = {"AuthInfoLevel": max(1, min(int(auth_level), 4))}
+    else:
+        endpoint = f"{base_url}/global_search"
+        body = {
+            "query": query,
+            "doc_count": count,
+            "max_snippet_length": snippet_length,
+            "max_image_count_per_doc": 0,
+        }
+    req = urllib.request.Request(
+        endpoint,
+        data=_json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {integration['api_key']}",
+            "Content-Type": "application/json",
+            "User-Agent": "HashMM-Search/1.0",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        payload = _json.loads(resp.read().decode("utf-8", errors="replace"))
+    remote_error = (payload.get("ResponseMetadata") or {}).get("Error")
+    if remote_error:
+        message = str(remote_error.get("Message") or "远程搜索服务返回错误")
+        raise RuntimeError(message[:300])
+    results = []
+    if version == "custom":
+        rows = ((payload.get("Result") or {}).get("WebResults") or [])[:count]
+        for row in rows:
+            text = str(
+                row.get("Content") or row.get("Summary") or row.get("Snippet") or ""
+            ).strip()
+            results.append({
+                "title": str(row.get("Title") or ""),
+                "url": str(row.get("Url") or ""),
+                "snippet": text[:snippet_length],
+                "site": str(row.get("SiteName") or ""),
+                "published_at": str(row.get("PublishTime") or ""),
+                "authority": str(row.get("AuthInfoDes") or ""),
+            })
+    else:
+        rows = ((payload.get("Result") or {}).get("Documents") or [])[:count]
+        for row in rows:
+            snippets = []
+            for part in row.get("Snippet") or []:
+                if part.get("Type") == "text" and part.get("Text"):
+                    snippets.append(str(part["Text"]).strip())
+            info = row.get("DocumentInfo") or {}
+            results.append({
+                "title": str(row.get("Title") or ""),
+                "url": str(row.get("Url") or ""),
+                "snippet": "\n".join(snippets)[:snippet_length],
+                "site": str((row.get("HostInfo") or {}).get("Hostname") or ""),
+                "published_at": str(info.get("PublishTime") or ""),
+                "content_tokens": info.get("ContentTokenCount"),
+            })
+    return [item for item in results if item["title"] or item["url"] or item["snippet"]]
+
+
 def _search_duckduckgo(query: str, num: int) -> list:
     """DuckDuckGo (no key, but often blocked/rate-limited in CN containers)."""
     try:
@@ -1256,70 +1723,58 @@ def _search_duckduckgo(query: str, num: int) -> list:
 # DuckDuckGo last (free but often blocked). Configure via HASHMM_SEARCH_BACKEND
 # to force one, otherwise auto-tries in order.
 _SEARCH_BACKENDS = {
+    "doubao": _search_doubao,
     "serper": _search_serper,
-    "bing": _search_bing,
     "tavily": _search_tavily,
     "duckduckgo": _search_duckduckgo,
 }
 
 
 def _exec_web_search(args: dict, ctx: dict) -> str:
-    """v17 Phase 18d: multi-backend web search.
-
-    Tries configured backends in order. API-key backends (Serper/Bing/Tavily)
-    work reliably from China-based containers where DuckDuckGo is blocked.
-    Set ONE of HASHMM_SERPER_API_KEY / HASHMM_BING_API_KEY / HASHMM_TAVILY_API_KEY,
-    or HASHMM_SEARCH_BACKEND to force a specific one.
-    """
-    import os
-    import time as _time
+    """Compatibility facade over Agent Retrieval Fabric 1.0."""
     query = args.get("query", "")
     num = min(args.get("num_results", 5), 8)
     if not query.strip():
         return "Error: 搜索查询为空"
-
-    cache_key = f"{query}:{num}"
-    if cache_key in _web_cache:
-        ts, cached = _web_cache[cache_key]
-        if _time.time() - ts < _WEB_CACHE_TTL:
-            return cached
-
-    # Determine backend order
-    from hashmm.api.settings_store import get_setting
-    forced = get_setting("search_backend").strip().lower()
-    if forced and forced in _SEARCH_BACKENDS:
-        order = [forced]
-    else:
-        order = ["serper", "bing", "tavily", "duckduckgo"]
-
-    errors = []
-    for backend_name in order:
-        fn = _SEARCH_BACKENDS[backend_name]
-        try:
-            results = fn(query, num)
-            if results is None:
-                continue  # backend not configured (no key)
-            if results:
-                output = _format_web_results(results, query)
-                output = f"[来源: {backend_name}]\n" + output
-                _web_cache[cache_key] = (_time.time(), output)
-                cutoff = _time.time() - _WEB_CACHE_TTL * 2
-                for k in list(_web_cache.keys()):
-                    if _web_cache[k][0] < cutoff:
-                        del _web_cache[k]
-                return output
-        except Exception as e:
-            errors.append(f"{backend_name}: {repr(e)[:80]}")
-            continue
-
-    # Nothing worked
-    if errors:
-        return ("搜索暂不可用：所有联网后端都失败或未配置。"
-                "请设置 HASHMM_SERPER_API_KEY（推荐，国内可用）或 HASHMM_TAVILY_API_KEY。"
-                f" 详情: {'; '.join(errors[:3])}")
-    return ("搜索暂不可用：未配置任何联网搜索后端，且 DuckDuckGo 不可用。"
-            "请设置 HASHMM_SERPER_API_KEY（serper.dev，国内容器可用）"
-            "或 HASHMM_TAVILY_API_KEY，然后重启。")
+    owner_id = str((ctx or {}).get("user_id") or (ctx or {}).get("uid") or "")
+    if not owner_id:
+        return "Error: 联网检索需要已验证的用户身份"
+    from hashmm.retrieval_fabric import SearchRequest, get_retrieval_fabric
+    forced = ""
+    try:
+        from hashmm.api.settings_store import get_setting
+        forced = get_setting("search_backend").strip().lower()
+    except Exception:
+        pass
+    requested = [forced] if forced in {"doubao", "baidu", "brave", "exa", "gemini", "serper", "tavily", "duckduckgo"} else []
+    try:
+        from hashmm.search_integrations import get_search_integration
+        explicit_doubao = get_search_integration(owner_id, "doubao")
+        if explicit_doubao and explicit_doubao.get("enabled") and explicit_doubao.get("configured"):
+            requested = ["doubao"]
+    except Exception:
+        pass
+    try:
+        run = get_retrieval_fabric().run(owner_id, SearchRequest(
+            query=query, mode=str(args.get("mode") or "verified"), max_results=num,
+            providers=requested, freshness_days=args.get("freshness_days"),
+        ))
+    except Exception:
+        return "搜索暂不可用：检索基座未能完成该请求，请检查搜索提供商配置和网络。"
+    result = run.get("result") or {}
+    evidence = result.get("evidence") or []
+    if not evidence:
+        return "未找到可引用的联网证据。"
+    formatted = _format_web_results([
+        {"title": item.get("title"), "url": item.get("url"), "snippet": item.get("snippet")}
+        for item in evidence
+    ], query)
+    from hashmm.retrieval_fabric.providers import PROVIDERS
+    sources = sorted({PROVIDERS.get(str(item.get("provider") or "")).label
+                      if PROVIDERS.get(str(item.get("provider") or "")) else str(item.get("provider") or "")
+                      for item in evidence if item.get("provider")})
+    return (f"[检索运行: {run.get('id')} · 来源: {', '.join(sources)}]\n{formatted}\n\n"
+            "注：多来源互证表示检索结果相互印证，不等于自动判定事实为真。")
 
 
 def _exec_clean_workspace(args: dict, ctx: dict) -> str:
@@ -1478,8 +1933,37 @@ def _exec_render_design(args: dict, ctx: dict) -> str:
         return f"渲染失败：{type(e).__name__}"
 
 
+def _exec_inspect_office(args: dict, ctx: dict) -> dict:
+    """Inspect an Office artifact inside the current conversation boundary."""
+    raw_name = str(args.get("filename") or "").strip()
+    name = Path(raw_name).name
+    if not raw_name or name != raw_name or name in {".", ".."}:
+        return {"status": "error", "message": "filename 必须是当前会话中的文件名，不能包含路径"}
+    conv_id = str(ctx.get("session_id") or ctx.get("conv_id") or "").strip()
+    if not conv_id:
+        return {"status": "error", "message": "缺少当前会话，无法确定文件所有者边界"}
+    fdir = get_files_dir(conv_id).resolve()
+    target = (fdir / name).resolve()
+    if target.parent != fdir or not target.is_file():
+        return {"status": "error", "message": f"当前会话中没有文件 {name}"}
+    try:
+        from hashmm.agent.office_artifacts import inspect_office, report_markdown
+        report = inspect_office(target)
+        return {
+            "status": "ok" if report.get("verified") else "error",
+            "message": report_markdown(report),
+            "report": report,
+        }
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:
+        logger.warning("[inspect_office] %s: %s", name, type(exc).__name__)
+        return {"status": "error", "message": f"Office 文件检查失败：{type(exc).__name__}"}
+
+
 register_executor("create_file", _exec_create_file)
 register_executor("render_design", _exec_render_design)
+register_executor("inspect_office", _exec_inspect_office)
 register_executor("read_file", _exec_read_file)
 register_executor("edit_file", _exec_edit_file)
 register_executor("list_files", _exec_list_files)
@@ -1488,6 +1972,68 @@ register_executor("execute_code", _exec_execute_code)
 # (_exec_create_doc_v13). The legacy _exec_create_document above is kept only
 # because its _create_docx/_create_pptx helpers are reused; it is NOT registered.
 register_executor("create_pptx_from_plan", _exec_create_pptx_from_plan)
+
+# ── V273 run_shell：平台自适应命令执行（资料 13.3.4 Tools 心智：read/write/edit/bash 四件套补齐最后一件）──
+# 服务器(Ubuntu)=bash -lc；Windows(桌面同机跑后端时)=PowerShell（Marvis 同款）。
+# 守卫：loop 的外联命令守卫按名字已覆盖 run_shell；此处再加危险模式拦截+超时+输出截断；
+# 工作目录钉死在会话文件区，读写自然落在用户可见的工作台里。
+import re as _re_sh
+from pathlib import Path as _Path_sh
+
+
+def _exec_run_shell(args: dict, ctx: dict) -> str:
+    import sys
+    from hashmm.agent.sandbox import SandboxBroker, SandboxPolicy, SandboxUnavailable
+    cmd = str(args.get("command") or "").strip()
+    if not cmd:
+        return "Error: 命令为空"
+    # 危险命令拦截（毁灭性命令 + 管道执行远程脚本 curl|bash）——策略集中在 net_guard，单一来源不漂移。
+    from hashmm.tools.net_guard import is_shell_command_dangerous
+    _bad, _why = is_shell_command_dangerous(cmd)
+    if _bad:
+        return f"Error: {_why}，已拦截（如确需请人工在终端执行）"
+    # V310：超时上限可配。默认 60s（聊天场景够用），但 SWE-bench/Terminal-bench 跑整个测试
+    # 套件常需几分钟，60s 会把测试掐断 → agent 误以为测试失败。基准评测里设
+    # HASHMM_SHELL_TIMEOUT_CAP=600 放开。默认值不变，聊天行为零影响。
+    _cap = max(60, int(os.environ.get("HASHMM_SHELL_TIMEOUT_CAP", "60")))
+    timeout = max(1, min(int(args.get("timeout") or 20), _cap))
+    conv = str((ctx or {}).get("conv_id") or "")
+    cwd = _Path_sh(_dbmod.CONV_FILES_ROOT / conv) if conv else _Path_sh(WORKSPACE_DIR)
+    try:
+        cwd.mkdir(parents=True, exist_ok=True)
+        cwd = cwd.resolve(strict=True)
+    except Exception as exc:
+        return f"Error: 无法建立任务工作区：{type(exc).__name__}"
+    if sys.platform == "win32":
+        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+    else:
+        argv = ["bash", "-lc", cmd]
+    try:
+        p = SandboxBroker().run(
+            argv,
+            SandboxPolicy(
+                cwd=cwd, timeout=timeout, network="deny", memory_mb=1024,
+                cpu_seconds=timeout, pids=64,
+            ),
+            container_command=["bash", "-lc", cmd],
+        )
+        if p.timed_out:
+            return f"Error: 命令超时（>{timeout}s）已终止（sandbox={p.backend}）"
+        out = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr else "")
+        out = out.strip() or "(无输出)"
+        if len(out) > 8000:
+            out = out[:8000] + f"\n…（截断，共 {len(out)} 字符）"
+        return (
+            f"sandbox={p.backend} isolated={'true' if p.isolated else 'false'}\n"
+            f"exit={p.returncode}\n{out}"
+        )
+    except SandboxUnavailable as e:
+        return f"Error: Shell 执行被拒绝：{e}"
+    except Exception as e:
+        return f"Error: {type(e).__name__}: {e}"
+
+
+register_executor("run_shell", _exec_run_shell)
 register_executor("create_xlsx", _exec_create_xlsx)
 register_executor("create_pdf", _exec_create_pdf)
 register_executor("convert_file", _exec_convert_file)
@@ -1499,6 +2045,63 @@ def _exec_fetch_url(args: dict, ctx: dict) -> str:
     from hashmm.tools.fetch_url import execute as _fetch_execute
     return _fetch_execute(args, ctx)
 register_executor("fetch_url", _exec_fetch_url)
+
+
+# ── V309 浏览器内核执行器（有状态会话按 conv_id 隔离；内核见 hashmm/tools/browser_kernel.py）──
+def _exec_browser_open(args: dict, ctx: dict) -> str:
+    from hashmm.tools.browser_kernel import get_kernel
+    conv = str((ctx or {}).get("conv_id") or (ctx or {}).get("session_id") or "default")
+    return get_kernel().open(conv, str(args.get("url") or ""))
+
+
+def _exec_browser_act(args: dict, ctx: dict) -> str:
+    from hashmm.tools.browser_kernel import get_kernel
+    conv = str((ctx or {}).get("conv_id") or (ctx or {}).get("session_id") or "default")
+    return get_kernel().act(conv, str(args.get("action") or ""),
+                            str(args.get("target") or ""), str(args.get("text") or ""))
+
+
+def _exec_browser_read(args: dict, ctx: dict) -> str:
+    from hashmm.tools.browser_kernel import get_kernel
+    conv = str((ctx or {}).get("conv_id") or (ctx or {}).get("session_id") or "default")
+    return get_kernel().read(conv, str(args.get("mode") or "text"))
+
+
+def _exec_browser_screenshot(args: dict, ctx: dict) -> str:
+    from hashmm.tools.browser_kernel import get_kernel
+    conv = str((ctx or {}).get("conv_id") or (ctx or {}).get("session_id") or "default")
+    return get_kernel().screenshot(conv, get_files_dir(conv), str(args.get("name") or ""))
+
+
+register_executor("browser_open", _exec_browser_open)
+register_executor("browser_act", _exec_browser_act)
+register_executor("browser_read", _exec_browser_read)
+register_executor("browser_screenshot", _exec_browser_screenshot)
+
+
+# V267: 视频字幕工具（Agent-Reach 思路适配）——链接进来拿字幕，没字幕如实说
+def _exec_video_transcript(args: dict, ctx: dict) -> str:
+    from hashmm.tools.video_transcript import execute as _vt_execute
+    return _vt_execute(args, ctx)
+register_executor("video_transcript", _exec_video_transcript)
+
+
+def _exec_image_search(args: dict, ctx: dict) -> dict:
+    owner = str((ctx or {}).get("user_id") or "").strip()
+    if not owner:
+        return {"status": "error", "message": "图片检索缺少用户身份，已拒绝执行", "items": []}
+    query = str(args.get("query") or "").strip()
+    top_k = max(1, min(int(args.get("top_k") or 5), 20))
+    from hashmm.retrieval.image_store import search_text
+    items = search_text(query, top_k=top_k, owner=owner)
+    return {
+        "status": "ok",
+        "message": f"在当前账号图片库中找到 {len(items)} 张相关图片。" if items else "当前账号图片库中没有相关图片。",
+        "items": items,
+    }
+
+
+register_executor("image_search", _exec_image_search)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1559,7 +2162,10 @@ def _exec_shell(args: dict, ctx: dict) -> str:
         return f"Error: {repr(e)[:200]}"
 
 
-register_executor("run_shell", _exec_shell)
+# V280 修复：此行曾覆盖上方 V273 的平台自适应实现（_EXECUTORS 为字典赋值、后注册者胜），
+# 导致 V273 的 PowerShell/bash 跨平台 + 会话工作区 + exit code 版本**从未生效**，
+# Windows 用户的 PowerShell 命令还会被本旧版白名单误拒。停用本注册、保留函数以供追溯。
+# register_executor("run_shell", _exec_shell)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1572,10 +2178,33 @@ def _exec_read_file_range(args: dict, ctx: dict) -> str:
     return read_file_range(conv_id, args["filepath"],
                            args.get("start_line", 1), args.get("end_line", 100))
 
+def _exec_repository_map(args: dict, ctx: dict) -> str:
+    from hashmm.code.intelligence import build_repository_map
+    conv_id = ctx.get("session_id") or ctx.get("conv_id")
+    root, _ = _ctx_files_dir(ctx, conv_id)
+    result = build_repository_map(
+        root,
+        query=args.get("query", ""),
+        max_files=max(1, min(int(args.get("max_files") or 1_000), 5_000)),
+    )
+    return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
 def _exec_str_replace(args: dict, ctx: dict) -> str:
     from hashmm.api.workspace import str_replace_in_file
     conv_id = ctx.get("session_id") or ctx.get("conv_id")
     return str_replace_in_file(conv_id, args["filepath"], args["old_str"], args["new_str"])
+
+def _exec_canvas_block_patch(args: dict, ctx: dict) -> str:
+    from hashmm.api.workspace import patch_canvas_block
+    conv_id = ctx.get("session_id") or ctx.get("conv_id")
+    return patch_canvas_block(
+        conv_id,
+        args["filepath"],
+        args["old_html"],
+        args["new_html"],
+        args.get("block_id", ""),
+        args.get("operation", "replace"),
+    )
 
 def _exec_insert_lines(args: dict, ctx: dict) -> str:
     from hashmm.api.workspace import insert_after_line
@@ -1593,7 +2222,9 @@ def _exec_file_tree(args: dict, ctx: dict) -> str:
     return file_tree(conv_id)
 
 register_executor("read_file_range", _exec_read_file_range)
+register_executor("repository_map", _exec_repository_map)
 register_executor("str_replace", _exec_str_replace)
+register_executor("canvas_block_patch", _exec_canvas_block_patch)
 register_executor("insert_lines", _exec_insert_lines)
 register_executor("search_files", _exec_search_files)
 register_executor("file_tree", _exec_file_tree)
@@ -1715,26 +2346,94 @@ def _exec_kb_search(args: dict, ctx: dict) -> str:
     if not _qs:
         return "Error: 缺少 query 参数"
     query = _qs[0]
+    principal = str((ctx or {}).get("user_id") or "")
+
+    # Resolve tenant scope before both retrieval and cache lookup.  An empty
+    # allow-list is a real deny-all scope, while no ACL file keeps the legacy
+    # single-tenant behaviour.  Malformed ACL configuration fails closed.
+    try:
+        from hashmm.access_control import (
+            enhance_with_acl,
+            normalize_document_scope,
+            resolve_acl_scope,
+            retrieval_scope_fingerprint,
+        )
+        _acl, _allowed, _acl_fingerprint = resolve_acl_scope(principal)
+        _document_scope = normalize_document_scope((ctx or {}).get("doc_filter"))
+        _scope_fingerprint = retrieval_scope_fingerprint(
+            principal=principal,
+            allowed=_allowed,
+            document_scope=_document_scope,
+        )
+    except Exception as exc:
+        logger.error("kb_search ACL 配置异常，已拒绝检索: %r", exc)
+        return "Error: 知识库权限配置异常，本次检索已按拒绝处理。"
+
+    def _enhance(q: str):
+        return enhance_with_acl(
+            cr, q, [], principal=principal, retrieval_mode=mode,
+            document_scope=_document_scope,
+        )
+
+    # ── V311 自适应分解：模型只给了【一个】复杂查询、没自己拆变体时，按路由决策
+    #    用规则式分解补出子查询，走下面既有的 RRF 融合路径（不新增检索管道）。
+    #    模型自己传了 queries[]（len≥2）的路径分毫不动；开关同 HASHMM_RAG_ITERATIVE。
+    adaptive_note = ""
+    fuse_k = 5
+    if len(_qs) == 1:
+        try:
+            from hashmm.agent.adaptive_rag import route
+            from hashmm.agent.iterative_retrieval import (decompose,
+                                                          iterative_enabled)
+            d = route(_qs[0])
+            if d.max_iterations > 1 and iterative_enabled():
+                subs = decompose(_qs[0])
+                if subs:
+                    _qs = list(dict.fromkeys(_qs + subs))[:3]
+                    fuse_k = max(fuse_k, int(d.top_k or 5))
+                    adaptive_note = f"[自适应分解·{d.strategy.value}] "
+        except Exception:  # noqa: BLE001  路由不可用绝不挡检索
+            pass
 
     # ── 多查询路径（≥2 个变体）：逐查询检索 → RRF 融合 ──
     if len(_qs) >= 2:
         try:
             from hashmm.chat_retrieval import get_chat_retrieval
             cr = get_chat_retrieval()
-            lists = []
-            for q in _qs:
+
+            def _one(q):
                 try:
-                    _, srcs, _inj = cr.enhance(q, [], retrieval_mode=mode)
-                    lists.append(srcs or [])
-                except Exception:
-                    lists.append([])
-            fused = _rrf_fuse(lists, top_k=5)
+                    _, srcs, _strategy, _scope = _enhance(q)
+                    return srcs or [], getattr(_strategy, "retrieval_contract", {})
+                except Exception:  # noqa: BLE001  单变体失败不挡整体
+                    return [], {}
+
+            # V311：变体检索改并行——schema 从 V74 起就承诺"并行检索并融合"，
+            # 此前实现是串行 for，复杂查询 3 个变体延迟 ×3。变体互不依赖、
+            # FAISS/BM25 检索只读，executor.map 保序（RRF 依赖各列表内部排名）。
+            # 安全阀：HASHMM_KB_PARALLEL=0 退回串行。
+            if os.environ.get("HASHMM_KB_PARALLEL", "1").strip().lower() in ("0", "false", "off", "no"):
+                pairs = [_one(q) for q in _qs]
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=min(3, len(_qs))) as ex:
+                    pairs = list(ex.map(_one, _qs))
+            lists = [pair[0] for pair in pairs]
+            contracts = [pair[1] for pair in pairs]
+            fused = _rrf_fuse(lists, top_k=fuse_k)
             if not fused:
                 return ("知识库中未找到与这些查询相关的信息："
                         + " / ".join(_qs))
             from hashmm.agent.context_pack import pack_sources
             body, _rep = pack_sources(fused, budget=4500)
-            return f"[多查询融合] {len(_qs)} 个查询变体：" + " / ".join(_qs) + "\n\n" + body
+            from hashmm.retrieval.contract import build_retrieval_contract, contract_summary
+            contract = build_retrieval_contract(
+                query=query, requested_top_k=fuse_k,
+                total_candidates=sum(int(c.get("total_candidates") or 0) for c in contracts),
+                results=fused, strategy="multi_query_rrf", rerank_method="rrf",
+            )
+            return (f"{adaptive_note}[多查询融合] {len(_qs)} 个查询变体：" + " / ".join(_qs)
+                    + "\n" + contract_summary(contract) + "\n\n" + body)
         except Exception as e:
             return f"检索失败: {str(e)[:100]}"
 
@@ -1742,7 +2441,7 @@ def _exec_kb_search(args: dict, ctx: dict) -> str:
     try:
         from hashmm.agent.cache import get_cache
         cache = get_cache()
-        cache_key = f"{query}:{mode}"
+        cache_key = f"v700:{_scope_fingerprint}:{query}:{mode}"
         cached = cache.get_retrieval(cache_key)
         if cached is not None:
             return cached  # Cache hit
@@ -1752,12 +2451,16 @@ def _exec_kb_search(args: dict, ctx: dict) -> str:
     try:
         from hashmm.chat_retrieval import get_chat_retrieval
         cr = get_chat_retrieval()
-        _, sources, injection = cr.enhance(query, [], retrieval_mode=mode)
+        _, sources, strategy, _scope = _enhance(query)
         if not sources:
             return f"知识库中未找到与'{query}'相关的信息。"
         # V79 上下文工程：预算装箱（最相关优先完整保留、整条丢弃不留残句）
         from hashmm.agent.context_pack import pack_sources
         result, _rep = pack_sources(sources[:8], budget=4500)
+        from hashmm.retrieval.contract import contract_summary
+        summary = contract_summary(getattr(strategy, "retrieval_contract", {}))
+        if summary:
+            result = summary + "\n\n" + result
 
         # Cache the result
         if cache:
@@ -1778,6 +2481,14 @@ def _exec_kg_query(args: dict, ctx: dict) -> str:
     entity = args.get("entity", "")
     if not entity:
         return "Error: 缺少 entity 参数"
+    # A graph node can aggregate support from several documents.  When Chat is
+    # bounded to selected documents, return document-scoped graph evidence via
+    # the same retrieval contract instead of consulting the global graph.
+    if (ctx or {}).get("doc_filter"):
+        return _exec_kb_search(
+            {"query": entity, "mode": "mix"},
+            ctx,
+        )
     try:
         from hashmm.kg.kg_retriever import get_kg_retriever
         kr = get_kg_retriever()
@@ -1824,7 +2535,7 @@ def _exec_create_doc_v13(args: dict, ctx: dict) -> dict:
         if result and result.get("ok"):
             return {
                 "status": "ok",
-                "message": f"✅ {doc_type.upper()} 已生成: {result.get('filename', '')}",
+                "message": f"{doc_type.upper()} 已生成: {result.get('filename', '')}",
                 "file": {
                     "filename": result.get("filename", f"output.{doc_type}"),
                     "download_url": result.get("download_url", ""),

@@ -33,7 +33,7 @@ function toMarkdown(conv, opts) {
   for (const m of msgs) {
     if (!m || !m.role) continue;
     if (m.role === "system" && !opts.includeSystem) continue;
-    const who = m.role === "user" ? "🧑 你" : m.role === "assistant" ? "🤖 助手" : "⚙ 系统";
+    const who = m.role === "user" ? "你" : m.role === "assistant" ? "助手" : "系统";
     lines.push("## " + who, "", _msgText(m.content) || "", "");
   }
   return lines.join("\n").replace(/\n{4,}/g, "\n\n\n").trim() + "\n";

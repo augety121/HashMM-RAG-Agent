@@ -1,7 +1,9 @@
 """EpisodicMemory 奖励驱动升级单测——注入内存 sqlite，沙箱直跑。"""
 import sys, sqlite3, contextlib, time
 import os as _os; sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
-from hashmm.evolution.episodic_memory import EpisodicMemory
+from hashmm.evolution.episodic_memory import (
+    EpisodicMemory, MARK_GOOD, MARK_BAD, REWARD_GOOD_MIN, REWARD_BAD_MAX,
+)
 
 PASS = FAIL = 0
 def check(name, cond):
@@ -95,13 +97,15 @@ check("relevance 含 reward 贡献", res[0]["relevance_score"] > res[1]["relevan
 
 print("\n=== 7. get_strategy_hint 奖励感知(好经验/前车之鉴) ===")
 mem = fresh()
-mem.record(user_id="u", query="对比 营收 增长", strategy="多跳检索", reward=0.92)
+mem.record(user_id="u", query="对比 营收 增长", strategy="多跳检索",
+           reward=REWARD_GOOD_MIN + 0.2)   # 稳超好评阈值
 hint_good = mem.get_strategy_hint("u", "对比 营收 增长")
-check("高 reward→✅ 标记", "✅" in hint_good)
+check(f"高 reward→{MARK_GOOD} 标记", MARK_GOOD in hint_good)
 mem2 = fresh()
-mem2.record(user_id="u", query="对比 利润 趋势", strategy="单跳直答", reward=0.2)
+mem2.record(user_id="u", query="对比 利润 趋势", strategy="单跳直答",
+            reward=REWARD_BAD_MAX - 0.15)   # 稳低于待改进阈值（且 > 0）
 hint_bad = mem2.get_strategy_hint("u", "对比 利润 趋势")
-check("低 reward→⚠️ 标记", "⚠️" in hint_bad)
+check(f"低 reward→{MARK_BAD} 标记", MARK_BAD in hint_bad)
 
 print("\n=== 8. update_reward 可移植(不依赖 UPDATE ORDER BY LIMIT) ===")
 mem = fresh()
@@ -158,4 +162,21 @@ check("旧式位置参数调用正常", dict(r)["query"] == "简单调用")
 check("up 反馈→自动算出高 reward", float(dict(r)["reward"]) > 0.8)
 
 print(f"\n{'='*48}\n结果：PASS={PASS}  FAIL={FAIL}")
-sys.exit(1 if FAIL else 0)
+
+# ── V308 修 P0-6（测试假绿）──────────────────────────────────────────
+# 原先此处是【顶层裸 sys.exit()】。测试文件被 import 时（pytest 收集阶段、
+# 自制 runner 的 exec_module）会立即抛 SystemExit 杀死宿主进程：
+#   · 真 pytest → INTERNALERROR: mainloop: caught unexpected SystemExit
+#   · _mini_runner → SystemExit 不是 Exception 子类，except Exception 抓不到，
+#     整个套件以退出码 0 提前终止 → 后续测试文件从未运行却报“全绿”。
+# 且本文件的 ck()/ok() 只累加计数、【不抛异常】，故即使不崩，pytest 也只会
+# 报 "no tests ran"——检查结果永远变不成测试结论。
+# 修法：补一个真正的 pytest 入口断言（读取 import 期已算好的失败计数），
+# 并把 sys.exit 收进 __main__ 保护，保留 `python tests/test_episodic_reward.py` 直跑的能力。
+def test_all():
+    """pytest 入口：任一检查失败即断言失败（不再依赖 sys.exit 传递结果）。"""
+    assert FAIL == 0, f"{FAIL} 项检查未通过（详见上方 ✗ 行）"
+
+
+if __name__ == "__main__":
+    sys.exit(1 if FAIL else 0)

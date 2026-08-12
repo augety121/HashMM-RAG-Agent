@@ -2,15 +2,23 @@
 
 :root {
   /* ── Surface colors (light → dark) ── */
-  --accent: #0d9488; --accent-light: rgba(13,148,136,0.08); --accent-mid: rgba(13,148,136,0.15);
+  /* V203: 主色统一为品牌蓝（web 与桌面端此前不一致：JS 只覆写 --accent 不覆写
+     --accent-grad，打包桌面端的面板页头一直是 CSS 默认的青绿渐变 → "客户端图标是绿的"。
+     现在 CSS 默认与 store 默认(#2563eb)对齐，App.tsx 同步派生 --accent-grad。 */
+  --accent: #2563eb; --accent-light: rgba(37,99,235,0.08); --accent-mid: rgba(37,99,235,0.15);
   --bg-primary: #ffffff; --bg-secondary: #f8f9fa; --bg-tertiary: #f0f1f3;
   --border: #e4e4e7; --border-light: #f0f0f2;
   --text-primary: #18181b; --text-secondary: #52525b; --text-tertiary: #a1a1aa;
 
+  /* ── V203 字号阶梯（对标 Apple HIG / Ant Design 的固定档位，杜绝随手写字号）──
+     display 19 / title 15 / body 13 / sub 12.5 / caption 11.5 / micro 11 */
+  --fs-display: 19px; --fs-title: 15px; --fs-body: 13px;
+  --fs-sub: 12.5px; --fs-caption: 11.5px; --fs-micro: 11px;
+
   /* ── V103.91 面板层级（画布 vs 浮起卡片，明暗均保证卡片"浮"在画布上）── */
   --canvas: #f4f5f7; --surface: #ffffff; --surface-2: #f6f7f9; --surface-hover: #fafbfc;
   --hairline: #ececef;
-  --accent-grad: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+  --accent-grad: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   --shadow-card: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06);
   --shadow-pop: 0 6px 20px rgba(16,24,40,0.09), 0 2px 6px rgba(16,24,40,0.05);
 
@@ -42,7 +50,7 @@
 }
 .dark {
   color-scheme: dark;
-  --accent: #0d9488; --accent-light: rgba(13,148,136,0.14); --accent-mid: rgba(13,148,136,0.24);
+  --accent: #3b82f6; --accent-light: rgba(59,130,246,0.14); --accent-mid: rgba(59,130,246,0.24);
   --bg-primary: #09090b; --bg-secondary: #111113; --bg-tertiary: #1a1a1d;
   --border: #27272a; --border-light: #1e1e21;
   --text-primary: #fafafa; --text-secondary: #a1a1aa; --text-tertiary: #52525b;
@@ -50,7 +58,7 @@
   /* ── V103.91 面板层级（暗色：卡片比画布更亮 = 浮起）── */
   --canvas: #0a0a0c; --surface: #161619; --surface-2: #1f1f24; --surface-hover: #1c1c20;
   --hairline: #222226;
-  --accent-grad: linear-gradient(135deg, #5eead4 0%, #0d9488 100%);
+  --accent-grad: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
   --shadow-card: 0 1px 2px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.3);
   --shadow-pop: 0 8px 24px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.35);
 }
@@ -58,13 +66,14 @@
 * { box-sizing: border-box; } html, body { height: 100%; overflow: hidden; }
 
 /* ── V103.91 PanelKit 卡片：统一面/边/阴影 + 大厂式 hover（抬升 + 阴影增强 + 描边微染）── */
-.pk-card { background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-card); }
-.pk-card-i { transition: transform .2s var(--ease), box-shadow .2s var(--ease), border-color .2s var(--ease); }
-.pk-card-i:hover { transform: translateY(-2px); box-shadow: var(--shadow-pop); border-color: color-mix(in srgb, var(--accent) 22%, var(--border)); }
+.pk-card { background: var(--bg-primary); border: 1px solid var(--border); box-shadow: none; }
+.pk-card-i { transition: background-color .16s var(--ease), border-color .16s var(--ease); }
+.pk-card-i:hover { border-color: color-mix(in srgb, var(--accent) 24%, var(--border)); background: color-mix(in srgb, var(--accent) 2.5%, var(--bg-primary)); }
 body { font-family: var(--font-body); -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; }
 
-::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--text-tertiary); border-radius: 3px; }
+::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
 
 .katex-display { margin: 0.5em 0 !important; overflow-x: auto; } .katex { font-size: 0.95em !important; }
 
@@ -77,7 +86,7 @@ body { font-family: var(--font-body); -webkit-font-smoothing: antialiased; lette
 .inline-code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-tertiary); padding: 1.5px 6px; border-radius: 5px; color: var(--accent); font-weight: 500; }
 
 /* Citations */
-.cite-num { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 4px; background: var(--accent-light); color: var(--accent); font-size: 9px; font-weight: 700; cursor: pointer; vertical-align: super; position: relative; top: -2px; transition: all 0.15s; }
+.cite-num { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 4px; background: var(--accent-light); color: var(--accent); font-size: 10px; font-weight: 700; cursor: pointer; vertical-align: super; position: relative; top: -2px; transition: all 0.15s; }
 .cite-num:hover { background: var(--accent); color: #fff; }
 
 /* Code blocks */
@@ -152,11 +161,12 @@ body { font-family: var(--font-body); -webkit-font-smoothing: antialiased; lette
 /* Agent status badge */
 .agent-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: 500; }
 
-/* Smooth scrollbar */
-::-webkit-scrollbar { width: 6px; }
+/* Smooth scrollbar — V244: 横竖都细(6px)，thumb 淡雅，hover 才明显（大厂细滚动条观感） */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
+* { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.25) transparent; }
 
 /* Mobile */
 @media (max-width: 768px) { aside { position: fixed !important; z-index: 40; height: 100vh; } }
@@ -1010,10 +1020,10 @@ details.mb-2 + details.mb-2 { margin-top: -2px; }
 }
 
 /* Scrollbar — thinner, more subtle */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.4); }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
 
 /* Selection highlight */
 ::selection {
@@ -1198,6 +1208,260 @@ button { transition: transform 0.1s var(--ease), background-color var(--duration
 /* Sidebar container animation */
 .sidebar-container { transition: width 0.2s var(--ease); }
 
+/* Chat 宽度由左右分栏决定，欢迎卡片必须响应容器本身，而不是整个窗口。 */
+.chat-area { container-type: inline-size; container-name: chat-area; }
+@container chat-area (min-width: 520px) {
+  .chat-starter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.chat-starter-grid > * { min-width: 0; }
+.chat-composer-textarea { scrollbar-width: thin; }
+
+/* V345 composer：工具很多时保留可发现的图标，窄宽度只收起文字。
+   使用容器查询而不是 viewport 查询，因为右侧检查器打开后真正变窄的是 Chat 区。 */
+.composer-tools {
+  position: relative;
+  min-width: 0;
+  overflow: visible;
+}
+.composer-tools::-webkit-scrollbar { display: none; }
+.composer-tools .composer-tool-label { display: inline; }
+/* 只有真正收窄到工作区不足以承载文字时才收起标签。
+   旧阈值 760px 与桌面端右侧上下文栏叠加后，正常窗口也会长期处于图标模式。 */
+@container chat-area (max-width: 620px) {
+  .composer-tools button { padding-left: 6px !important; padding-right: 6px !important; }
+  .composer-tools .composer-tool-label { display: none; }
+}
+@container chat-area (max-width: 460px) {
+  .composer-tools { gap: 0 !important; }
+  .composer-tools button { padding-left: 5px !important; padding-right: 5px !important; }
+}
+
+.plugin-center-tab {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.plugin-center-tab[data-active="true"] {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+.plugin-capability-row {
+  min-width: 0;
+  min-height: 68px;
+  padding: 12px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: border-color .16s var(--ease), background-color .16s var(--ease);
+}
+.plugin-capability-row:hover { border-color: color-mix(in srgb, var(--accent) 24%, var(--border)); }
+.plugin-service-card {
+  min-width: 0;
+  min-height: 112px;
+  padding: 16px;
+  border-radius: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  color: var(--text-tertiary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  transition: border-color .16s var(--ease), background-color .16s var(--ease);
+}
+.plugin-service-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--bg-secondary);
+}
+.plugin-capability-icon {
+  width: 24px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.plugin-use-button,
+.plugin-primary-action,
+.plugin-admin-button {
+  flex-shrink: 0;
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-light);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.plugin-primary-action {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.plugin-admin-button {
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+.plugin-detail-card {
+  padding: 16px;
+  margin-top: -10px;
+  margin-bottom: 28px;
+  border-radius: 17px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.plugin-detail-grid > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.plugin-detail-grid span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  color: var(--text-tertiary);
+}
+.plugin-detail-grid strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--text-primary);
+  font-size: 10.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 920px) {
+  .plugin-capability-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .plugin-service-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+@media (max-width: 720px) {
+  .user-skills-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .plugin-center-shell { padding-left: 16px !important; padding-right: 16px !important; }
+  .plugin-detail-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .plugin-primary-action { display: none; }
+}
+
+.canvas-home-shell {
+  background: var(--bg-secondary);
+}
+.canvas-create-surface {
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--bg-primary);
+  box-shadow: 0 16px 42px color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+.canvas-purpose-card {
+  display: flex;
+  min-height: 92px;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px;
+  text-align: left;
+  color: var(--text-tertiary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  transition: border-color .16s var(--ease), background-color .16s var(--ease), transform .16s var(--ease);
+}
+.canvas-purpose-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+}
+.canvas-purpose-card[data-active="true"] {
+  color: var(--accent);
+  background: var(--accent-light);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.canvas-purpose-card strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.canvas-purpose-card small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+.canvas-design-toolbar {
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+  flex-wrap: wrap;
+  overflow: visible;
+}
+.canvas-design-toolbar > * { flex-shrink: 0; }
+.canvas-toolbar-menu > summary { list-style: none; }
+.canvas-toolbar-menu > summary::-webkit-details-marker { display: none; }
+.canvas-toolbar-button {
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 550;
+  cursor: pointer;
+  user-select: none;
+}
+.canvas-toolbar-menu[open] > .canvas-toolbar-button {
+  color: var(--accent);
+  background: var(--accent-light);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+.canvas-style-popover {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 272px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+/* 当前工作把 Browser/Canvas/Team/Computer 作为 Chat 能力收口；分栏变窄时只保留图标。 */
+.workbench-capabilities { container-type: inline-size; container-name: workbench-capabilities; }
+@container workbench-capabilities (max-width: 760px) {
+  .workspace-capability-label { display: none !important; }
+  .workbench-capabilities button { padding-left: 8px !important; padding-right: 8px !important; }
+}
+
+/* V345 内联工作区页：与 Chat 同一层级，不再用居中的弹窗覆盖左栏。 */
+.workspace-page { background: var(--bg-primary); color: var(--text-primary); }
+
 /* Code block refinement */
 pre code { font-family: var(--mono); font-size: 13px; line-height: 1.6; }
 pre { border-radius: var(--radius-md) !important; }
@@ -1277,7 +1541,7 @@ button:active:not(:disabled) { transform: scale(0.97); transition: transform 0.0
 .badge-new {
   display: inline-flex; align-items: center;
   padding: 1px 6px; border-radius: 8px;
-  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
   background: var(--accent); color: white;
   animation: badgePulse 2s ease-in-out infinite;
 }
@@ -1364,3 +1628,206 @@ button:active:not(:disabled) { transform: scale(0.97); transition: transform 0.0
 /* 远程页：卡片自适应网格，填满窗口宽度（替代旧的 600px 窄列） */
 .remote-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; align-items: start; }
 .remote-cards > .pk-card { margin-bottom: 0; }
+/* V620 — user-facing object workspaces.  The same master/detail rhythm is
+   shared by projects, knowledge, artifacts, collaboration and device relay. */
+.workspace-object-shell {
+  display: grid;
+  grid-template-columns: minmax(230px, 30%) minmax(0, 1fr);
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .045);
+}
+.workspace-object-list {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-secondary) 68%, var(--bg-primary));
+  scrollbar-gutter: stable;
+}
+.workspace-object-detail {
+  min-width: 0;
+  background: var(--bg-primary);
+  position: relative;
+}
+.workspace-object-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: .65rem;
+  border-radius: .7rem;
+  padding: .65rem .65rem;
+  text-align: left;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.workspace-object-row:hover { background: var(--bg-tertiary); }
+.workspace-object-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
+.workspace-object-row[data-selected="true"] {
+  background: var(--accent-light);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.workspace-object-icon {
+  display: inline-flex;
+  height: 1.9rem;
+  width: 1.9rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: .6rem;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+}
+.workspace-object-row[data-selected="true"] .workspace-object-icon { color: var(--accent); }
+.workspace-detail-label {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.workspace-secondary-action,
+.workspace-primary-action {
+  display: inline-flex;
+  min-height: 2.1rem;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  border-radius: .7rem;
+  padding: .5rem .75rem;
+  font-size: 10.5px;
+  font-weight: 500;
+  transition: opacity 140ms ease, background-color 140ms ease;
+}
+.workspace-secondary-action {
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+}
+.workspace-secondary-action:hover { background: var(--bg-tertiary); }
+.workspace-primary-action {
+  color: #fff;
+  background: var(--accent);
+}
+.workspace-primary-action:hover { filter: brightness(1.04); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 20%, transparent); }
+.workspace-info-cell {
+  display: flex;
+  min-height: 3.4rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: .2rem;
+  border-radius: .7rem;
+  padding: .65rem .75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.workspace-info-cell span { color: var(--text-tertiary); font-size: 8.8px; }
+.workspace-info-cell strong { color: var(--text-primary); font-size: 10.5px; font-weight: 500; }
+.workspace-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, .24);
+  backdrop-filter: blur(3px);
+}
+.workspace-sheet {
+  width: min(440px, calc(100vw - 2.5rem));
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .18);
+}
+.workspace-sheet-wide { width: min(620px, calc(100vw - 2.5rem)); }
+.workspace-field {
+  width: 100%;
+  border-radius: .75rem;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: .7rem .8rem;
+  font-size: 11px;
+  outline: none;
+}
+.workspace-field:focus { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); }
+@media (max-width: 780px) {
+  .workspace-object-shell { grid-template-columns: minmax(190px, 38%) minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  .workspace-object-shell { display: block; }
+  .workspace-object-list { border-right: 0; border-bottom: 1px solid var(--border); }
+  .workspace-object-detail { min-height: 420px; }
+}
+
+/* V2100 — four object workbenches share one calm, information-first language.
+   No floating hover, no decorative icon tiles, and no unreadable 9px metadata. */
+.workbench-vnext { --workbench-copy: 12px; }
+.workbench-vnext .pk-card,
+.workbench-vnext .plugin-service-card,
+.workbench-vnext .plugin-capability-row {
+  box-shadow: none !important;
+  border-color: color-mix(in srgb, var(--border) 88%, transparent) !important;
+}
+.workbench-vnext .pk-card-i:hover,
+.workbench-vnext .plugin-service-card:hover,
+.workbench-vnext .plugin-capability-row:hover {
+  transform: none !important;
+  box-shadow: none !important;
+  background: color-mix(in srgb, var(--bg-tertiary) 55%, var(--bg-primary)) !important;
+}
+.workbench-vnext .plugin-capability-icon,
+.workbench-vnext .workspace-object-icon {
+  background: transparent !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+}
+.workbench-vnext .text-\[8\.8px\],
+.workbench-vnext .text-\[9px\],
+.workbench-vnext .text-\[9\.5px\],
+.workbench-vnext .text-\[9\.8px\],
+.workbench-vnext .text-\[10px\],
+.workbench-vnext .text-\[10\.3px\],
+.workbench-vnext .text-\[10\.5px\],
+.workbench-vnext .text-\[10\.8px\] { font-size: 11.5px !important; }
+.workbench-vnext .workspace-detail-label,
+.workbench-vnext .workspace-info-cell span { font-size: 11px !important; }
+.workbench-vnext .workspace-info-cell strong,
+.workbench-vnext .workspace-primary-action,
+.workbench-vnext .workspace-secondary-action { font-size: 12px !important; }
+.workbench-vnext .plugin-center-tab { min-height: 34px; padding-inline: 12px; font-size: 12px; }
+.workbench-vnext button:focus-visible,
+.workbench-vnext input:focus-visible,
+.workbench-vnext select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
+/* V2600: Sidebar rows are navigation, not pressable cards.  Keep geometry
+   stable while the pointer crosses chat rows and reveal actions only by
+   opacity, so project/recent lists do not visually jump. */
+.sidebar-container button:hover,
+.sidebar-container button:active:not(:disabled) {
+  transform: none !important;
+}
+.sidebar-container .sidebar-section-heading {
+  min-height: 32px;
+  color: var(--text-secondary) !important;
+  letter-spacing: .01em;
+}
+.sidebar-container .sidebar-date-heading {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .01em;
+}

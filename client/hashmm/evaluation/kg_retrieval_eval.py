@@ -165,6 +165,7 @@ def run_ab(cases: list[dict] | None = None, flags: dict | None = None,
     """A/B on the LIVE pipeline: run cases with the given KG flags OFF then ON.
     ``flags`` defaults to {HASHMM_KG_RETRIEVAL:1}. Toggles os.environ between passes
     (the pipeline reads flags per-query). For use on your machine. Never raises."""
+    saved: dict[str, str | None] = {}
     try:
         from hashmm.retrieval_pipeline import RetrievalPipeline
         cases = cases or load_golden()
@@ -182,16 +183,20 @@ def run_ab(cases: list[dict] | None = None, flags: dict | None = None,
         for k, v in flags.items():
             os.environ[k] = str(v)
         after = evaluate_cases(cases, _search)
-        for k, v in saved.items():  # restore
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
         return {"kg_off": before, "kg_on": after,
                 "delta": compare_runs(before, after), "flags": flags}
     except Exception as e:
         log_suppressed(logger, e)
         return {"error": str(e)}
+    finally:
+        # The A/B harness may run inside the live API process.  Restore every
+        # process-level flag even when pipeline loading or either pass raises;
+        # otherwise subsequent Chat retrieval silently inherits the test arm.
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 if __name__ == "__main__":  # CLI: A/B the default KG-retrieval flag on golden cases

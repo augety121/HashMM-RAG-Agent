@@ -11,8 +11,8 @@ export interface SupabaseLoginResult { access_token: string; refresh_token: stri
 // 内置兜底配置（与 App 同一个 Supabase 项目；publishable key 为可公开密钥）。
 const FALLBACK_CONFIG: SupabaseConfig = {
   enabled: true,
-  url: "",
-  publishable_key: "",
+  url: "https://mzqircwqwhsboxnwucja.supabase.co",
+  publishable_key: "sb_publishable_ceCv3XQfvc4nLmNaao-nRA_pLUVaE9P",
 };
 
 let _config: SupabaseConfig | null = null;
@@ -84,9 +84,61 @@ export async function getMyProfile(token: string): Promise<SupabaseProfile | nul
   } catch { return null; }
 }
 
-/** 把头像（已压成的 data URL 字符串）写入云端档案。upsert，行不存在也安全。返回是否成功。 */
-export async function updateMyAvatar(token: string, dataUrl: string): Promise<boolean> {
+// ── V269 离线云端历史（只读）────────────────────────────────────────────
+// 后端在线时会把每个会话/消息实时推到 Supabase（hashmm/api/supabase_sync.py，
+// 表结构与 RLS 见 sql/hashmm-supabase-sync.sql：select 仅限 auth.uid()=user_id）。
+// 这两个函数让前端在**后端没启动**时用用户自己的 JWT 直读云端记录——换设备、
+// 缓存被清也能看到历史。写入永远由后端完成，前端只读，密钥面最小。
+export interface CloudConv {
+  id: string; title: string; pinned: boolean; archived?: boolean;
+  created_at: string; updated_at: string; project_id?: string;
+}
+export async function listCloudConversations(token: string): Promise<CloudConv[]> {
   const uid = userIdFromToken(token);
+  if (!uid) return [];   // 非 Supabase 登录（本地账号）没有云端记录
+  try {
+    const all: CloudConv[] = [];
+    const pageSize = 1000;
+    let modernSchema = true;
+    for (let offset = 0; offset < 10000; offset += pageSize) {
+      let r = await _rest(token, `chat_conversations?user_id=eq.${uid}` +
+        `&select=${modernSchema ? "id,title,pinned,archived,project_id,created_at,updated_at" : "id,title,pinned,archived,created_at,updated_at"}` +
+        `&order=updated_at.desc,id.desc&limit=${pageSize}&offset=${offset}`);
+      if (!r.ok && modernSchema && offset === 0) {
+        modernSchema = false;
+        r = await _rest(token, `chat_conversations?user_id=eq.${uid}` +
+          `&select=id,title,pinned,archived,created_at,updated_at` +
+          `&order=updated_at.desc,id.desc&limit=${pageSize}&offset=0`);
+      }
+      if (!r.ok) return all;
+      const rows = await r.json().catch(() => []);
+      if (!Array.isArray(rows)) return all;
+      all.push(...rows as CloudConv[]);
+      if (rows.length < pageSize) break;
+    }
+    return all;
+  } catch { return []; }
+}
+export interface CloudMsg {
+  id: string; role: string; content: string; thinking?: string;
+  tool_calls?: unknown[]; files?: unknown[]; sources?: unknown[]; suggestions?: unknown[];
+  status?: string;
+  created_at: string;
+}
+export async function getCloudMessages(token: string, convId: string): Promise<CloudMsg[]> {
+  if (!userIdFromToken(token)) return [];
+  try {
+    const r = await _rest(token, `chat_messages?conv_id=eq.${encodeURIComponent(convId)}` +
+      `&select=id,role,content,thinking,tool_calls,files,sources,suggestions,status,created_at` +
+      `&order=created_at.asc&limit=500`);
+    if (!r.ok) return [];
+    const rows = await r.json().catch(() => []);
+    return Array.isArray(rows) ? rows as CloudMsg[] : [];
+  } catch { return []; }
+}
+
+/** 把头像（已压成的 data URL 字符串）写入云端档案。upsert，行不存在也安全。返回是否成功。 */
+export async function updateMyAvatar(token: string, dataUrl: string): Promise<boolean> {  const uid = userIdFromToken(token);
   if (!uid) return false;
   try {
     // 先 PATCH（行通常已由 handle_new_user 触发器建好）；行不存在(204 但 0 行)再兜底 upsert。
@@ -100,6 +152,28 @@ export async function updateMyAvatar(token: string, dataUrl: string): Promise<bo
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({ id: uid, avatar_url: dataUrl }),
+    });
+    return up.ok;
+  } catch { return false; }
+}
+
+/** V203：更新当前用户的云端档案字段（如 display_name）。与 updateMyAvatar 同一
+ *  PATCH→upsert 兜底模式；Supabase 登录的用户改名走这里（后端 /api/admin/users
+ *  只认后端本地账号且要管理员，之前 Supabase 用户改名就是因此坏掉的）。 */
+export async function updateMyProfile(token: string, fields: { display_name?: string }): Promise<boolean> {
+  const uid = userIdFromToken(token);
+  if (!uid) return false;
+  try {
+    const patch = await _rest(token, `profiles?id=eq.${uid}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(fields),
+    });
+    if (patch.ok) return true;
+    const up = await _rest(token, `profiles?on_conflict=id`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ id: uid, ...fields }),
     });
     return up.ok;
   } catch { return false; }
@@ -163,22 +237,41 @@ export async function deleteMyMemory(token: string, id: string): Promise<boolean
 /** 用 refresh_token 直连 Supabase 续期 access_token（不经后端）。远程被控保活专用：
  *  被控窗只有一个会过期的 access_token，自己无法续；前端用这里拿到新令牌再推给它。
  *  仅对 Supabase 登录的会话有效；若 refresh_token 不是 Supabase 的（如后端 JWT 会话）返回 null，调用方静默忽略。 */
-export async function refreshSupabaseToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string } | null> {
-  if (!refreshToken) return null;
+export type SupabaseRefreshResult =
+  | { status: "ok"; access_token: string; refresh_token: string }
+  | { status: "rejected" }
+  | { status: "unavailable" };
+
+/** Detailed refresh result: an identity-service outage is not a revoked session. */
+export async function refreshSupabaseTokenDetailed(refreshToken: string): Promise<SupabaseRefreshResult> {
+  if (!refreshToken) return { status: "rejected" };
   try {
     const cfg = await getSupabaseConfig();
-    if (!cfg.url || !cfg.publishable_key) return null;
+    if (!cfg.url || !cfg.publishable_key) return { status: "unavailable" };
     const base = cfg.url.replace(/\/+$/, "");
     const r = await fetch(`${base}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: cfg.publishable_key },
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      // 400/401 are explicit refresh-token rejection. 5xx/rate-limit are
+      // provider availability failures and must preserve the local session.
+      return r.status === 400 || r.status === 401
+        ? { status: "rejected" }
+        : { status: "unavailable" };
+    }
     const data = await r.json().catch(() => null);
-    if (!data?.access_token) return null;
-    return { access_token: data.access_token, refresh_token: data.refresh_token || refreshToken };
-  } catch { return null; }
+    if (!data?.access_token) return { status: "unavailable" };
+    return { status: "ok", access_token: data.access_token, refresh_token: data.refresh_token || refreshToken };
+  } catch { return { status: "unavailable" }; }
+}
+
+export async function refreshSupabaseToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string } | null> {
+  const result = await refreshSupabaseTokenDetailed(refreshToken);
+  return result.status === "ok"
+    ? { access_token: result.access_token, refresh_token: result.refresh_token }
+    : null;
 }
 
 /** 邮箱密码登录 Supabase（客户端直连 REST），返回 token + 角色。失败抛错。 */

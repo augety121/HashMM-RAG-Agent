@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { X, Search, RefreshCw, ZoomIn, ZoomOut, Maximize2, Network } from "lucide-react";
+import { X, Search, RefreshCw, ZoomIn, ZoomOut, Maximize2, Network, Wand2, Loader2 } from "lucide-react";
 
 interface KGNode {
   id: string;
@@ -47,6 +47,9 @@ export function KGVisualization({ onClose }: Props) {
   // Canvas transform state
   const transformRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const [, forceRender] = useState(0);
+  // V249 接线：图谱一键修复（kg_connectivity 此前只有 CLI 无入口）——去噪 + 共现补边，专治碎图
+  const [repairing, setRepairing] = useState(false);
+  const [repairMsg, setRepairMsg] = useState("");
   const nodePositionsRef = useRef<Record<string, { x: number; y: number; vx: number; vy: number }>>({});
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
@@ -330,6 +333,25 @@ export function KGVisualization({ onClose }: Props) {
           <button onClick={resetView} className="p-1.5 rounded hover:bg-[var(--bg-tertiary)]" title="重置视图">
             <Maximize2 size={16} style={{ color: "var(--text-tertiary)" }} />
           </button>
+          <button disabled={repairing}
+            onClick={async () => {
+              setRepairing(true); setRepairMsg("");
+              try {
+                const { authHeaders } = await import("@/lib/api");
+                const res = await fetch("/api/kg/connectivity/repair", { method: "POST",
+                  headers: { "Content-Type": "application/json", ...authHeaders() } });
+                if (!res.ok) throw new Error(res.status === 404 ? "后端版本过旧，请升级后端" : `HTTP ${res.status}`);
+                const r = await res.json();
+                setRepairMsg(`去噪完成：${r.dropped_concepts} 个 · 补边 ${r.edges_added} 条 · 连通块 ${r.before?.components} → ${r.after?.components}`);
+                fetchGraph();
+              } catch (e) { setRepairMsg("修复失败：" + ((e as Error)?.message || "请重试")); }
+              finally { setRepairing(false); }
+            }}
+            className="p-1.5 rounded hover:bg-[var(--bg-tertiary)] disabled:opacity-50"
+            title="一键修复（管理员）：概念去噪 + 文档级共现补边——不调 LLM、秒级，专治『实体多关系少、图碎成几百块』">
+            {repairing ? <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />
+                       : <Wand2 size={16} style={{ color: "var(--text-tertiary)" }} />}
+          </button>
           <button onClick={fetchGraph} className="p-1.5 rounded hover:bg-[var(--bg-tertiary)]" title="刷新">
             <RefreshCw size={16} style={{ color: "var(--text-tertiary)" }} />
           </button>
@@ -338,6 +360,9 @@ export function KGVisualization({ onClose }: Props) {
           </button>
         </div>
 
+        {repairMsg && (
+          <div className="px-4 py-1.5 text-[11.5px]" style={{ color: repairMsg.startsWith("去噪完成") ? "var(--success)" : "var(--error)" }}>{repairMsg}</div>
+        )}
         {/* Canvas */}
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
@@ -454,7 +479,7 @@ export function KGVisualization({ onClose }: Props) {
                       <span>→</span>
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: otherNode?.color || "#888" }} />
                       <span>{otherNode?.label || other}</span>
-                      {e.label && <span className="text-[9px]" style={{ color: "var(--text-tertiary)" }}>({e.label})</span>}
+                      {e.label && <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>({e.label})</span>}
                     </div>
                   );
                 })}
