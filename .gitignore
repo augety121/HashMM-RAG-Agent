@@ -44,6 +44,10 @@ __pycache__/
 *.rar
 *.sha256
 
+# Audited server upgrade bundles are intentionally versioned in this private repo
+!server/releases/**/*.zip
+!server/releases/**/*.sha256
+
 # Local user data, models and indexes
 /client/data/
 /client/logs/
