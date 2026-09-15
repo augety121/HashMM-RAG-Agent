@@ -1,0 +1,10 @@
+--- /tmp/b-ModelConfigScreen.kt	2026-07-04 03:22:07.859446147 +0000
++++ app/src/main/java/com/hashmm/app/ui/models/ModelConfigScreen.kt	2026-07-04 03:19:06.863989280 +0000
+@@ -15,7 +15,6 @@
+ import androidx.compose.foundation.text.KeyboardOptions
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.automirrored.filled.ArrowBack
+-import androidx.compose.material.icons.filled.CheckCircle
+ import androidx.compose.material.icons.outlined.Add
+ import androidx.compose.material.icons.outlined.CheckCircle
+ import androidx.compose.material.icons.outlined.Delete

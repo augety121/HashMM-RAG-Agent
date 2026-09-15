@@ -1,0 +1,24 @@
+--- /tmp/app-v215-base/src/main/java/com/hashmm/app/ui/workbench/WorkbenchHubScreen.kt	2026-07-03 10:17:15.418874196 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/WorkbenchHubScreen.kt	2026-07-03 10:17:52.302548219 +0000
+@@ -138,6 +138,21 @@
+         Spacer(Modifier.height(22.dp))
+ 
+         // ── ③ 能力区：两列网格，同级能力并置，扫视成本低于长列表 ──
++        // V216: 用户点名——把客户端（桌面端）功能真正搬进 App。
++        // 这些面板此前只有原生页的一小部分；现在经 WebView 带 view 参数一跳直达，
++        // 面板本体与桌面端 100% 同一套代码（定时任务/运行轨迹/权限审计/质量看板/高级能力）。
++        SectionHeader("桌面模块 · App 内直达", "与电脑端同一套面板，实时同源")
++        TaskCard(Icons.Outlined.Schedule, "定时任务", "主动服务 · 最近结果", enabled = true) { onOpenWebModule("scheduled") }
++        Spacer(Modifier.height(9.dp))
++        TaskCard(Icons.Outlined.Psychology, "运行轨迹", "每次执行的步骤与用量", enabled = true) { onOpenWebModule("runs") }
++        Spacer(Modifier.height(9.dp))
++        TaskCard(Icons.Outlined.AdminPanelSettings, "权限审计", "谁在何时用了什么工具", enabled = true) { onOpenWebModule("audit") }
++        Spacer(Modifier.height(9.dp))
++        TaskCard(Icons.Outlined.BarChart, "质量看板", "检索/回答质量趋势", enabled = true) { onOpenWebModule("quality") }
++        Spacer(Modifier.height(9.dp))
++        TaskCard(Icons.Outlined.Tune, "高级能力", "凭据 · 派活 · 隔离 · 图库", enabled = true) { onOpenWebModule("advanced") }
++        Spacer(Modifier.height(22.dp))
++
+         SectionHeader("桌面端能力", "数据 · 配置 · 运维")
+         // V214: 用户点名——能力区与上方「对话任务」统一为同款横条卡（图标左置 · 主副标题 · 右箭头），
+         // 弃用两列小方卡（视觉密度与任务区打架）。

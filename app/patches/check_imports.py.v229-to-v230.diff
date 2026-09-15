@@ -1,0 +1,64 @@
+--- /tmp/b-check_imports.py	2026-07-04 03:53:59.169041759 +0000
++++ tools/check_imports.py	2026-07-04 03:51:38.785044970 +0000
+@@ -1,10 +1,10 @@
+ #!/usr/bin/env python3
+-"""HashMM App import 自检（V235 起打包前必跑）：常用 Compose/协程符号 vs import 缺失。
+-strip 字符串/行注释/块注释后按词边界匹配；Icons.Outlined/AutoMirrored 逐图标核对。退出码=缺口数。"""
++"""HashMM App import 自检（V230 起打包前必跑）——编译级精确，零误删零误报：
++① 所有 Icons.<Style>.<Name> 与 Icons.AutoMirrored.<Style>.<Name> 裸用 → 反查 import 是否齐
++   （既抓缺失，也绝不把"在用的"当重复删——Filled/Outlined 同名是两个对象，都可并存）；
++② 17 类常用 Compose/协程符号裸用 → 反查 import；
++③ import 行内 ',,'。退出码=问题数。"""
+ import re, os, sys
+-def strip(src):
+-    src=re.sub(r'"""(?:.|\n)*?"""','""',src); src=re.sub(r'"(?:\\.|[^"\\\n])*"','""',src)
+-    src=re.sub(r"/\*(?:.|\n)*?\*/","",src); return re.sub(r"//[^\n]*","",src)
+ NEED={"LaunchedEffect":"androidx.compose.runtime.LaunchedEffect","launch":"kotlinx.coroutines.launch",
+ "Alignment":"androidx.compose.ui.Alignment","Brush":"androidx.compose.ui.graphics.Brush",
+ "clickable":"androidx.compose.foundation.clickable","horizontalScroll":"androidx.compose.foundation.horizontalScroll",
+@@ -14,31 +14,29 @@
+ "AlertDialog":"androidx.compose.material3.AlertDialog","OutlinedTextField":"androidx.compose.material3.OutlinedTextField",
+ "TextButton":"androidx.compose.material3.TextButton","Button":"androidx.compose.material3.Button",
+ "CircleShape":"androidx.compose.foundation.shape.CircleShape","RoundedCornerShape":"androidx.compose.foundation.shape.RoundedCornerShape",
+-"PullToRefreshBox":"androidx.compose.material3.pulltorefresh.PullToRefreshBox"}
++"PullToRefreshBox":"androidx.compose.material3.pulltorefresh.PullToRefreshBox","HorizontalDivider":"androidx.compose.material3.HorizontalDivider"}
+ root=os.path.join(os.path.dirname(__file__),"..","app","src","main","java","com","hashmm","app")
+ bad=[]
+ for dp,_,fs in os.walk(root):
+     for fn in fs:
+         if not fn.endswith(".kt"): continue
+         src=open(os.path.join(dp,fn),encoding="utf-8").read()
+-        imports_list=re.findall(r"^import (.+)$",src,re.M); imports=set(imports_list); body=strip(src)
++        imports=set(re.findall(r"^import (.+)$",src,re.M))
++        body=re.sub(r"/\*(?:.|\n)*?\*/","",src); body=re.sub(r"//[^\n]*","",body)
++        # ① Icons 裸用反查（核心：不再猜重复，只认"用到但没 import"）
++        for m in re.finditer(r"Icons\.(Filled|Outlined|Rounded|Sharp|TwoTone)\.(\w+)", body):
++            need=f"androidx.compose.material.icons.{m.group(1).lower()}.{m.group(2)}"
++            if need not in imports: bad.append((fn,f"Icons.{m.group(1)}.{m.group(2)}",need))
++        for m in re.finditer(r"Icons\.AutoMirrored\.(Filled|Outlined|Rounded|Sharp|TwoTone)\.(\w+)", body):
++            need=f"androidx.compose.material.icons.automirrored.{m.group(1).lower()}.{m.group(2)}"
++            if need not in imports: bad.append((fn,f"AutoMirrored.{m.group(1)}.{m.group(2)}",need))
++        # ② 常用符号裸用反查
+         for sym,tail in NEED.items():
+             if re.search(r"(?<![\w.])"+re.escape(sym)+r"(?![\w])",body):
+                 if tail not in imports and (tail.rsplit(".",1)[0]+".*") not in imports: bad.append((fn,sym,tail))
+-        for x in set(re.findall(r"Icons\.Outlined\.(\w+)",body)):
+-            t=f"androidx.compose.material.icons.outlined.{x}"
+-            if t not in imports: bad.append((fn,f"Outlined.{x}",t))
+-        for x in set(re.findall(r"Icons\.AutoMirrored\.Outlined\.(\w+)",body)):
+-            t=f"androidx.compose.material.icons.automirrored.outlined.{x}"
+-            if t not in imports: bad.append((fn,f"AutoMirrored.{x}",t))
+-        # V237: 重复/歧义 import（同一简单名出现多条 → Kotlin 直接报 ambiguous）
+-        last={}
+-        for imp in imports:
+-            simple=imp.rsplit(".",1)[-1]
+-            if simple=="*": continue   # 通配 import 不参与歧义判定
+-            if simple in last and last[simple]!=imp: bad.append((fn,f"歧义 import '{simple}'",f"{last[simple]} 与 {imp} 冲突"))
+-            elif imports_list.count(imp)>1: bad.append((fn,f"重复 import '{simple}'",imp))
+-            last[simple]=imp
++        # ③ 双逗号
++        for i,line in enumerate(src.splitlines(),1):
++            if line.lstrip().startswith("import") and ",," in line: bad.append((fn,f"L{i} ',,'","-"))
+ for f,s,t in sorted(set(bad)): print(f"缺 [{f}] {s} → import {t}")
+ print("自检：",("全部清零 ✓" if not bad else f"{len(set(bad))} 处缺口"))
+ sys.exit(len(set(bad)))

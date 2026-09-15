@@ -1,0 +1,22 @@
+--- /tmp/b-NativeUiKit.kt	2026-07-04 10:28:30.574568282 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/NativeUiKit.kt	2026-07-04 10:26:32.485038256 +0000
+@@ -8,6 +8,7 @@
+ import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.statusBarsPadding
+ import androidx.compose.foundation.layout.size
+ import androidx.compose.foundation.shape.CircleShape
+ import androidx.compose.foundation.BorderStroke
+@@ -55,9 +56,9 @@
+ 
+ @Composable
+ fun ModuleHeader(icon: ImageVector, title: String, sub: String, onBack: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
+-    Column {
++    Column(Modifier.statusBarsPadding()) {   // V240 修顶部过高：这些子页经 NavHost 直渲染无 Scaffold inset，标题须自行避让状态栏
+         Row(
+-            Modifier.fillMaxWidth().padding(start = 6.dp, end = 18.dp, top = 8.dp, bottom = 12.dp),
++            Modifier.fillMaxWidth().padding(start = 6.dp, end = 18.dp, top = 6.dp, bottom = 12.dp),
+             verticalAlignment = Alignment.CenterVertically,
+         ) {
+             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回") }

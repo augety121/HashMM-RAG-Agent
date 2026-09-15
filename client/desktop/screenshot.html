@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>截屏</title>
+<style>
+  /* V86 重写：微信级截屏标注层。
+     旧版三大硬伤：① 文字标注用 window.prompt()——Electron 渲染进程不支持，一点就抛错；
+     ② #mask 半透明层与选区 box-shadow 叠加，选区内部仍是暗的（应当内亮外暗）；
+     ③ 选完不能移动/缩放、无尺寸标尺、无马赛克。
+     新架构：bg<img> 冻结帧 + #veil 画布(整屏变暗、选区 clearRect 还原透亮)
+     + #anno 画布(矢量 shapes 重绘) + DOM 选框/手柄/工具条/内联文字输入。
+     导出按 bg.naturalWidth/innerWidth 实际比例把标注重绘到原生分辨率画布。 */
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  #bg { position: fixed; inset: 0; width: 100vw; height: 100vh; -webkit-user-drag: none; }
+  canvas { position: fixed; inset: 0; }
+  #veil { cursor: crosshair; }
+  #anno { pointer-events: none; }
+
+  #selBox { position: fixed; border: 1px solid #34a4ff; pointer-events: none; display: none;
+            box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
+  .hd { position: fixed; width: 8px; height: 8px; background: #fff; border: 1px solid #34a4ff;
+        border-radius: 50%; pointer-events: none; display: none; }
+
+  #sizeTag { position: fixed; display: none; padding: 2px 8px; font: 12px/18px "Segoe UI", system-ui, sans-serif;
+             color: #fff; background: rgba(0,0,0,.7); border-radius: 4px; pointer-events: none; white-space: nowrap; }
+
+  #hint { position: fixed; top: 28px; left: 50%; transform: translateX(-50%); padding: 8px 18px;
+          font: 13px/20px "Segoe UI", system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.65);
+          border-radius: 999px; pointer-events: none; }
+
+  #bar { position: fixed; display: none; align-items: center; gap: 2px; padding: 4px 6px;
+         background: #ffffff; border: 1px solid #ececf0; border-radius: 10px; box-shadow: 0 6px 22px rgba(20,20,40,.16); }
+  #bar button { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+                border: 0; border-radius: 7px; background: transparent; color: #5a5a66; cursor: pointer; }
+  #bar button:hover { background: #f1f0f7; color: #534AB7; }
+  #bar button.on { background: #534AB7; color: #fff; }
+  #bar button:disabled { opacity: .35; cursor: default; }
+  #bar .sep { width: 1px; height: 18px; background: #ececf0; margin: 0 4px; }
+  #bar .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+  #bar .dot.on { border-color: #534AB7; }
+  #bar svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8;
+             stroke-linecap: round; stroke-linejoin: round; }
+  #ok svg { stroke: #4ade80; } #cancel svg { stroke: #f87171; }
+
+  #textInput { position: fixed; display: none; min-width: 24px; max-width: 60vw; padding: 2px 4px;
+               border: 1px dashed rgba(83,74,183,.85); background: rgba(255,255,255,.14); outline: none;
+               font-weight: 600; font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+               white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
+</style>
+</head>
+<body>
+<img id="bg" alt="">
+<canvas id="veil"></canvas>
+<canvas id="anno"></canvas>
+<div id="selBox"></div>
+<div id="sizeTag"></div>
+<div id="hint">拖动框选区域 · 单击选择全屏 · 右键重选 · Esc 取消</div>
+
+<div id="bar">
+  <button data-tool="rect" title="矩形"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg></button>
+  <button data-tool="arrow" title="箭头"><svg viewBox="0 0 24 24"><path d="M5 19L17 7M17 7H10M17 7V14"/></svg></button>
+  <button data-tool="pen" title="画笔"><svg viewBox="0 0 24 24"><path d="M4 20c4-1 3-4 6-6s5-4 8-8M4 20l1-4 9-9 3 3-9 9-4 1z"/></svg></button>
+  <button data-tool="mosaic" title="马赛克"><svg viewBox="0 0 24 24"><path d="M5 5h4v4H5zM10 10h4v4h-4zM15 5h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4z"/></svg></button>
+  <button data-tool="text" title="文字"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></svg></button>
+  <span class="sep"></span>
+  <button id="undo" title="撤销" disabled><svg viewBox="0 0 24 24"><path d="M8 6L3 11l5 5M3 11h11a6 6 0 0 1 0 12h-2"/></svg></button>
+  <span class="sep"></span>
+  <span class="dot on" data-color="#ef4444" style="background:#ef4444" title="红"></span>
+  <span class="dot" data-color="#f59e0b" style="background:#f59e0b" title="黄"></span>
+  <span class="dot" data-color="#3b82f6" style="background:#3b82f6" title="蓝"></span>
+  <span class="sep"></span>
+  <button id="cancel" title="取消 (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  <button id="ok" title="完成 (Enter / 双击)"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 7"/></svg></button>
+</div>
+
+<div id="textInput" contenteditable="plaintext-only" spellcheck="false"></div>
+
+<script>
+const { ipcRenderer } = require("electron");
+
+const $ = id => document.getElementById(id);
+const bg = $("bg"), veil = $("veil"), anno = $("anno"), selBox = $("selBox");
+const sizeTag = $("sizeTag"), hint = $("hint"), bar = $("bar"), textInput = $("textInput");
+const vctx = veil.getContext("2d"), actx = anno.getContext("2d");
+const HANDLES = ["nw","n","ne","e","se","s","sw","w"].map(pos => {
+  const d = document.createElement("div"); d.className = "hd"; d.dataset.pos = pos;
+  document.body.appendChild(d); return d;
+});
+const CURSORS = { nw:"nwse-resize", se:"nwse-resize", ne:"nesw-resize", sw:"nesw-resize",
+                  n:"ns-resize", s:"ns-resize", e:"ew-resize", w:"ew-resize" };
+
+let W = innerWidth, H = innerHeight;
+let SCALE = 1;                      // 原生像素 / CSS 像素（按实际图片比例，而非假设 DPR）
+let sel = null;                     // {x,y,w,h} CSS 坐标
+let phase = "pick";                 // pick=框选中 | ready=已框定
+let tool = null;                    // rect|arrow|pen|mosaic|text|null
+let color = "#ef4444";
+let shapes = [];                    // 矢量标注列表（撤销/缩放/导出都基于它重绘）
+let cur = null;                     // 进行中的 shape
+let drag = null;                    // {kind:"new"|"move"|"resize", pos?, sx, sy, sel0}
+let pixelScreen = null;             // 屏幕尺度的马赛克底图（惰性构建）
+
+function resize() {
+  W = innerWidth; H = innerHeight;
+  veil.width = W; veil.height = H; anno.width = W; anno.height = H;
+}
+resize(); addEventListener("resize", resize);
+
+ipcRenderer.invoke("screenshot:getImage").then(async (dataUrl) => {
+  if (!dataUrl) return done(null);
+  const signalReady = () => {
+    SCALE = (bg.naturalWidth / W) || 1;
+    render();
+    // V103.2: 双 rAF 确保冻结帧"真的合成上屏"后再让主进程显示窗口。
+    // 单 rAF 在慢机/大图上仍可能抢跑（帧还没 swap 就 show）→ 残留双重闪。
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try { ipcRenderer.send("screenshot:ready"); } catch (_e) {}
+    }));
+  };
+  bg.src = dataUrl;
+  // 优先 decode()：等到图像解码完成、可立即绘制；不支持或失败再退回 onload。
+  try {
+    if (bg.decode) { await bg.decode(); signalReady(); return; }
+  } catch (_e) { /* 退回 onload 路径 */ }
+  bg.onload = signalReady;
+});
+
+/* ── 几何与渲染 ─────────────────────────────────────────────── */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function norm(x0, y0, x1, y1) {
+  return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+}
+function inSel(x, y) { return sel && x >= sel.x && x <= sel.x + sel.w && y >= sel.y && y <= sel.y + sel.h; }
+function hitHandle(x, y) {
+  if (!sel || shapes.length || cur) return null;          // 有标注后选区锁定（微信同款）
+  const pts = handlePts();
+  for (const p of pts) if (Math.abs(x - p.x) <= 6 && Math.abs(y - p.y) <= 6) return p.pos;
+  return null;
+}
+function handlePts() {
+  const { x, y, w, h } = sel, cx = x + w / 2, cy = y + h / 2;
+  return [ {pos:"nw",x,y}, {pos:"n",x:cx,y}, {pos:"ne",x:x+w,y}, {pos:"e",x:x+w,y:cy},
+           {pos:"se",x:x+w,y:y+h}, {pos:"s",x:cx,y:y+h}, {pos:"sw",x,y:y+h}, {pos:"w",x,y:cy} ];
+}
+
+function getPixelScreen() {
+  if (pixelScreen) return pixelScreen;
+  const block = 12, s = document.createElement("canvas");
+  s.width = Math.max(1, Math.ceil(W / block)); s.height = Math.max(1, Math.ceil(H / block));
+  s.getContext("2d").drawImage(bg, 0, 0, s.width, s.height);
+  pixelScreen = document.createElement("canvas");
+  pixelScreen.width = W; pixelScreen.height = H;
+  const c = pixelScreen.getContext("2d");
+  c.imageSmoothingEnabled = false;
+  c.drawImage(s, 0, 0, W, H);
+  return pixelScreen;
+}
+
+/** 把单个 shape 画到 ctx。k=缩放，ox/oy=平移（导出时减去选区原点），pix=马赛克底图 */
+function drawShape(ctx, s, k, ox, oy, pix) {
+  ctx.strokeStyle = s.color; ctx.fillStyle = s.color;
+  if (s.type === "rect") {
+    ctx.lineWidth = 2 * k;
+    const r = norm(s.x0, s.y0, s.x1, s.y1);
+    ctx.strokeRect((r.x - ox) * k, (r.y - oy) * k, r.w * k, r.h * k);
+  } else if (s.type === "arrow") {
+    ctx.lineWidth = 3 * k;
+    const x0 = (s.x0 - ox) * k, y0 = (s.y0 - oy) * k, x1 = (s.x1 - ox) * k, y1 = (s.y1 - oy) * k;
+    const ang = Math.atan2(y1 - y0, x1 - x0), len = Math.max(10 * k, 12 * k);
+    ctx.beginPath(); ctx.moveTo(x0, y0);
+    ctx.lineTo(x1 - Math.cos(ang) * len * 0.6, y1 - Math.sin(ang) * len * 0.6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - Math.cos(ang - 0.42) * len, y1 - Math.sin(ang - 0.42) * len);
+    ctx.lineTo(x1 - Math.cos(ang + 0.42) * len, y1 - Math.sin(ang + 0.42) * len);
+    ctx.closePath(); ctx.fill();
+  } else if (s.type === "pen") {
+    ctx.lineWidth = 3 * k; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath();
+    s.pts.forEach((p, i) => { const X = (p.x - ox) * k, Y = (p.y - oy) * k; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+    ctx.stroke();
+  } else if (s.type === "text") {
+    ctx.font = `600 ${18 * k}px "Microsoft YaHei","Segoe UI",sans-serif`;
+    ctx.textBaseline = "top";
+    const lines = s.text.split("\n");
+    lines.forEach((ln, i) => ctx.fillText(ln, (s.x - ox) * k, (s.y - oy) * k + i * 24 * k));
+  }
+}
+
+/* 马赛克需要源画布坐标系换算，独立成函数（屏幕层与导出层底图不同） */
+function drawMosaic(ctx, s, k, ox, oy, pix, pixScale) {
+  const r = 11;
+  for (const p of s.pts) {
+    const sx = (p.x - r) * pixScale, sy = (p.y - r) * pixScale, sw = r * 2 * pixScale;
+    ctx.drawImage(pix, sx, sy, sw, sw, (p.x - ox - r) * k, (p.y - oy - r) * k, r * 2 * k, r * 2 * k);
+  }
+}
+
+function render() {
+  // ① 遮罩：整屏 .45 暗 + 选区 clearRect 透亮（修复旧版"选区内部仍是暗的"）
+  vctx.clearRect(0, 0, W, H);
+  vctx.fillStyle = "rgba(0,0,0,.45)";
+  vctx.fillRect(0, 0, W, H);
+  if (sel && sel.w > 0 && sel.h > 0) vctx.clearRect(sel.x, sel.y, sel.w, sel.h);
+
+  // ② 标注：裁剪到选区内重绘全部 shapes（+进行中的）
+  actx.clearRect(0, 0, W, H);
+  if (sel && sel.w > 0 && sel.h > 0) {
+    actx.save();
+    actx.beginPath(); actx.rect(sel.x, sel.y, sel.w, sel.h); actx.clip();
+    const pix = (shapes.some(s => s.type === "mosaic") || (cur && cur.type === "mosaic")) ? getPixelScreen() : null;
+    for (const s of shapes) s.type === "mosaic" ? drawMosaic(actx, s, 1, 0, 0, pix, 1) : drawShape(actx, s, 1, 0, 0, pix);
+    if (cur) cur.type === "mosaic" ? drawMosaic(actx, cur, 1, 0, 0, pix, 1) : drawShape(actx, cur, 1, 0, 0, pix);
+    actx.restore();
+  }
+
+  // ③ DOM：选框 / 手柄 / 尺寸标尺 / 工具条
+  if (sel && sel.w > 0 && sel.h > 0) {
+    selBox.style.display = "block";
+    selBox.style.left = sel.x - 1 + "px"; selBox.style.top = sel.y - 1 + "px";
+    selBox.style.width = sel.w + 2 + "px"; selBox.style.height = sel.h + 2 + "px";
+
+    const lock = shapes.length > 0 || !!cur;
+    handlePts().forEach((p, i) => {
+      const d = HANDLES[i];
+      d.style.display = lock ? "none" : "block";
+      d.style.left = p.x - 4 + "px"; d.style.top = p.y - 4 + "px";
+    });
+
+    sizeTag.style.display = "block";
+    sizeTag.textContent = `${Math.round(sel.w * SCALE)} × ${Math.round(sel.h * SCALE)}`;
+    const ty = sel.y - 26 >= 4 ? sel.y - 26 : sel.y + 6;
+    sizeTag.style.left = clamp(sel.x, 4, W - 120) + "px"; sizeTag.style.top = ty + "px";
+
+    if (phase === "ready") placeBar(); else bar.style.display = "none";
+  } else {
+    selBox.style.display = "none"; sizeTag.style.display = "none"; bar.style.display = "none";
+    HANDLES.forEach(d => d.style.display = "none");
+  }
+}
+
+function placeBar() {
+  bar.style.display = "flex";
+  const bw = bar.offsetWidth || 360, bh = bar.offsetHeight || 38;
+  let bx = clamp(sel.x + sel.w - bw, 8, W - bw - 8);
+  let by = sel.y + sel.h + 10;
+  if (by + bh > H - 8) by = Math.max(8, sel.y - bh - 10);
+  bar.style.left = bx + "px"; bar.style.top = by + "px";
+}
+
+/* ── 文字内联输入（替代 window.prompt——Electron 渲染进程根本没有 prompt） ── */
+let textAt = null;
+function openText(x, y) {
+  commitText();
+  textAt = { x, y };
+  textInput.style.display = "block";
+  textInput.style.left = x + "px"; textInput.style.top = y + "px";
+  textInput.style.color = color; textInput.style.fontSize = "18px"; textInput.style.lineHeight = "24px";
+  textInput.textContent = "";
+  setTimeout(() => textInput.focus(), 0);
+}
+function commitText() {
+  if (!textAt) return;
+  const t = textInput.textContent.replace(/\u00a0/g, " ").replace(/\s+$/, "");
+  if (t.trim()) { shapes.push({ type: "text", x: textAt.x, y: textAt.y, text: t, color }); refreshUndo(); }
+  textAt = null; textInput.style.display = "none"; textInput.textContent = "";
+  render();
+}
+function cancelText() { textAt = null; textInput.style.display = "none"; textInput.textContent = ""; }
+textInput.addEventListener("keydown", e => {
+  e.stopPropagation();
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitText(); }
+  if (e.key === "Escape") { e.preventDefault(); cancelText(); }
+});
+
+/* ── 鼠标交互 ───────────────────────────────────────────────── */
+veil.addEventListener("mousedown", e => {
+  if (e.button === 2) return;                       // 右键交给 contextmenu
+  const x = e.clientX, y = e.clientY;
+  if (textAt) { commitText(); return; }
+
+  if (phase === "pick") {
+    hint.style.display = "none";
+    drag = { kind: "new", sx: x, sy: y };
+    sel = { x, y, w: 0, h: 0 };
+    render(); return;
+  }
+  // phase === "ready"
+  const hd = hitHandle(x, y);
+  if (hd) { drag = { kind: "resize", pos: hd, sel0: { ...sel } }; return; }
+  if (tool && inSel(x, y)) {
+    if (tool === "text") { openText(clamp(x, sel.x, sel.x + sel.w - 24), clamp(y, sel.y, sel.y + sel.h - 24)); return; }
+    cur = tool === "pen" || tool === "mosaic"
+        ? { type: tool, pts: [{ x, y }], color }
+        : { type: tool, x0: x, y0: y, x1: x, y1: y, color };
+    render(); return;
+  }
+  if (!tool && inSel(x, y) && !shapes.length) {       // 选区拖动（未落标注前）
+    drag = { kind: "move", sx: x, sy: y, sel0: { ...sel } };
+  }
+});
+
+addEventListener("mousemove", e => {
+  const x = clamp(e.clientX, 0, W), y = clamp(e.clientY, 0, H);
+  // 光标
+  if (phase === "ready" && !drag && !cur) {
+    const hd = hitHandle(x, y);
+    veil.style.cursor = hd ? CURSORS[hd]
+      : tool && inSel(x, y) ? (tool === "text" ? "text" : "crosshair")
+      : !tool && inSel(x, y) && !shapes.length ? "move" : "default";
+  }
+  if (drag) {
+    if (drag.kind === "new") sel = norm(drag.sx, drag.sy, x, y);
+    else if (drag.kind === "move") {
+      sel.x = clamp(drag.sel0.x + x - drag.sx, 0, W - sel.w);
+      sel.y = clamp(drag.sel0.y + y - drag.sy, 0, H - sel.h);
+    } else if (drag.kind === "resize") {
+      const o = drag.sel0, p = drag.pos;
+      let L = o.x, T = o.y, R = o.x + o.w, B = o.y + o.h;
+      if (p.includes("w")) L = x; if (p.includes("e")) R = x;
+      if (p.includes("n")) T = y; if (p.includes("s")) B = y;
+      sel = norm(L, T, R, B);
+    }
+    render(); return;
+  }
+  if (cur) {
+    if (cur.pts) {
+      const last = cur.pts[cur.pts.length - 1];
+      if (Math.abs(last.x - x) + Math.abs(last.y - y) >= (cur.type === "mosaic" ? 5 : 2)) cur.pts.push({ x, y });
+    } else { cur.x1 = x; cur.y1 = y; }
+    render();
+  }
+});
+
+addEventListener("mouseup", () => {
+  if (drag) {
+    if (drag.kind === "new") {
+      if (sel.w < 4 || sel.h < 4) sel = { x: 0, y: 0, w: W, h: H };   // 单击=全屏
+      phase = "ready";
+    }
+    drag = null; render(); return;
+  }
+  if (cur) {
+    const keep = cur.pts ? cur.pts.length > 1
+               : Math.abs(cur.x1 - cur.x0) + Math.abs(cur.y1 - cur.y0) > 3;
+    if (keep) { shapes.push(cur); refreshUndo(); }
+    cur = null; render();
+  }
+});
+
+veil.addEventListener("dblclick", e => { if (inSel(e.clientX, e.clientY)) finish(); });
+addEventListener("contextmenu", e => {
+  e.preventDefault();
+  if (textAt) { cancelText(); return; }
+  if (cur) { cur = null; render(); return; }                  // 丢掉进行中的一笔
+  if (shapes.length) { undoLast(); return; }                  // 撤销上一笔（微信式逐步回退）
+  if (phase === "ready") { phase = "pick"; sel = null; tool = null;   // 重选区域
+    bar.querySelectorAll("[data-tool]").forEach(b => b.classList.remove("on"));
+    veil.style.cursor = "crosshair"; hint.style.display = "block"; render(); return; }
+  done(null);                                                 // 最后一步才是取消整次截屏
+});
+
+addEventListener("keydown", e => {
+  if (e.key === "Escape") done(null);
+  else if (e.key === "Enter" && phase === "ready" && !textAt) finish();
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { undoLast(); }
+});
+
+/* ── 工具条 ─────────────────────────────────────────────────── */
+bar.addEventListener("mousedown", e => e.stopPropagation());
+bar.querySelectorAll("[data-tool]").forEach(btn => btn.addEventListener("click", () => {
+  commitText();
+  const t = btn.dataset.tool;
+  tool = tool === t ? null : t;
+  bar.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === tool));
+  veil.style.cursor = tool ? (tool === "text" ? "text" : "crosshair") : "default";
+  render();
+}));
+bar.querySelectorAll(".dot").forEach(d => d.addEventListener("click", () => {
+  color = d.dataset.color;
+  bar.querySelectorAll(".dot").forEach(x => x.classList.toggle("on", x === d));
+  if (textAt) textInput.style.color = color;
+}));
+function refreshUndo() { $("undo").disabled = shapes.length === 0; }
+function undoLast() { commitText(); if (shapes.length) { shapes.pop(); refreshUndo(); render(); } }
+$("undo").addEventListener("click", undoLast);
+$("cancel").addEventListener("click", () => done(null));
+$("ok").addEventListener("click", finish);
+
+/* ── 导出：按原生分辨率重绘（旧版用 DPR 估算，分屏/缩放下裁偏） ── */
+function finish() {
+  commitText();
+  if (!sel || sel.w < 2 || sel.h < 2) return done(null);
+  const k = SCALE;
+  const out = document.createElement("canvas");
+  out.width = Math.round(sel.w * k); out.height = Math.round(sel.h * k);
+  const ctx = out.getContext("2d");
+  ctx.drawImage(bg, sel.x * k, sel.y * k, sel.w * k, sel.h * k, 0, 0, out.width, out.height);
+
+  let pixNative = null;
+  if (shapes.some(s => s.type === "mosaic")) {
+    const block = Math.max(2, Math.round(12 * k));
+    const small = document.createElement("canvas");
+    small.width = Math.max(1, Math.ceil(bg.naturalWidth / block));
+    small.height = Math.max(1, Math.ceil(bg.naturalHeight / block));
+    small.getContext("2d").drawImage(bg, 0, 0, small.width, small.height);
+    pixNative = document.createElement("canvas");
+    pixNative.width = bg.naturalWidth; pixNative.height = bg.naturalHeight;
+    const pc = pixNative.getContext("2d");
+    pc.imageSmoothingEnabled = false;
+    pc.drawImage(small, 0, 0, pixNative.width, pixNative.height);
+  }
+  for (const s of shapes) {
+    s.type === "mosaic" ? drawMosaic(ctx, s, k, sel.x, sel.y, pixNative, k)
+                        : drawShape(ctx, s, k, sel.x, sel.y, null);
+  }
+  done(out.toDataURL("image/png"));
+}
+
+function done(dataUrl) { try { ipcRenderer.invoke("screenshot:result", dataUrl); } catch (_e) {} }
+</script>
+</body>
+</html>
