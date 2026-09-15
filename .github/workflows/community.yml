@@ -17,10 +17,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          sparse-checkout: |
-            COMMUNITY.md
-            .github/pull_request_template.md
-          sparse-checkout-cone-mode: false
       - name: Check public collaboration documents
         shell: python
         run: |
@@ -31,3 +27,7 @@ jobs:
               if not content.strip() or "\x00" in content:
                   raise SystemExit("Invalid public document")
           print("Public collaboration documents checked. Private product tests were not run.")
+      - name: Check public privacy boundary
+        run: |
+          python -m unittest discover -s scripts/tests -v
+          python scripts/check_public_privacy.py
