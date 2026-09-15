@@ -1,0 +1,108 @@
+name: Private validation
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed private PR 3 full head commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: private-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
+    environment: private-validation
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        suite: [python, desktop-node, frontend, iteration]
+        exclude:
+          - os: windows-latest
+            suite: frontend
+    steps:
+      - name: Verify reviewed private head
+        shell: python
+        env:
+          READ_TOKEN: ${{ secrets.HASHMM_SOURCE_READ }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          import json, os, re, urllib.request
+          try:
+              sha = os.environ['SOURCE_SHA']
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              assert os.environ['READ_TOKEN']
+              assert os.environ.get('ACTIONS_STEP_DEBUG', '').lower() != 'true'
+              req = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/pulls/3', headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  pr = json.load(response)
+              assert pr['state'] == 'open' and pr['head']['sha'] == sha
+              assert pr['head']['repo']['full_name'] == 'augety121/hashmm'
+          except Exception:
+              raise SystemExit('Private source admission failed; no source output published.')
+      - uses: actions/checkout@v4
+        with:
+          repository: augety121/hashmm
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.HASHMM_SOURCE_READ }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run full suite with private output
+        shell: python
+        env:
+          SUITE: ${{ matrix.suite }}
+          PYTHONUTF8: '1'
+        run: |
+          import os, pathlib, subprocess, sys
+          # All child output stays on this ephemeral runner; never publish raw logs.
+          env = dict(os.environ)
+          for key in list(env):
+              if key.startswith(('GITHUB_', 'ACTIONS_', 'RUNNER_')):
+                  env.pop(key, None)
+          env['CI'] = 'true'
+          log = pathlib.Path(os.environ['RUNNER_TEMP']) / 'private-validation.log'
+          try:
+              with log.open('wb') as stream:
+                  code = subprocess.run([sys.executable, 'scripts/run-private-ci.py', os.environ['SUITE']], env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=3300).returncode
+          except Exception:
+              code = 1
+          print('Private suite passed.' if code == 0 else 'Private suite failed; raw output was not published.')
+          raise SystemExit(0 if code == 0 else 1)
+  report:
+    if: always() && github.actor == 'augety121' && github.ref == 'refs/heads/main'
+    needs: validate
+    environment: private-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Report exact commit result to private repository
+        shell: python
+        env:
+          STATUS_TOKEN: ${{ secrets.HASHMM_STATUS_WRITE }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          RESULT: ${{ needs.validate.result }}
+        run: |
+          import json, os, re, urllib.request
+          try:
+              sha = os.environ['SOURCE_SHA']
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              assert os.environ['STATUS_TOKEN']
+              state = 'success' if os.environ['RESULT'] == 'success' else 'failure'
+              data = json.dumps({'state': state, 'context': 'public-runner/private-full-matrix', 'description': 'Seven private suites: ' + state, 'target_url': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']}).encode()
+              req = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/statuses/' + sha, data=data, headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  assert response.status == 201
+          except Exception:
+              raise SystemExit('Private status reporting failed.')
