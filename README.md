@@ -20,7 +20,7 @@
 </div>
 
 > [!IMPORTANT]
-> 本仓库保留此前已经公开的 HashMM 历史版本（V2802）源码、原有介绍与资源，供开源学习和 PR 协作。下文版本、功能、截图和验证记录描述该历史版本；当前持续开发的 HashMM 源码保留在私有仓库，不在此公开同步。协作方式见 [COMMUNITY.md](COMMUNITY.md)。真实密钥、用户数据、模型、索引、日志和设备凭据不进入 Git 历史。
+> 本仓库保留此前已经公开的 HashMM 历史版本（V2802）源码、原有介绍与资源，供开源学习和 PR 协作。下文版本、功能、截图和验证记录描述该历史版本；当前持续开发的 HashMM 源码保留在私有仓库，不在此公开同步。协作方式见 [COMMUNITY.md](COMMUNITY.md)。请勿提交真实密钥、用户数据、模型、索引、日志和设备凭据。当前文件清理不代表旧 Git 历史已清除。
 
 ## 产品概览
 
@@ -41,19 +41,7 @@ HashMM 不是一个只负责回答问题的聊天壳。它面向需要处理私�
 
 ## 界面预览
 
-<table>
-<tr>
-<td width="68%"><img src="docs/desktop.png" alt="HashMM 桌面端工作空间"></td>
-<td width="32%"><img src="docs/mobile.png" alt="HashMM Android App"></td>
-</tr>
-<tr>
-<td align="center"><sub>桌面端：Chat、项目、知识、Agent 工作区与本地能力入口</sub></td>
-<td align="center"><sub>Android App：对话、今天、工作与跨设备接力</sub></td>
-</tr>
-</table>
-
-<p align="center"><img src="docs/kg.png" alt="HashMM 知识图谱" width="100%"></p>
-<p align="center"><sub>知识图谱：从文档与检索证据中建立实体、关系和社区视图</sub></p>
+历史桌面、手机与知识图谱截图含个人信息，已撤下。产品介绍与安全素材继续保留。
 
 <p align="center"><img src="docs/eval.png" alt="HashMM 质量评测台" width="86%"></p>
 <p align="center"><sub>质量评测台：运行金标准用例、观察趋势并比较两次运行的回归</sub></p>
@@ -202,23 +190,10 @@ flowchart LR
 
 ## 快速开始
 
-### 方式一：直接使用已打包的服务器 ZIP
+### 从源码启动开发环境
 
-适用于现有 Linux / AutoDL 服务器升级。该包包含后端源码、启动脚本、依赖清单、协议、迁移脚本、插件、技能和文档；不包含桌面端、Android App、模型、索引、用户数据、日志、缓存或任何真实密钥。
+历史服务器 ZIP 含真实部署配置，已撤下。请使用以下已清理的历史源码，并填写自己的本地配置。
 
-| 文件 | 大小 | SHA-256 |
-|---|---:|---|
-| [`hashmm-server-V2802-20260812-150306.zip`](server/releases/V2802/hashmm-server-V2802-20260812-150306.zip) | 8.02 MiB | `0B4FF8B8A160CA205E023A40EBBE82DBD712538B34E8FDF454977D07B1C1C001` |
-
-校验文件：[`hashmm-server-V2802-20260812-150306.zip.sha256`](server/releases/V2802/hashmm-server-V2802-20260812-150306.zip.sha256)
-
-```bash
-sha256sum -c hashmm-server-V2802-20260812-150306.zip.sha256
-```
-
-完整部署流程见 [服务器部署](#服务器部署) 和 [`server/README.md`](server/README.md)。
-
-### 方式二：从源码启动开发环境
 
 ```bash
 git clone https://github.com/augety121/HashMM-RAG-Agent.git
@@ -251,7 +226,8 @@ curl -fsS http://127.0.0.1:6006/api/health
 mkdir -p /root/autodl-tmp
 cd /root/autodl-tmp
 
-unzip hashmm-server-V2802-20260812-150306.zip
+git clone https://github.com/augety121/HashMM-RAG-Agent.git
+cd HashMM-RAG-Agent/client
 cp .env.example .env
 chmod 600 .env
 
@@ -263,24 +239,7 @@ chmod +x start-hashmm1.sh
 
 ### 覆盖升级
 
-```bash
-cd /root/autodl-tmp
-
-# 1. 只备份配置，不在终端打印密钥值
-cp -p .env .env.before-v2802
-chmod 600 .env.before-v2802
-
-# 2. 校验下载物
-sha256sum -c hashmm-server-V2802-20260812-150306.zip.sha256
-
-# 3. 覆盖代码；不要删除 .env、data、模型、索引或 ProjectVault
-unzip -o hashmm-server-V2802-20260812-150306.zip -d /root/autodl-tmp
-
-# 4. 诊断并启动
-chmod +x start-hashmm1.sh
-./start-hashmm1.sh doctor
-./start-hashmm1.sh
-```
+历史预打包下载已撤下。升级前自行审查并测试源码，在独立目录准备候选；备份并保留现有 `.env`、数据库、模型、索引及 ProjectVault，不能用示例配置覆盖生产配置。
 
 ### 生产远程入口
 
@@ -399,7 +358,7 @@ HashMM-RAG-Agent/
 ├── docs/                        README 图片素材
 ├── server/
 │   ├── README.md                服务器部署与验收
-│   └── releases/V2802/          已校验的服务器升级包
+│   └── README.md               历史源码部署说明（旧预打包下载已撤下）
 ├── .gitignore                   密钥、用户数据与构建物边界
 ├── LICENSE
 └── README.md

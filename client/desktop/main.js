@@ -1076,8 +1076,8 @@ ipcMain.handle("local:read", (_e, { file }) => {
 // 用户在 App/网页聊天里说"把电脑/桌面的某文件发我"→后端写 file_requests 表→
 // 这里常驻轮询(每4s)消费：在 桌面/下载/文档 里按文件名匹配→上传到该对话→回写助手消息(带下载链接)→标记完成。
 // 鉴权：用最近的 Supabase access_token（_lastAcctToken）查 Supabase + 传后端；uid 从 JWT 解。
-const _SBFR_URL = "https://your-project.supabase.co";
-const _SBFR_KEY = "YOUR_SUPABASE_PUBLISHABLE_KEY";
+const _SBFR_URL = process.env.HASHMM_SUPABASE_URL || "";
+const _SBFR_KEY = process.env.HASHMM_SUPABASE_PUBLISHABLE_KEY || "";
 let _fileReqTimer = null;
 let _fileReqBusy = false;
 // ── V228 防休眠（powerSaveBlocker）：用户级常开 + 任务期临时唤醒 分离控制 ──

@@ -1,23 +1,23 @@
 /** lib/supabase.ts — Supabase 登录（统一身份：与 App 共用 Supabase 账号）。
  *
  *  客户端直连 Supabase 官方鉴权 REST（POST /auth/v1/token），零依赖、不经过 HashMM 后端，
- *  所以**不管连不连 AutoDL、后端有没有配 Supabase，都能登录**。
- *  配置优先用后端 /api/auth/supabase-config；后端未配（本地/离线）时用内置配置（publishable key 可公开）。
+ *  部署者配置 Supabase 后，即使后端暂时不可达也可直连登录。
+ *  配置优先用后端 /api/auth/supabase-config；后端未配（本地/离线）时用构建环境配置（不内置真实项目值）。
  *  角色（admin/user）从登录返回的 JWT 的 app_metadata.role 解析。
  */
 export interface SupabaseConfig { enabled: boolean; url: string; publishable_key: string }
 export interface SupabaseLoginResult { access_token: string; refresh_token: string; email: string; user_id: string; role: string }
 
-// 内置兜底配置（与 App 同一个 Supabase 项目；publishable key 为可公开密钥）。
+// 由部署者提供的构建环境配置；未配置时保持禁用。
 const FALLBACK_CONFIG: SupabaseConfig = {
-  enabled: true,
-  url: "https://your-project.supabase.co",
-  publishable_key: "YOUR_SUPABASE_PUBLISHABLE_KEY",
+  enabled: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY),
+  url: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  publishable_key: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "",
 };
 
 let _config: SupabaseConfig | null = null;
 
-/** 取 Supabase 公开配置：后端已配则用后端，否则用内置兜底（保证哪里都能登录）。 */
+/** 取 Supabase 公开配置：后端已配则用后端，否则用部署者提供的构建环境配置。 */
 export async function getSupabaseConfig(): Promise<SupabaseConfig> {
   if (_config) return _config;
   try {
@@ -26,7 +26,7 @@ export async function getSupabaseConfig(): Promise<SupabaseConfig> {
       const c = await r.json();
       if (c?.enabled && c?.url && c?.publishable_key) { _config = c; return _config; }
     }
-  } catch { /* 后端不可达：用内置兜底 */ }
+  } catch { /* 后端不可达：尝试构建环境配置 */ }
   _config = FALLBACK_CONFIG;
   return _config;
 }
@@ -56,6 +56,7 @@ export function userIdFromToken(token: string | null | undefined): string {
 // ── PostgREST helper：直连 Supabase /rest/v1（带用户令牌，RLS 生效）──
 async function _rest(token: string, path: string, init?: RequestInit): Promise<Response> {
   const cfg = await getSupabaseConfig();
+  if (!cfg.enabled || !cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
   const base = cfg.url.replace(/\/+$/, "");
   return fetch(`${base}/rest/v1/${path}`, {
     ...init,
@@ -248,7 +249,8 @@ export async function refreshSupabaseTokenDetailed(refreshToken: string): Promis
   try {
     const cfg = await getSupabaseConfig();
     if (!cfg.url || !cfg.publishable_key) return { status: "unavailable" };
-    const base = cfg.url.replace(/\/+$/, "");
+    if (!cfg.enabled || !cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
+  const base = cfg.url.replace(/\/+$/, "");
     const r = await fetch(`${base}/auth/v1/token?grant_type=refresh_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: cfg.publishable_key },
@@ -278,6 +280,7 @@ export async function refreshSupabaseToken(refreshToken: string): Promise<{ acce
 export async function resendSignupOtp(email: string): Promise<void> {
   const cfg = await getSupabaseConfig();
   if (!cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
+  if (!cfg.enabled || !cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
   const base = cfg.url.replace(/\/+$/, "");
   const r = await fetch(`${base}/auth/v1/resend`, {
     method: "POST",
@@ -293,6 +296,7 @@ export async function resendSignupOtp(email: string): Promise<void> {
 export async function verifySignupOtp(email: string, token: string): Promise<SupabaseLoginResult> {
   const cfg = await getSupabaseConfig();
   if (!cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
+  if (!cfg.enabled || !cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
   const base = cfg.url.replace(/\/+$/, "");
   // Supabase 邮箱注册验证码：POST /auth/v1/verify { type:"signup", email, token }
   const r = await fetch(`${base}/auth/v1/verify`, {
@@ -319,6 +323,7 @@ export async function verifySignupOtp(email: string, token: string): Promise<Sup
 export async function signUpWithSupabase(email: string, password: string): Promise<{ needsConfirm: boolean; session: SupabaseLoginResult | null }> {
   const cfg = await getSupabaseConfig();
   if (!cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
+  if (!cfg.enabled || !cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
   const base = cfg.url.replace(/\/+$/, "");
   const r = await fetch(`${base}/auth/v1/signup`, {
     method: "POST",
@@ -347,6 +352,7 @@ export async function signUpWithSupabase(email: string, password: string): Promi
 export async function signInWithSupabase(email: string, password: string): Promise<SupabaseLoginResult> {
   const cfg = await getSupabaseConfig();
   if (!cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
+  if (!cfg.enabled || !cfg.url || !cfg.publishable_key) throw new Error("Supabase 未配置");
   const base = cfg.url.replace(/\/+$/, "");
   const r = await fetch(`${base}/auth/v1/token?grant_type=password`, {
     method: "POST",

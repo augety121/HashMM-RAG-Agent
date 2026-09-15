@@ -1,35 +1,6 @@
 # HashMM Server V2802
 
-本目录提供经过清单与 SHA-256 校验的 HashMM V2802 Linux / AutoDL 服务器升级包，以及不会覆盖用户数据的部署说明。
-
-## 下载
-
-| 文件 | 大小 | SHA-256 |
-|---|---:|---|
-| [`hashmm-server-V2802-20260812-150306.zip`](releases/V2802/hashmm-server-V2802-20260812-150306.zip) | 8.02 MiB | `0B4FF8B8A160CA205E023A40EBBE82DBD712538B34E8FDF454977D07B1C1C001` |
-
-校验文件：[`hashmm-server-V2802-20260812-150306.zip.sha256`](releases/V2802/hashmm-server-V2802-20260812-150306.zip.sha256)
-
-```bash
-sha256sum -c hashmm-server-V2802-20260812-150306.zip.sha256
-```
-
-## 包内容
-
-服务器包包含：
-
-- `hashmm/` 后端、RAG、Agent、Remote 和 Provider Fabric
-- 启动脚本与 Python 依赖清单
-- 协议契约、数据库迁移、插件、技能和部署示例
-- `SERVER-PACKAGE.json` 文件级 SHA-256 清单
-- V2802 版本事实源与发布说明
-
-服务器包明确排除：
-
-- 桌面端、Web UI 和原生安装器
-- 测试运行缓存和构建产物
-- `.env`、真实密钥、令牌与设备凭据
-- 用户数据、日志、ProjectVault、模型、索引和旧压缩包
+本目录保留历史 V2802 的部署说明。原服务器 ZIP 含真实部署配置，已撤下；请使用 [`../client/`](../client/) 中已清理的历史源码，填写自己的本地配置。当前文件清理不代表旧 Git 历史已清除。
 
 ## 当前版本
 
@@ -47,7 +18,8 @@ sha256sum -c hashmm-server-V2802-20260812-150306.zip.sha256
 mkdir -p /root/autodl-tmp
 cd /root/autodl-tmp
 
-unzip hashmm-server-V2802-20260812-150306.zip
+git clone https://github.com/augety121/HashMM-RAG-Agent.git
+cd HashMM-RAG-Agent/client
 cp .env.example .env
 chmod 600 .env
 
@@ -61,24 +33,7 @@ chmod +x start-hashmm1.sh
 
 ## 安全覆盖升级
 
-```bash
-cd /root/autodl-tmp
-
-# 1. 备份配置；不要打印密钥值
-cp -p .env .env.before-v2802
-chmod 600 .env.before-v2802
-
-# 2. 校验升级包
-sha256sum -c hashmm-server-V2802-20260812-150306.zip.sha256
-
-# 3. 覆盖代码，不删除运行数据
-unzip -o hashmm-server-V2802-20260812-150306.zip -d /root/autodl-tmp
-
-# 4. 诊断并启动
-chmod +x start-hashmm1.sh
-./start-hashmm1.sh doctor
-./start-hashmm1.sh
-```
+预打包下载已撤下。请在独立目录准备并测试源码候选，备份配置和数据库，再按实际部署方式切换代码。不能用示例配置覆盖已有 `.env`。
 
 升级时必须保留：
 
@@ -122,12 +77,4 @@ curl -fsS https://your-hashmm-domain.example/api/health
 
 ## 回滚
 
-代码回滚前先保留失败日志和当前版本清单，不要删除用户数据：
-
-```bash
-cd /root/autodl-tmp
-cp -p .env.before-v2802 .env
-chmod 600 .env
-```
-
-然后恢复上一版经过校验的服务器包并重新运行 `doctor`。数据库 schema 已升级时，应按照对应迁移文档执行向前修复，不要直接删除数据库文件。
+代码回滚前保留失败日志、当前版本和配置备份，不要删除用户数据。恢复自己验证过的上一版代码与兼容配置；数据库 schema 已升级时按对应迁移文档修复，不能直接删除数据库。
