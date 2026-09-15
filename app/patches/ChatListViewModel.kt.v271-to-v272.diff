@@ -1,0 +1,27 @@
+--- app_pr/HashMM-App-V271/app/src/main/java/com/hashmm/app/ui/chat/ChatListViewModel.kt	2026-07-10 14:40:15.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/chat/ChatListViewModel.kt	2026-07-10 15:28:56.969351639 +0000
+@@ -58,8 +58,10 @@
+ 
+     fun load() {
+         viewModelScope.launch {
+-            // 本地缓存秒显（离线可看）
+-            val cached = sync.cachedConversations()
++            // 本地缓存秒显（离线可看）——V272：显式按最新在前排序，不依赖缓存写入顺序
++            val cached = sync.cachedConversations().sortedByDescending {
++                com.hashmm.app.ui.chat.ChatMessageOps.convSortKey(it.updatedAt, it.createdAt)
++            }
+             if (cached.isNotEmpty()) {
+                 _ui.value = _ui.value.copy(loading = false, conversations = cached)
+             }
+@@ -69,7 +71,10 @@
+ 
+     private suspend fun syncNow() {
+         _ui.value = _ui.value.copy(syncing = true, error = null)
+-        val fresh = sync.syncConversations()
++        // V272：无论增量同步是否有变更，展示前统一按 updatedAt 最新在前排序——根治"最新的在最底下"。
++        val fresh = sync.syncConversations().sortedByDescending {
++            com.hashmm.app.ui.chat.ChatMessageOps.convSortKey(it.updatedAt, it.createdAt)
++        }
+         _ui.value = _ui.value.copy(loading = false, syncing = false, conversations = fresh)
+     }
+ 

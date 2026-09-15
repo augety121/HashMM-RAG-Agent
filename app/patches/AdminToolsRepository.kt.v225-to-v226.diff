@@ -1,0 +1,31 @@
+--- /tmp/b-AdminToolsRepository.kt	2026-07-04 00:07:44.190193796 +0000
++++ app/src/main/java/com/hashmm/app/data/remote/AdminToolsRepository.kt	2026-07-04 00:07:05.922762673 +0000
+@@ -18,7 +18,7 @@
+  *  端点与桌面端 lib/api.ts 完全同款（audit/tools · admin/quality/dashboard ·
+  *  dispatch · credentials · kb/quarantine · images），只读 v1；操作仍在桌面端。 */
+ 
+-data class NotifItem(val type: String, val text: String, val by: String, val tsSec: Long, val read: Boolean)
++data class NotifItem(val type: String, val text: String, val by: String, val tsSec: Long, val read: Boolean, val shareId: String = "")
+ data class NotifData(val items: List<NotifItem> = emptyList(), val unread: Int = 0, val error: String? = null)
+ data class AuditItem(val tool: String, val user: String, val tsSec: Long)
+ data class QualityData(val stats: List<Pair<String, String>> = emptyList(), val error: String? = null)
+@@ -92,11 +92,18 @@
+         for (i in 0 until arr.length()) {
+             val e = arr.optJSONObject(i) ?: continue
+             out.add(NotifItem(e.optString("type"), e.optString("text"), e.optString("by"),
+-                sec(e.optDouble("ts", 0.0)), e.optBoolean("read", false)))
++                sec(e.optDouble("ts", 0.0)), e.optBoolean("read", false), e.optString("share_id", "")))
+         }
+         return NotifData(items = out, unread = o.optInt("unread", 0))
+     }
+ 
++    /** V232 通知直达：拼 Viewer 完整地址（带登录态），无 base/token 回 null。 */
++    suspend fun viewerUrl(shareId: String): String? {
++        val base = base(); val token = auth.currentToken()
++        if (base.isBlank() || token.isNullOrBlank() || shareId.isBlank()) return null
++        return "$base/canvas/$shareId?token=" + java.net.URLEncoder.encode(token, "UTF-8")
++    }
++
+     suspend fun notificationsReadAll(): Boolean {
+         val base = base(); val token = auth.currentToken()
+         if (base.isBlank() || token.isNullOrBlank()) return false

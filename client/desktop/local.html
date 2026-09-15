@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>HashMM — 工作台</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;450;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:#F5F0E8; --paper-2:#FAF6EF; --paper-3:#EFE8DB; --card:#FBF8F2;
+    --ink:#191919; --ink-2:#5C564C; --ink-3:#8C8474;
+    --terra:#CC785C; --terra-2:#D97757; --terra-ink:#A85A40;
+    --line:#E2D9C8; --line-2:#D8CDB8; --green:#7A8B5E; --shadow:rgba(70,55,35,.13);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; }
+  body {
+    display:flex; flex-direction:column;
+    font-family:'Inter',-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--paper); color:var(--ink); -webkit-font-smoothing:antialiased;
+    font-size:13px;
+  }
+  /* ── 顶栏 ── */
+  .topbar {
+    display:flex; align-items:center; gap:12px; padding:10px 16px;
+    background:linear-gradient(180deg,var(--paper-3),#EBE3D4);
+    border-bottom:1px solid var(--line-2); flex-shrink:0;
+  }
+  .logo { width:34px; height:34px;
+    background:url("./assets/brand/hashmm-app-tile.svg") center/contain no-repeat; flex-shrink:0; }
+  .brand-name { font-family:'Fraunces',serif; font-weight:600; font-size:17px; line-height:1; }
+  .brand-en { font-family:'Geist Mono',monospace; font-size:8.5px; letter-spacing:2px;
+    color:var(--terra-ink); text-transform:uppercase; margin-top:3px; }
+  .backend-pill {
+    margin-left:auto; display:flex; align-items:center; gap:7px;
+    font-family:'Geist Mono',monospace; font-size:10.5px; color:var(--ink-2);
+    background:var(--card); border:1px solid var(--line); border-radius:999px;
+    padding:5px 12px; cursor:pointer; transition:border-color .15s;
+  }
+  .backend-pill:hover { border-color:var(--terra); }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--ink-3); }
+  .dot.on { background:var(--green); box-shadow:0 0 0 3px rgba(122,139,94,.18); }
+  .top-btn { border:1px solid var(--line); background:var(--card); color:var(--ink-2);
+    padding:6px 13px; border-radius:8px; font-size:12px; cursor:pointer; font-family:'Inter'; }
+  .top-btn:hover { border-color:var(--terra); color:var(--ink); }
+  .top-btn.accent { background:var(--terra); border-color:var(--terra); color:#fff; font-weight:600; }
+  .top-btn.accent:hover { background:var(--terra-2); }
+  /* ── 主体三栏 ── */
+  .main { flex:1; display:flex; min-height:0; }
+  .col-files { width:250px; flex-shrink:0; border-right:1px solid var(--line);
+    background:var(--paper-2); display:flex; flex-direction:column; }
+  .sec-label { font-family:'Geist Mono',monospace; font-size:9px; letter-spacing:1.6px;
+    text-transform:uppercase; color:var(--ink-3); padding:12px 14px 7px;
+    display:flex; align-items:center; gap:8px; }
+  .sec-label::after { content:""; flex:1; height:1px; background:var(--line); }
+  .roots { padding:0 8px 6px; }
+  .root-item, .f-item {
+    display:flex; align-items:center; gap:8px; padding:6px 9px; border-radius:7px;
+    cursor:pointer; color:var(--ink-2); font-size:12.5px;
+  }
+  .root-item:hover, .f-item:hover { background:var(--paper-3); color:var(--ink); }
+  .f-item.active { background:rgba(204,120,92,.12); color:var(--terra-ink); }
+  .f-icon { width:15px; text-align:center; flex-shrink:0; font-size:12px; }
+  .f-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .f-size { font-family:'Geist Mono',monospace; font-size:9px; color:var(--ink-3); }
+  .filelist { flex:1; overflow-y:auto; padding:0 8px 12px; }
+  .crumbs { padding:8px 14px 2px; font-family:'Geist Mono',monospace; font-size:10px;
+    color:var(--ink-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .crumbs span { cursor:pointer; } .crumbs span:hover { color:var(--terra-ink); }
+  /* ── 预览 ── */
+  .col-preview { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--card); }
+  .pv-head { padding:11px 18px; border-bottom:1px solid var(--line);
+    font-family:'Geist Mono',monospace; font-size:11px; color:var(--ink-2);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pv-body { flex:1; overflow:auto; padding:0; }
+  .pv-empty { height:100%; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; color:var(--ink-3); gap:10px; }
+  .pv-empty .big { font-family:'Fraunces',serif; font-size:17px; color:var(--ink-2); }
+  pre.code { margin:0; padding:16px 20px; font-family:'Geist Mono',monospace;
+    font-size:12px; line-height:1.65; color:var(--ink); white-space:pre-wrap;
+    word-break:break-word; tab-size:4; }
+  img.pv-img { max-width:100%; display:block; margin:18px auto; border-radius:8px;
+    box-shadow:0 8px 28px var(--shadow); }
+  /* ── 右侧卡栏 ── */
+  .col-side { width:295px; flex-shrink:0; border-left:1px solid var(--line);
+    background:var(--paper-2); overflow-y:auto; padding:14px; }
+  .card-x { background:var(--card); border:1px solid var(--line); border-radius:13px;
+    padding:15px 16px; margin-bottom:13px; box-shadow:0 4px 18px rgba(70,55,35,.06); }
+  .card-x h3 { font-family:'Fraunces',serif; font-weight:600; font-size:14.5px; margin:0 0 4px; }
+  .card-x .sub { font-size:11px; color:var(--ink-3); margin-bottom:11px; line-height:1.6; }
+  input.field { width:100%; padding:9px 11px; border-radius:8px; border:1px solid var(--line-2);
+    background:var(--paper-2); color:var(--ink); font-size:12.5px; outline:none;
+    font-family:'Geist Mono',monospace; margin-bottom:8px; }
+  input.field:focus { border-color:var(--terra); box-shadow:0 0 0 3px rgba(204,120,92,.12); }
+  button.go { width:100%; padding:10px; border:0; border-radius:8px; background:var(--terra);
+    color:#fff; font-size:13px; font-weight:600; cursor:pointer; font-family:'Inter'; }
+  button.go:hover { background:var(--terra-2); }
+  button.go:disabled { opacity:.5; }
+  .status { font-size:11px; min-height:15px; margin-top:7px; line-height:1.5; }
+  .status.err { color:#C0392B; } .status.ok { color:var(--green); } .status.info { color:var(--ink-3); }
+  .usage-row { display:flex; justify-content:space-between; align-items:baseline;
+    padding:6px 0; border-bottom:1px dashed var(--line); }
+  .usage-row:last-child { border-bottom:0; }
+  .u-label { font-size:11.5px; color:var(--ink-2); }
+  .u-val { font-family:'Geist Mono',monospace; font-size:12.5px; color:var(--ink); font-weight:500; }
+  .u-sub { font-family:'Geist Mono',monospace; font-size:9px; color:var(--ink-3); }
+  .none { font-size:11px; color:var(--ink-3); padding:4px 0; }
+  .recent-item { display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px;
+    border:1px solid var(--line); background:var(--paper-2); margin-bottom:6px; cursor:pointer; }
+  .recent-item:hover { border-color:var(--terra); }
+  .recent-url { flex:1; font-family:'Geist Mono',monospace; font-size:10.5px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .recent-ms { font-family:'Geist Mono',monospace; font-size:9px; color:var(--green); }
+  .recent-ms.bad { color:#C0392B; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo" role="img" aria-label="HashMM Observer"></div>
+    <div>
+      <div class="brand-name">HashMM</div>
+      <div class="brand-en">Local-first RAG Agent</div>
+    </div>
+    <div class="backend-pill" id="pill" title="点击连接/切换后端">
+      <span class="dot" id="pillDot"></span><span id="pillText">本机模式 · 未连接后端</span>
+    </div>
+    <button class="top-btn accent" id="btnTerm">终端驾驶舱</button>
+  </div>
+
+  <div class="main">
+    <!-- 左：文件树 -->
+    <div class="col-files">
+      <div class="sec-label">位置</div>
+      <div class="roots" id="roots"></div>
+      <div class="sec-label">文件</div>
+      <div style="padding:0 12px 4px">
+        <input class="field" id="searchBox" placeholder="搜索文件名… (≥2字符)" style="margin-bottom:4px;font-size:11.5px;padding:7px 10px" />
+      </div>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="filelist" id="filelist"></div>
+    </div>
+
+    <!-- 中：预览 -->
+    <div class="col-preview">
+      <div class="pv-head" id="pvHead">选择左侧文件预览</div>
+      <div class="pv-body" id="pvBody">
+        <div class="pv-empty">
+          <div class="big">本机工作台</div>
+          <div>浏览/预览本机文件 · 终端指挥 Claude Code / Codex · 不连后端也能用</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：连接 + Agent 用量 -->
+    <div class="col-side">
+      <div class="card-x">
+        <h3>连接 HashMM 后端</h3>
+        <div class="sub">连上 GPU 服务器后端，解锁对话 / 检索 / 知识图谱 / Agent 全功能。
+          直接填 <b>IP:端口</b> 即可。</div>
+        <div id="recentList"></div>
+        <input class="field" id="url" placeholder="111.115.7.14:20014" />
+        <input class="field" id="token" type="password" placeholder="访问令牌（可选）" />
+        <button class="go" id="btnConnect">连接</button>
+        <div class="status info" id="connStatus"></div>
+      </div>
+
+      <div class="card-x">
+        <h3>Coding Agent 用量</h3>
+        <div class="sub">本机 Claude Code / Codex 的 token 消耗（读取 ~/.claude 与 ~/.codex）</div>
+        <div id="usageBox"><div class="none">读取中…</div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const L = window.hashmmLocal, D = window.hashmmDesktop, T = window.hashmmTerm;
+
+  // ── 后端连接 ──
+  function normalizeUrl(raw) {
+    let u = String(raw || "").trim().replace(/\s+/g, "");
+    if (!u) return "";
+    const m = u.match(/^(https?:\/\/)+/i);
+    if (m) { const sc = u.match(/https?:\/\//gi) || []; u = sc[sc.length-1] + u.slice(m[0].length); }
+    else u = "http://" + u;
+    return u.replace(/\/+$/, "");
+  }
+  function setConn(msg, kind) { const el = $("connStatus"); el.textContent = msg; el.className = "status " + (kind||"info"); }
+  async function connectTo(raw, token) {
+    const url = normalizeUrl(raw);
+    if (!/^https?:\/\/.+/.test(url)) { setConn("地址无效，请填 IP:端口", "err"); return; }
+    $("url").value = url; $("btnConnect").disabled = true;
+    setConn("正在连接 " + url + " …", "info");
+    try {
+      const ok = await D.connect({ url, token });
+      if (ok && ok.success) setConn("连接成功（" + ok.ms + "ms），正在加载…", "ok");
+      else { setConn((ok && ok.error) || "连接失败", "err"); $("btnConnect").disabled = false; }
+    } catch (e) { setConn("出错：" + (e.message || e), "err"); $("btnConnect").disabled = false; }
+  }
+  $("btnConnect").addEventListener("click", () => connectTo($("url").value, $("token").value.trim()));
+  $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnConnect").click(); });
+  (() => { const err = new URLSearchParams(location.search).get("err"); if (err) setConn(err, "err"); })();
+
+  // 预填 + 最近列表 + 顶部胶囊状态
+  (async () => {
+    try {
+      const cfg = await D.getConfig();
+      if (cfg && cfg.url) {
+        $("url").value = cfg.url;
+        // 后台探活：可达就把胶囊点亮（用户点胶囊一键连）
+        D.probe(cfg.url).then((p) => {
+          if (p && p.ok) {
+            $("pillDot").className = "dot on";
+            $("pillText").textContent = cfg.url.replace(/^https?:\/\//, "") + " · " + p.ms + "ms · 点击进入";
+            $("pill").onclick = () => connectTo(cfg.url, cfg.token || "");
+          } else {
+            $("pillText").textContent = "本机模式 · 后端离线";
+            $("pill").onclick = () => $("url").focus();
+          }
+        }).catch(() => {});
+      } else { $("pill").onclick = () => $("url").focus(); }
+      if (cfg && cfg.token) $("token").value = cfg.token;
+      const recent = (cfg && cfg.recent) || [];
+      const list = $("recentList");
+      for (const r of recent.slice(0, 3)) {
+        const row = document.createElement("div");
+        row.className = "recent-item";
+        row.innerHTML = '<span class="recent-url"></span><span class="recent-ms">…</span>';
+        row.querySelector(".recent-url").textContent = r.url.replace(/^https?:\/\//, "");
+        row.addEventListener("click", () => connectTo(r.url, r.token || ""));
+        list.appendChild(row);
+        D.probe(r.url).then((p) => {
+          const ms = row.querySelector(".recent-ms");
+          if (p && p.ok) ms.textContent = p.ms + "ms";
+          else { ms.textContent = "离线"; ms.className = "recent-ms bad"; }
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  })();
+
+  // ── 终端 ──
+  $("btnTerm").addEventListener("click", () => {
+    // 主进程菜单走 Ctrl+Shift+T；这里发个快捷通道：直接 spawn 独立窗口由主进程处理
+    try { D.openTerminal ? D.openTerminal() : window.dispatchEvent(new Event("noop")); } catch (_) {}
+  });
+
+  // ── 文件工作台 ──
+  let curDir = "";
+  const ICON = (it) => it.dir ? "DIR" : ({".md":"MD",".py":"PY",".js":"JS",".ts":"TS",".json":"JSON",
+    ".png":"IMG",".jpg":"IMG",".jpeg":"IMG",".gif":"IMG",".html":"HTML",".css":"CSS"}[fileExt(it.name)] || "FILE");
+  function fileExt(n) { const i = n.lastIndexOf("."); return i >= 0 ? n.slice(i).toLowerCase() : ""; }
+  function fmtSize(b) { return b > 1048576 ? (b/1048576).toFixed(1)+"M" : b > 1024 ? (b/1024).toFixed(0)+"K" : b+"B"; }
+
+  async function loadRoots() {
+    const r = await L.roots();
+    if (!r || !r.ok) return;
+    const box = $("roots"); box.innerHTML = "";
+    for (const root of r.roots) {
+      const el = document.createElement("div");
+      el.className = "root-item";
+      el.innerHTML = '<span class="f-icon">DIR</span><span class="f-name"></span>';
+      el.querySelector(".f-name").textContent = root.name;
+      el.addEventListener("click", () => openDir(root.path));
+      box.appendChild(el);
+    }
+    if (r.roots[0]) openDir(r.roots[0].path);
+  }
+
+  async function openDir(dir) {
+    const r = await L.list(dir);
+    if (!r || !r.ok) return;
+    curDir = r.dir;
+    // 面包屑
+    const parts = r.dir.split(/[\\/]/).filter(Boolean);
+    const cr = $("crumbs"); cr.innerHTML = "";
+    let acc = r.dir.startsWith("/") ? "" : "";
+    const sep = r.dir.includes("\\") ? "\\" : "/";
+    parts.forEach((p, i) => {
+      acc += (i === 0 && !r.dir.startsWith("/") ? "" : sep) + p;
+      const target = (r.dir.startsWith("/") ? "/" : "") + parts.slice(0, i+1).join(sep);
+      const sp = document.createElement("span");
+      sp.textContent = (i ? " / " : "") + p;
+      sp.addEventListener("click", () => openDir(target));
+      cr.appendChild(sp);
+    });
+    // 列表
+    const box = $("filelist"); box.innerHTML = "";
+    for (const it of r.items) {
+      const el = document.createElement("div");
+      el.className = "f-item";
+      el.innerHTML = '<span class="f-icon"></span><span class="f-name"></span><span class="f-size"></span>';
+      el.querySelector(".f-icon").textContent = ICON(it);
+      el.querySelector(".f-name").textContent = it.name;
+      el.querySelector(".f-size").textContent = it.dir ? "" : fmtSize(it.size);
+      el.addEventListener("click", () => {
+        if (it.dir) openDir(it.path);
+        else preview(it, el);
+      });
+      box.appendChild(el);
+    }
+  }
+
+  async function preview(it, el) {
+    document.querySelectorAll(".f-item.active").forEach((x) => x.classList.remove("active"));
+    if (el) el.classList.add("active");
+    $("pvHead").textContent = it.path;
+    const body = $("pvBody");
+    body.innerHTML = '<div class="pv-empty"><div>读取中…</div></div>';
+    const r = await L.read(it.path);
+    if (!r || !r.ok) {
+      body.innerHTML = '<div class="pv-empty"><div class="big">无法预览</div><div></div></div>';
+      body.querySelector("div div:last-child").textContent = (r && r.error) || "未知错误";
+      return;
+    }
+    if (r.kind === "image") {
+      body.innerHTML = "";
+      const img = document.createElement("img");
+      img.className = "pv-img"; img.src = r.dataUrl;
+      body.appendChild(img);
+    } else {
+      body.innerHTML = "";
+      const pre = document.createElement("pre");
+      pre.className = "code"; pre.textContent = r.text;
+      body.appendChild(pre);
+    }
+  }
+
+  // ── Agent 用量 ──
+  function fmtTok(n) { return n > 1e6 ? (n/1e6).toFixed(2)+"M" : n > 1e3 ? (n/1e3).toFixed(1)+"K" : String(n||0); }
+  async function loadUsage() {
+    try {
+      const u = await L.agentUsage();
+      const box = $("usageBox"); box.innerHTML = "";
+      if (u && u.claude) {
+        const rows = [["近 5 小时", u.claude.last5h], ["今天", u.claude.today], ["近 7 天", u.claude.week]];
+        const h = document.createElement("div");
+        h.innerHTML = '<div class="u-sub" style="margin-bottom:4px">CLAUDE CODE</div>';
+        box.appendChild(h);
+        for (const [label, b] of rows) {
+          const row = document.createElement("div");
+          row.className = "usage-row";
+          row.innerHTML = '<span class="u-label"></span><span><span class="u-val"></span> <span class="u-sub"></span></span>';
+          row.querySelector(".u-label").textContent = label;
+          row.querySelector(".u-val").textContent = fmtTok(b.total);
+          row.querySelector(".u-sub").textContent = b.msgs + " msgs";
+          box.appendChild(row);
+        }
+      }
+      if (u && u.codex) {
+        const h = document.createElement("div");
+        h.innerHTML = '<div class="u-sub" style="margin:10px 0 4px">CODEX</div>';
+        box.appendChild(h);
+        const t = u.codex.tokens || {};
+        const row = document.createElement("div");
+        row.className = "usage-row";
+        row.innerHTML = '<span class="u-label">累计 tokens</span><span class="u-val"></span>';
+        row.querySelector(".u-val").textContent = fmtTok(t.total_tokens || ((t.input_tokens||0)+(t.output_tokens||0)));
+        box.appendChild(row);
+        const rl = u.codex.rate_limits || {};
+        const pct = rl.primary && rl.primary.used_percent;
+        if (pct != null) {
+          const r2 = document.createElement("div");
+          r2.className = "usage-row";
+          r2.innerHTML = '<span class="u-label">5h 窗口已用</span><span class="u-val"></span>';
+          r2.querySelector(".u-val").textContent = pct + "%";
+          box.appendChild(r2);
+        }
+      }
+      if (!u || (!u.claude && !u.codex)) {
+        box.innerHTML = '<div class="none">本机未检测到 Claude Code / Codex 会话记录。'+
+          '在终端驾驶舱跑过 agent 后，这里会显示 token 消耗。</div>';
+      }
+    } catch (_) {
+      $("usageBox").innerHTML = '<div class="none">读取失败</div>';
+    }
+  }
+
+  // 搜索（防抖 300ms，清空回到目录视图）
+  let searchTimer = null;
+  $("searchBox").addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    const q = $("searchBox").value.trim();
+    searchTimer = setTimeout(async () => {
+      if (q.length < 2) { if (curDir) openDir(curDir); return; }
+      const r = await L.search(curDir, q);
+      if (!r || !r.ok) return;
+      const box = $("filelist"); box.innerHTML = "";
+      $("crumbs").textContent = "搜索 \"" + q + "\" · " + r.items.length + " 个结果";
+      for (const it of r.items) {
+        const el = document.createElement("div");
+        el.className = "f-item";
+        el.innerHTML = '<span class="f-icon"></span><span class="f-name"></span><span class="f-size"></span>';
+        el.querySelector(".f-icon").textContent = ICON(it);
+        el.querySelector(".f-name").textContent = it.name;
+        el.title = it.path;
+        el.addEventListener("click", () => { if (it.dir) { $("searchBox").value=""; openDir(it.path); } else preview(it, el); });
+        box.appendChild(el);
+      }
+      if (!r.items.length) box.innerHTML = '<div class="none" style="padding:8px 10px">无匹配</div>';
+    }, 300);
+  });
+
+  loadRoots();
+  loadUsage();
+  setInterval(loadUsage, 30000);
+</script>
+</body>
+</html>

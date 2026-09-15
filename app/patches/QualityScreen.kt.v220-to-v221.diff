@@ -1,0 +1,126 @@
+--- /tmp/b-QualityScreen.kt	2026-07-03 15:48:45.718012960 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/QualityScreen.kt	2026-07-03 15:43:48.298850392 +0000
+@@ -3,25 +3,16 @@
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Column
+-import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxSize
+-import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.padding
+-import androidx.compose.foundation.layout.width
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.itemsIndexed
+-import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material.icons.Icons
+-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+ import androidx.compose.material.icons.outlined.BarChart
+ import androidx.compose.material3.ExperimentalMaterial3Api
+-import androidx.compose.material3.Icon
+-import androidx.compose.material3.IconButton
+ import androidx.compose.material3.MaterialTheme
+-import androidx.compose.material3.Surface
+-import androidx.compose.material3.Text
+ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
+@@ -30,19 +21,16 @@
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.setValue
+-import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+-import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.unit.dp
+-import androidx.compose.ui.unit.sp
+ import androidx.hilt.navigation.compose.hiltViewModel
+ import com.hashmm.app.data.remote.QualityData
+ import com.hashmm.app.ui.components.HmmStateKind
+ import com.hashmm.app.ui.components.HmmStateView
+-import com.hashmm.app.ui.theme.AppType
+ import kotlinx.coroutines.launch
+ 
+-/** V219 质量看板（原生）：/api/admin/quality/dashboard 关键指标（字段后端原样，不造数）。 */
++/** V221 质量看板（Kit 重铸）：核心三格 + 中文指标行（英文原名作副题溯源）。
++ *  字段映射对齐后端 quality_monitor.dashboard；未知字段回退原名，绝不造数。 */
+ @OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ fun QualityScreen(onBack: () -> Unit, viewModel: AdminToolsViewModel = hiltViewModel()) {
+@@ -53,33 +41,59 @@
+     LaunchedEffect(Unit) { reload() }
+     val d = data
+     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp),
+-            verticalAlignment = Alignment.CenterVertically) {
+-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回") }
+-            Spacer(Modifier.width(4.dp))
+-            Column {
+-                Text("质量看板", style = AppType.screenTitle, color = MaterialTheme.colorScheme.onSurface)
+-                Text("近 7 天关键指标（与电脑端同源）", style = AppType.subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+-            }
+-        }
++        ModuleHeader(Icons.Outlined.BarChart, "质量看板", "近 7 天关键指标（与电脑端同源）", onBack)
+         PullToRefreshBox(isRefreshing = refreshing, onRefresh = { reload() }, modifier = Modifier.fillMaxSize()) {
+             when {
+                 d == null -> HmmStateView(kind = HmmStateKind.Loading, title = "加载中")
+                 d.error != null -> HmmStateView(kind = HmmStateKind.Error, title = "加载失败", message = d.error!!, onRetry = { reload() })
+                 d.stats.isEmpty() -> HmmStateView(kind = HmmStateKind.Empty, icon = Icons.Outlined.BarChart,
+                     title = "暂无指标", message = "跑几轮问答/评测后这里会出现质量数据")
+-                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+-                    itemsIndexed(d.stats, key = { i, _ -> "q$i" }) { _, (k, v) ->
+-                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(13.dp), modifier = Modifier.fillMaxWidth()) {
+-                            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+-                                Text(k, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+-                                Text(v, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
++                else -> {
++                    val raw = d.stats.toMap()
++                    fun num(k: String): Double? = raw[k]?.toDoubleOrNull()
++                    fun pct(k: String): String = num(k)?.let { String.format("%.0f%%", it * 100) } ?: "—"
++                    fun cnt(k: String): String = num(k)?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format("%.1f", it) } ?: "—"
++                    val core = setOf("days", "samples", "avg_grounded_ratio", "avg_citations")
++                    val rows = d.stats.filter { it.first !in core }.map { (k, v) -> Triple(k, v, qualityLabel(k)) }
++                    Column(Modifier.fillMaxSize()) {
++                        StatTriple("样本数" to cnt("samples"), "有据率" to pct("avg_grounded_ratio"),
++                            "平均引用" to cnt("avg_citations"), toneB = KitTone.Success)
++                        Spacer(Modifier.height(10.dp))
++                        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
++                            itemsIndexed(rows, key = { i, _ -> "q$i" }) { _, (k, v, label) ->
++                                val show = when {
++                                    k.endsWith("_ratio") || k.endsWith("_rate") ->
++                                        v.toDoubleOrNull()?.let { if (it <= 1.0) String.format("%.0f%%", it * 100) else v } ?: v
++                                    k.endsWith("_ms") -> v.toDoubleOrNull()?.let { String.format("%.0f ms", it) } ?: v
++                                    else -> v
++                                }
++                                val tone = when {
++                                    k.contains("weak") || k.contains("without") ->
++                                        if ((v.toDoubleOrNull() ?: 0.0) > 0) KitTone.Warn else KitTone.Success
++                                    else -> KitTone.Primary
++                                }
++                                MetricRow(label = label, value = show, hint = k, tone = tone)
+                             }
++                            item { Spacer(Modifier.height(12.dp)) }
+                         }
+                     }
+-                    item { Spacer(Modifier.height(12.dp)) }
+                 }
+             }
+         }
+     }
+ }
++
++/** 指标中文映射（对齐 quality_monitor.dashboard 字段；未知回退原名）。 */
++internal fun qualityLabel(k: String): String = when (k) {
++    "days" -> "统计天数"
++    "samples" -> "抽检样本"
++    "avg_grounded_ratio" -> "平均有据率"
++    "avg_sources" -> "平均引用源数"
++    "avg_citations" -> "平均引用条数"
++    "avg_latency_ms" -> "平均响应耗时"
++    "answers_without_sources" -> "无来源回答数"
++    "weakly_grounded" -> "弱依据回答数"
++    "weak_rate" -> "弱依据占比"
++    "sample_rate" -> "抽检比例"
++    else -> k
++}
