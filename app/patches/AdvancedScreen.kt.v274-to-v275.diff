@@ -1,0 +1,20 @@
+--- app_pr/a/app/src/main/java/com/hashmm/app/ui/workbench/AdvancedScreen.kt	2026-07-11 02:37:37.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/workbench/AdvancedScreen.kt	2026-07-11 03:49:47.268312704 +0000
+@@ -55,14 +55,14 @@
+ @Composable
+ fun AdvancedScreen(onBack: () -> Unit, viewModel: AdminToolsViewModel = hiltViewModel()) {
+     val scope = rememberCoroutineScope()
+-    var data by remember { mutableStateOf<AdvancedData?>(null) }
++    var data by remember { mutableStateOf(WorkbenchCache.advanced) }   // V275 跨导航持久化
+     var refreshing by remember { mutableStateOf(false) }
+     // V220 一键派活：kind 非空=弹输入框；lastMsg=派活结果提示
+     var askKind by remember { mutableStateOf("") }
+     var askText by remember { mutableStateOf("") }
+     var lastMsg by remember { mutableStateOf("") }
+-    fun reload() { scope.launch { refreshing = true; data = viewModel.advanced(); refreshing = false } }
+-    LaunchedEffect(Unit) { reload() }
++    fun reload() { scope.launch { refreshing = true; data = viewModel.advanced().also { WorkbenchCache.advanced = it }; refreshing = false } }
++    LaunchedEffect(Unit) { if (WorkbenchCache.advanced == null) reload() }
+     val d = data
+     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+         ModuleHeader(Icons.Outlined.Send, "高级能力", "派活 · 凭据 · 隔离 · 图库（轻操作，管理在电脑端）", onBack)

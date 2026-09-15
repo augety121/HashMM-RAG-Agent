@@ -1,0 +1,38 @@
+--- /tmp/app-v215-base/src/main/java/com/hashmm/app/data/remote/FeedRepository.kt	2026-07-03 10:17:15.444450387 +0000
++++ app/src/main/java/com/hashmm/app/data/remote/FeedRepository.kt	2026-07-03 10:17:15.473840031 +0000
+@@ -26,6 +26,7 @@
+ data class FeedConv(val id: String, val title: String, val updatedAtSec: Long)
+ data class FeedRunner(val name: String, val online: Boolean)
+ data class FeedScheduled(val name: String, val enabled: Boolean, val lastRunSec: Long, val lastResult: String)
++data class FeedRun(val title: String, val status: String, val tsSec: Long, val ts: Long)
+ data class FeedEpisode(val summary: String, val createdAtSec: Long)
+ data class FeedData(
+     val release: String = "",
+@@ -35,6 +36,7 @@
+     val scheduled: List<FeedScheduled> = emptyList(),
+     val scheduledCount: Int = -1,      // 普通用户只拿数量；-1=未知
+     val episodes: List<FeedEpisode> = emptyList(),
++    val runs: List<FeedRun> = emptyList(),
+     val error: String? = null,         // 非空=硬失败（连兼容模式都拉不到）
+     val notice: String? = null,        // 非空=软提示（如兼容模式：老后端降级运行）
+ )
+@@ -132,10 +134,18 @@
+                     val sum = e.optString("summary", "")
+                     if (sum.isNotBlank()) eps.add(FeedEpisode(sum, sec(e.optDouble("created_at", 0.0))))
+                 }
++                val runs = mutableListOf<FeedRun>()
++                o.optJSONArray("runs")?.forEach { r ->
++                    val title = r.optString("title", "")
++                    if (title.isNotBlank()) runs.add(
++                        FeedRun(title = title, status = r.optString("status", ""),
++                            tsSec = sec(r.optDouble("ts", 0.0)), ts = r.optLong("ts", 0L))
++                    )
++                }
+                 FeedData(
+                     release = o.optString("release", ""),
+                     files = files, convs = convs, runners = runners,
+-                    scheduled = sched, scheduledCount = schedCount, episodes = eps,
++                    scheduled = sched, scheduledCount = schedCount, episodes = eps, runs = runs,
+                 )
+             }
+         } catch (e: Exception) {

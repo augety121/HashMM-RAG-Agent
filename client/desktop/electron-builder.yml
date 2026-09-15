@@ -1,0 +1,187 @@
+# HashMM 桌面端打包配置（electron-builder）
+# 抽成独立文件的原因：package.json 的 "build" 段被 electron-builder 严格 schema 校验，
+# 不认任何未知属性（连 "//" 注释键都会直接报错退出）。yaml 支持 # 注释，更适合放说明。
+
+appId: com.hashmm.desktop
+productName: HashMM
+
+asar: true
+# 原生 .node 二进制必须解出 asar 才能在运行时被 require。
+# 这些都随 app 自带（在 app 自己的 resources 里加载），**不在用户系统安装任何东西**。
+asarUnpack:
+  - "**/node_modules/node-pty/**"
+  - "**/node_modules/onnxruntime-node/**"   # V101: 本地 OCR 推理，原生模块随包自带
+
+files:
+  - icon.png             # V2101: Observer V4 窗口图标；托盘使用 assets/brand 的专用小尺寸版本
+  - main.js
+  - preload.js
+  - browser-preload.js   # V339 共享浏览器窗口的窄 contextBridge；不暴露 Node/通用 IPC
+  - shellserver.js
+  - backendmgr.js
+  - localrag.js
+  - semantic.js
+  - localllm.js          # V103.90 方案3：本地 LLM 推理。main.js 启动期 require 它，必须随包，否则打包后 asar 内缺失、require 抛错、主进程启动即崩（双击没反应）
+  - remote-protocol.js   # V103.90 远控控制协议：remote-host.html(nodeIntegration) 运行时 require，必须随包
+  - remote-quality.js    # V103.90 远控自适应质量/编码偏好：remote-host.html 运行时 require，必须随包
+  - remote-extras.js     # V103.90 远控剪贴板同步/会话录制控制器：remote-host.html 运行时 require，必须随包
+  - client-validate.js   # V103.90 客户端输入校验/错误归类（待接入连接表单/主进程）
+  - llm-preflight.js     # V103.90 模型连通性预检：main.js llm:testConnection 运行时 require，必须随包
+  - cu-describe.js       # V103.90 Computer Use 动作可视化：preload 运行时 require，必须随包
+  - localllm-setup.js    # V103.90 本地模型安装向导：preload 运行时 require，必须随包
+  - deepsearch-format.js # V103.90 深度检索结果展示：preload 运行时 require，必须随包
+  - chat-markdown.js     # V103.90 聊天 Markdown 渲染：preload 运行时 require，必须随包
+  - semantic-status.js   # V103.90 语义检索状态：preload 运行时 require，必须随包
+  - shot-annotate.js     # V103.90 截图标注几何：preload 运行时 require，必须随包
+  - filetransfer-extras.js # V103.90 文件传输续传/速度：备续传接线，随包
+  - config-portability.js # V103.90 配置导入导出：preload 运行时 require，必须随包
+  - conversation-store.js # V103.90 对话历史持久化：preload 运行时 require，必须随包
+  - preferences.js       # V103.90 偏好设置：preload 运行时 require，必须随包
+  - notify-core.js       # V103.90 桌面通知/未读：main.js 运行时 require，必须随包
+  - checkpoint.js        # V300 第二期 执行检查点/Rewind：main.js 运行时 require，必须随包，否则装机后 asar 内缺失、require 抛错
+  - command-palette.js   # V103.90 命令面板模糊匹配：preload 运行时 require，必须随包
+  - tab-manager.js       # V103.90 多标签会话：preload 运行时 require，必须随包
+  - chat-export.js       # V103.90 对话导出：preload 运行时 require，必须随包
+  - message-search.js    # V103.90 会话内搜索：preload 运行时 require，必须随包
+  - message-actions.js   # V103.90 单条消息操作：preload 运行时 require，必须随包
+  - attachment-manager.js # V103.90 附件管理：preload 运行时 require，必须随包
+  - i18n/i18n.js         # V103.90 多语言引擎（V100）：preload 运行时 require，必须随包
+  - i18n/zh-CN.json      # V103.90 中文词典：i18n.loadDir 运行时读取，必须随包
+  - i18n/en.json         # V103.90 英文词典：i18n.loadDir 运行时读取，必须随包
+  - computeruse.js
+  - agent-loop.js       # V103 修复：cu:runLoop 在 main.js 里 require 它，必须随包，否则打包后启动即崩（双击没反应）
+  - modules/**          # V99: 主进程拆出的模块（semantic-serve 等）必须随包，否则 app.asar 内 require 缺失直接崩溃（V98 事故根因）
+  - installer/**        # V100: 全自绘安装器（无边框窗口 UI + 引擎），portable 目标用
+  - mcp/**              # V100: MCP 工具层（server/host/registry/whitelist）—— 对标 Marvis MCP Agent 层
+  - logging/**          # V100: 结构化日志系统（分级/轮转/脱敏）—— 对标 Marvis logs/
+  - i18n/**             # V100: 国际化（zh-CN/en + 回退/插值/复数）—— 对标 Marvis i18n/
+  - storage/**          # V100: 用户数据/工作区（默认安装目录内 HashMM Files，可改路径）
+  - models/**           # V101: 本地模型管理（能力检测 + 本地/云端决策）—— 对标 Marvis models/
+  - services/**         # V101: 服务化骨架（service locator + ModelService）—— 对标 Marvis 多服务结构
+  - isolation/**        # V101: 环境隔离守卫（只写自己目录，不污染用户系统环境）
+  - app.html
+  - browser-cockpit.html # V339 实时共享浏览器/动作证据窗口
+  - screenshot.html
+  - remote-host.html      # V103.16: 投屏渲染进程页（隐藏窗，getDisplayMedia + WebRTC 推流），必须随包
+  - remote-viewer.html    # V103.16: 查看端网页（宿主 HTTP 吐给控制方浏览器；跨网络时可存盘发对方），必须随包
+  - default-backend.json
+  - assets/**
+  # V102：onnxruntime-node 只留 win-x64，丢掉 mac/linux/win-arm64 的预编译库
+  # （跨平台冗余是这个包的体积大头）。结构无关写法：无论内部目录怎么嵌套都命中，
+  # 且绝不会误删 win32/x64。本地 OCR 缺 onnxruntime 时 model-service.js 自动回退云端，
+  # 故仅留 win-x64 是安全的。
+  - "!**/node_modules/onnxruntime-node/**/darwin/**"
+  - "!**/node_modules/onnxruntime-node/**/linux/**"
+  - "!**/node_modules/onnxruntime-node/**/win32/arm64/**"
+
+# V87（Marvis 架构）：UI 与本地服务层随安装包走 ——
+#   webui   = frontend-next 静态导出（壳层服务器在 127.0.0.1 托管，前端版本不再被服务器绑架）
+#   backend = HashMM Python 后端源码 + 依赖清单（本机 sidecar：venv 在 userData 下创建，
+#             data/ 落用户目录；resources 目录保持只读）
+extraResources:
+  - from: ../frontend-next/out
+    to: webui
+  - from: ../hashmm
+    to: backend/hashmm
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+  - from: ../requirements.txt
+    to: backend/requirements.txt
+  - from: ../requirements-optional.txt
+    to: backend/requirements-optional.txt
+  # V203: 内置技能包（Agent Skills / SKILL.md）。sidecar 后端启动时从
+  # backend/skills/packs 播种到用户数据区（skill_packs.builtin_src_dir 会解析到这里）。
+  - from: ../skills/packs
+    to: backend/skills/packs
+  - from: ../CONFIG.md
+    to: backend/CONFIG.md
+  # V334: installer-native is the offline/reliable delivery path. Ship the
+  # already verified Python runtime so a clean PC does not need system Python
+  # or a download from a backend that has not started yet.
+  - from: runtime
+    to: runtime
+    filter:
+      - "runtime-info.json"
+      - "requirements.runtime.txt"
+      - "python/**"
+
+directories:
+  output: dist
+  buildResources: build
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    # V100: 全自绘安装器目标 —— portable 单 exe，首次运行弹无边框自绘安装窗口
+    # （installer/ui.html），自装到 %LOCALAPPDATA%\Programs\HashMM + 建快捷方式。
+    # 与 nsis 并存：自绘版有问题时 nsis 包仍可用，不把用户卡死。
+    - target: portable
+      arch:
+        - x64
+  artifactName: HashMM-Setup-${version}.${ext}
+  icon: build/icon.ico
+  # V334: reliable native delivery includes the runtime. Capability-pack
+  # downloads remain an optional repair/upgrade path, not first-boot setup.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  # nsis 与 portable 两个目标都产 .exe，必须各自命名避免覆盖。
+  # nsis（向导式，兜底版）→ HashMM-Setup-x.y.z.exe
+  artifactName: HashMM-Setup-${version}.${ext}
+  # V100: 微信式直装——不出"安装选项"页（customInstallMode 置 isForceCurrentInstall）
+  # 也不出目录页（下面 false）。默认装到 %LOCALAPPDATA%\Programs\HashMM，
+  # 与微信一致的"点一下就装"。如需自定义路径仍可在完成后移动或重装时改。
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: HashMM
+  # V97: 微信式安装体验
+  runAfterFinish: true               # 安装完成自动启动
+  deleteAppDataOnUninstall: false    # 卸载保留用户数据（重装可识别为更新、保留登录/知识库）
+  menuCategory: false
+  installerLanguages:
+    - zh_CN
+  language: "2052"                   # 简体中文安装界面
+  warningsAsErrors: false
+  # V100: 微信式单窗安装界面 —— 整页就是一张设计好的图。
+  # installerWelcome.bmp（493×312）铺满 nsDialogs 全窗首屏，logo/品牌渐变大按钮/
+  # 协议行全"烤"在图里，NSIS 侧只叠一个真勾选框；按钮与《用户协议》靠点击坐标
+  # hit-test（几何由 hm-welcome-geometry.nsh 提供）。侧栏/页眉 BMP 仍供卸载页与
+  # 进度页页眉使用。资产全部由 desktop/scripts/gen-installer-assets.py 生成。
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerSidebar: build/installerSidebar.bmp      # 164×314 卸载欢迎/完成页品牌图
+  uninstallerSidebar: build/uninstallerSidebar.bmp  # 卸载页深色变体（强调数据保留）
+  installerHeader: build/installerHeader.bmp        # 150×57 进度页页眉
+  include: build/installer.nsh
+
+# V100: 全自绘安装器（portable 目标）。单 exe，双击即弹无边框自绘窗口
+# （installer/ui.html，纯 HTML/CSS，无任何 NSIS 痕迹），自装 + 建快捷方式 + 写卸载信息。
+portable:
+  artifactName: HashMM-安装-${version}.${ext}   # 与 nsis 包区分，给用户的"自绘版"
+  requestExecutionLevel: user                    # 每用户安装，免管理员 UAC
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+
+# V81 自动更新：generic provider —— 你的 HashMM 后端就是更新服务器。
+# 发新版 = dist/ 里的 latest.yml + Setup.exe + .blockmap 拷到服务器 data/desktop-updates/
+# （后端需开 HASHMM_DESKTOP_UPDATES=1）。URL 在运行时由 main.js 按当前连接的后端动态设置，
+# 这里只是打包元数据占位。
+publish:
+  provider: generic
+  url: "http://127.0.0.1:6006/desktop-updates"

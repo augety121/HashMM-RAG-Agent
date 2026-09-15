@@ -1,0 +1,34 @@
+--- /tmp/b-Color.kt	2026-07-04 15:45:30.831770887 +0000
++++ app/src/main/java/com/hashmm/app/ui/theme/Color.kt	2026-07-04 15:44:32.381442507 +0000
+@@ -10,19 +10,19 @@
+ //  说明：本文件只换"值"不换"名"——其它文件 import 的 Brand/Accent/AvatarGradient… 都不变，全局自动生效。
+ // ════════════════════════════════════════════════════════════════
+ 
+-// 主色：近黑（V247 按 Marvis 极简风——黑白灰为主，按钮/导航/强调用黑，吉祥物红点缀；
+-// 这是大厂高级感的经典做法：中性主色 + 极少量品牌色。改值不改名，全 App 生效）
+-val Brand = Color(0xFF1A1A1A)            // 近黑 —— 全 App 强调色（按钮/导航选中/焦点）
+-val BrandDark = Color(0xFF000000)        // 纯黑（按下 / 深容器）
+-val BrandLight = Color(0xFFF5F5F5)       // 深色主题主色（近黑底上用浅色）
+-val BrandContainer = Color(0xFFECECEC)   // 浅灰容器（浅色主题 primaryContainer）
+-val Violet = Color(0xFF000000)           // 纯黑（渐变深端 / 兼容旧名保留）
+-val Accent = Color(0xFF1A1A1A)           // 强调色＝近黑
+-val AccentSoft = Color(0xFFECECEC)       // 浅灰容器
++// 主色：深石板灰 slate（V248——不死黑更透气，改善"压抑"；Marvis 高级感=白底大留白+小面积深色，
++// 深色只用在导航选中/主按钮，不大面积铺。改值不改名，全 App 生效）
++val Brand = Color(0xFF334155)            // slate-700 —— 全 App 强调色（沉稳不刺眼、比纯黑透气）
++val BrandDark = Color(0xFF1E293B)        // slate-800（按下 / 深容器）
++val BrandLight = Color(0xFF94A3B8)       // slate-400（深色主题主色）
++val BrandContainer = Color(0xFFEEF1F5)   // 极浅蓝灰容器
++val Violet = Color(0xFF1E293B)           // slate-800（渐变深端 / 兼容旧名保留）
++val Accent = Color(0xFF334155)           // 强调色＝slate-700
++val AccentSoft = Color(0xFFEEF1F5)       // 浅蓝灰容器
+ 
+-// 渐变：近黑（logo 块、头像、主 CTA）——高级黑
+-val BrandGradient = Brush.linearGradient(listOf(Color(0xFF2A2A2A), Color(0xFF1A1A1A)))
+-val AvatarGradient = Brush.linearGradient(listOf(Color(0xFF2A2A2A), Color(0xFF000000)))
++// 渐变：石板灰（logo 块、头像、主 CTA）——沉稳有质感、不压抑
++val BrandGradient = Brush.linearGradient(listOf(Color(0xFF475569), Color(0xFF334155)))
++val AvatarGradient = Brush.linearGradient(listOf(Color(0xFF475569), Color(0xFF1E293B)))
+ 
+ // 浅色系：白底 + 极浅中性灰；深色文字用近黑（=吉祥物机身 #16161A），不用纯黑
+ val LightBg = Color(0xFFF6F6F7)          // 页面底：极浅中性灰（大厂常用的柔和底）

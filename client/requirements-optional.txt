@@ -1,0 +1,34 @@
+# HashMM optional / heavy dependencies. Not required for the core RAG chain;
+# missing packages degrade gracefully. Install: pip install -r requirements-optional.txt
+# NOTE: keep this file ASCII-only (see note in requirements.txt).
+
+# -- GPU embedding / rerank (CUDA; for local-first GPU deploys) --
+# torch>=2.0              # install per your CUDA env, not forced here
+# FlagEmbedding>=1.2      # BGE-M3 embedding + bge-reranker-v2-m3
+# transformers>=4.38      # FlagEmbedding dependency
+
+# Office parsing/generation is a core product capability and is installed from
+# requirements.txt. Keep only genuinely optional/heavy document extras here.
+
+# -- Browser kernel (V309: browser_open/act/read/screenshot agent tools) --
+# Also used by design render. After pip install run: playwright install chromium
+playwright>=1.40
+
+# -- Design render (HASHMM_DESIGN_RENDER; HTML->image, PPT->preview) --
+# system tools (apt): wkhtmltopdf / libreoffice / ffmpeg
+
+# -- Cache (optional; falls back to in-memory) --
+# redis>=5.0
+
+# -- Web page parsing (online fallback retrieval) --
+beautifulsoup4>=4.12
+
+# -- Standard trace export (optional; stdlib OTLP/JSON exporter otherwise) --
+# opentelemetry-sdk>=1.20
+
+# -- Document conversion (optional) --
+PyPDF2>=3.0
+pandas>=2.0
+
+# Claude (Anthropic) native model adapter (anthropic provider in model_manager)
+anthropic>=0.39.0

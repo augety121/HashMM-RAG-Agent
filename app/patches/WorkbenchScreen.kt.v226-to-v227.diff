@@ -1,0 +1,13 @@
+--- /tmp/b-WorkbenchScreen.kt	2026-07-04 01:27:48.358622254 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/WorkbenchScreen.kt	2026-07-04 01:21:37.134397734 +0000
+@@ -74,6 +74,10 @@
+                 val ctx = androidx.compose.ui.platform.LocalContext.current
+                 IconButton(onClick = {
+                     try {
++                        // V235 修复：token/refresh 原声明在 WebView factory 内部作用域（105 行），
++                        // 顶栏此处够不着——同源自取（viewModel 同层可见，取法与 factory 完全一致）。
++                        val token = viewModel.accessToken().orEmpty()
++                        val refresh = viewModel.refreshToken().orEmpty()
+                         val u = buildUrl(clientUrl, token, refresh, initialView)
+                         ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
+                     } catch (_: Exception) { }
