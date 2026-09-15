@@ -1,0 +1,103 @@
+--- /tmp/app-v215-base/src/main/java/com/hashmm/app/ui/activity/ActivityScreen.kt	2026-07-03 10:17:15.420318905 +0000
++++ app/src/main/java/com/hashmm/app/ui/activity/ActivityScreen.kt	2026-07-03 10:17:15.473226490 +0000
+@@ -49,10 +49,10 @@
+ import androidx.hilt.navigation.compose.hiltViewModel
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import com.hashmm.app.data.remote.ActiveChat
+-import com.hashmm.app.data.remote.FeedConv
+ import com.hashmm.app.data.remote.FeedData
+ import com.hashmm.app.data.remote.FeedEpisode
+ import com.hashmm.app.data.remote.FeedFile
++import com.hashmm.app.data.remote.FeedRun
+ import com.hashmm.app.data.remote.FeedScheduled
+ import com.hashmm.app.data.remote.JobInfo
+ import com.hashmm.app.data.remote.UsageStat
+@@ -107,14 +107,7 @@
+                 Text("动态", style = AppType.screenTitle, color = MaterialTheme.colorScheme.onSurface)
+                 Text("产物 · 任务 · 系统在学什么", style = AppType.subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+             }
+-            if (f != null && f.error == null && f.notice == null && f.release.isNotBlank()) {
+-                Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), shape = CircleShape) {
+-                    Text("后端 " + f.release, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold,
+-                        color = MaterialTheme.colorScheme.primary,
+-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp))
+-                }
+-                Spacer(Modifier.width(8.dp))
+-            }
++            // V216: 「后端 Vxxx」徽按用户要求移除（连接异常仍有横幅兜底）
+             if ((loading || refreshing) && !allEmpty) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+         }
+ 
+@@ -161,12 +154,7 @@
+                             FeedFileCard(file, onOpen = { viewerUrl = file.viewUrl })
+                         }
+                     }
+-                    if (f != null && f.convs.isNotEmpty()) {
+-                        item { SectionLabel("最近对话") }
+-                        items(f.convs, key = { "v" + it.id }) { c ->
+-                            FeedConvRow(c, onClick = { onOpenConversation(c.id) })
+-                        }
+-                    }
++                    // V216: 「最近对话」按用户要求移除（与「对话」tab 重复）
+                     if (f != null && (f.runners.isNotEmpty() || f.scheduled.isNotEmpty() || f.scheduledCount >= 0)) {
+                         item { SectionLabel("电脑端与定时任务") }
+                         if (f.runners.isNotEmpty()) item { RunnersCard(f) }
+@@ -175,6 +163,10 @@
+                             TinyNote("定时任务 ${f.scheduledCount} 个（明细需管理员）")
+                         }
+                     }
++                    if (f != null && f.runs.isNotEmpty()) {
++                        item { SectionLabel("运行轨迹") }
++                        items(f.runs, key = { "r" + it.ts + it.title.hashCode() }) { r -> RunRow(r) }
++                    }
+                     if (f != null && f.episodes.isNotEmpty()) {
+                         item { SectionLabel("系统学到了什么") }
+                         items(f.episodes, key = { "e" + it.createdAtSec + it.summary.hashCode() }) { e -> EpisodeRow(e) }
+@@ -275,24 +267,6 @@
+ }
+ 
+ @Composable
+-private fun FeedConvRow(c: FeedConv, onClick: () -> Unit) {
+-    val cs = MaterialTheme.colorScheme
+-    Surface(
+-        color = cs.surfaceVariant,
+-        shape = RoundedCornerShape(14.dp),
+-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+-    ) {
+-        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+-            Icon(Icons.Outlined.Psychology, null, tint = cs.primary, modifier = Modifier.size(18.dp))
+-            Spacer(Modifier.width(12.dp))
+-            Text(c.title, fontSize = 14.sp, color = cs.onSurface, maxLines = 1,
+-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+-            Text(fmtAgo(c.updatedAtSec), fontSize = 11.5.sp, color = cs.onSurfaceVariant)
+-        }
+-    }
+-}
+-
+-@Composable
+ private fun RunnersCard(f: FeedData) {
+     val cs = MaterialTheme.colorScheme
+     val anyOnline = f.runners.any { it.online }
+@@ -328,6 +302,22 @@
+             }
+         }
+     }
++}
++
++@Composable
++private fun RunRow(r: FeedRun) {
++    val cs = MaterialTheme.colorScheme
++    Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
++        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
++            Icon(Icons.Outlined.Bolt, null, tint = cs.primary, modifier = Modifier.size(16.dp))
++            Spacer(Modifier.width(12.dp))
++            Column(Modifier.weight(1f)) {
++                Text(r.title, fontSize = 13.5.sp, color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                val sub = listOf(r.status, fmtAgo(r.tsSec)).filter { it.isNotBlank() }.joinToString(" · ")
++                if (sub.isNotBlank()) { Spacer(Modifier.height(2.dp)); Text(sub, fontSize = 11.5.sp, color = cs.onSurfaceVariant) }
++            }
++        }
++    }
+ }
+ 
+ @Composable

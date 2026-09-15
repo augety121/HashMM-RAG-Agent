@@ -1,0 +1,48 @@
+node_modules/
+.next/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+.DS_Store
+out/
+release/
+*.asar
+
+# 测试/运行产物（不应进仓库，避免把旧数据打进安装包）
+data/conversations/
+data/trace/
+data/audit/
+data/idempotency.db
+logs/
+
+# ── 推 GitHub 前必须排除（V325）：密钥、模型、大数据 ──
+# 密钥/启动脚本（含 token/API key，绝不上传！）
+start-hashmm.secrets.sh
+start-hashmm*.sh
+*.secrets.sh
+.env
+.env.*
+!start-hashmm.sh
+!start-hashmm1.sh
+!.env.example
+# 模型权重与向量索引（几十 GB，不该进仓库）
+models/
+*.safetensors
+*.gguf
+*.bin
+data/vector_index/
+# 基准数据集（CI 里用 install.sh 现下，不进仓库）
+hashmm-benchmarks/
+bench-data/
+*-venv/
+tau2-venv/
+.test-tools/
+# 本地数据库
+*.sqlite3
+*.sqlite
+data/*.db
+deploy/turn/runtime/

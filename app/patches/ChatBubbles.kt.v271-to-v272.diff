@@ -1,0 +1,25 @@
+--- app_pr/HashMM-App-V271/app/src/main/java/com/hashmm/app/ui/chat/ChatBubbles.kt	2026-07-10 14:40:15.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/chat/ChatBubbles.kt	2026-07-10 15:40:44.411838657 +0000
+@@ -116,12 +116,16 @@
+ }
+ 
+ @Composable
+-fun MessageBubble(msg: ChatMessage, onRegenerate: (() -> Unit)? = null, onQuote: ((String) -> Unit)? = null, onConfirmPlan: ((String, String) -> Unit)? = null, onMemAction: ((String, String) -> Unit)? = null, onCancelTask: ((String) -> Unit)? = null, awaiting: Boolean = false) {
+-    // 大厂同款：消息进场淡入 + 轻微上移（订正：仅 alpha+小位移，快、不打扰）。
+-    var shown by remember(msg.id) { mutableStateOf(false) }
+-    LaunchedEffect(msg.id) { shown = true }
+-    val a by animateFloatAsState(if (shown) 1f else 0f, tween(220), label = "msgFade")
+-    val ty by animateFloatAsState(if (shown) 0f else 14f, tween(220), label = "msgSlide")
++fun MessageBubble(msg: ChatMessage, onRegenerate: (() -> Unit)? = null, onQuote: ((String) -> Unit)? = null, onConfirmPlan: ((String, String) -> Unit)? = null, onMemAction: ((String, String) -> Unit)? = null, onCancelTask: ((String) -> Unit)? = null, awaiting: Boolean = false, animateIn: Boolean = true) {
++    // V272 卡顿优化：进场动画只给**新消息**。打开会话时历史消息是一整批，若每条都淡入+上移会造成
++    // 首屏批量动画卡顿、点进去有明显停顿。这里在首次组合时捕获 animateIn（之后不变，避免结构切换/
++    // 重复动画）：历史批量渲染 doAnim=false → 初始即 shown、tween 0ms → 秒显不卡；新追加的消息
++    // doAnim=true → 正常淡入。让"点进去"瞬间就有内容、丝滑。
++    val doAnim = remember(msg.id) { animateIn }
++    var shown by remember(msg.id) { mutableStateOf(!doAnim) }
++    LaunchedEffect(msg.id) { if (doAnim) shown = true }
++    val a by animateFloatAsState(if (shown) 1f else 0f, tween(if (doAnim) 220 else 0), label = "msgFade")
++    val ty by animateFloatAsState(if (shown) 0f else 14f, tween(if (doAnim) 220 else 0), label = "msgSlide")
+     Box(Modifier.fillMaxWidth().graphicsLayer { alpha = a; translationY = ty }) {
+         MessageBubbleContent(msg, onRegenerate, onQuote, onConfirmPlan, onMemAction, onCancelTask, awaiting)
+     }

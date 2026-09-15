@@ -1,0 +1,21 @@
+{
+  "app": { "name": "HashMM", "tagline": "本地优先 · AI 工作台" },
+  "menu": { "newChat": "新对话", "workbench": "工作台", "files": "本机文件", "terminal": "终端", "knowledge": "知识库", "skills": "技能与模板", "usage": "用量", "backend": "后端连接" },
+  "installer": { "install": "立即安装", "agree": "已阅读并同意《用户协议与隐私政策》", "path": "安装路径", "space": "安装所需空间", "done": "安装完成", "start": "开始使用" },
+  "uninstaller": { "title": "卸载 HashMM", "confirm": "卸载", "cancel": "取消", "keepData": "你的知识库、对话、登录状态默认保留，重装即可恢复", "done": "已卸载 HashMM" },
+  "ui": {
+    "btnKB": "知识库", "btnConfig": "配置", "btnSettings": "设置", "btnHistory": "历史", "btnBack": "← 连接后端",
+    "send": "发送", "regenerate": "↻ 重新生成", "clear": "清空对话", "export": "导出",
+    "settingsTitle": "外观与偏好", "theme": "主题", "font": "字号", "density": "密度",
+    "themeDark": "深色", "themeLight": "浅色", "themeAuto": "跟随系统",
+    "densityComfortable": "舒适", "densityCompact": "紧凑",
+    "sendEnter": "Enter 发送（关=Enter 换行/Ctrl+Enter 发送）", "markdown": "渲染 Markdown",
+    "notify": "桌面通知（后台时）", "language": "界面语言",
+    "ioTitle": "配置导入 / 导出", "exportFull": "导出（含密钥·备份）", "exportSafe": "导出（脱敏·分享）", "ioImport": "导入配置文件",
+    "historyTitle": "对话历史", "historyNew": "＋ 新对话", "historyEmpty": "还没有历史对话",
+    "searchPlaceholder": "在对话中查找…", "collapse": "收起",
+    "chatPlaceholder": "输入消息，Enter 发送", "msgCopy": "复制", "msgQuote": "引用", "msgShare": "分享",
+    "exportMd": "Markdown (.md)", "exportPdf": "PDF (.pdf)", "exportTxt": "纯文本 (.txt)"
+  },
+  "items_other": "{count} 个项目"
+}

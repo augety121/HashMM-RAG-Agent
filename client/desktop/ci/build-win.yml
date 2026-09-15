@@ -1,0 +1,32 @@
+# 路线 C：GitHub Actions 云打 Windows 完整版（含终端）。
+# 用法：把本文件拷到仓库根的 .github/workflows/build-win.yml，把 desktop/ 推上去后
+# 在 Actions 页手动触发或 push 触发；产物在 run 的 Artifacts 里下载。
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:        # 手动触发
+  push:
+    tags: ["v*"]            # 打 tag 时自动触发
+
+jobs:
+  build-win:
+    runs-on: windows-latest   # 关键：真 Windows runner，node-pty 正确编译
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps (含 node-pty 原生编译)
+        run: npm install
+      - name: Rebuild node-pty for Electron
+        run: npm run rebuild
+      - name: Build Windows installer
+        run: npm run dist:win
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HashMM-Setup-Windows
+          path: desktop/dist/*.exe

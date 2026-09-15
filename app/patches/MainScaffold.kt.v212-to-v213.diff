@@ -1,0 +1,126 @@
+--- /home/claude/app-base/app/src/main/java/com/hashmm/app/ui/MainScaffold.kt	2026-07-03 07:28:48.489462770 +0000
++++ app/src/main/java/com/hashmm/app/ui/MainScaffold.kt	2026-07-03 07:32:00.765640439 +0000
+@@ -1,14 +1,20 @@
+ package com.hashmm.app.ui
+ 
++import androidx.compose.foundation.clickable
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.ExperimentalLayoutApi
++import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.foundation.layout.fillMaxHeight
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.isImeVisible
++import androidx.compose.foundation.layout.navigationBars
++import androidx.compose.foundation.layout.windowInsetsPadding
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.size
+ import androidx.compose.material.icons.Icons
+@@ -22,11 +28,9 @@
+ import androidx.compose.material.icons.outlined.Lock
+ import androidx.compose.material.icons.outlined.Person
+ import androidx.compose.material3.Button
++import androidx.compose.material3.Surface
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.MaterialTheme
+-import androidx.compose.material3.NavigationBar
+-import androidx.compose.material3.NavigationBarItem
+-import androidx.compose.material3.NavigationBarItemDefaults
+ import androidx.compose.material3.Scaffold
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+@@ -36,7 +40,6 @@
+ import androidx.compose.runtime.saveable.rememberSaveable
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+-import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.vector.ImageVector
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.style.TextAlign
+@@ -92,27 +95,10 @@
+         containerColor = MaterialTheme.colorScheme.background,
+         bottomBar = {
+             if (!imeVisible) {
+-            NavigationBar(
+-                containerColor = MaterialTheme.colorScheme.surface,
+-                tonalElevation = 0.dp,
+-            ) {
+-                tabs.forEachIndexed { i, t ->
+-                    val sel = tab == i
+-                    NavigationBarItem(
+-                        selected = sel,
+-                        onClick = { tab = i },
+-                        icon = { Icon(if (sel) t.iconSel else t.icon, contentDescription = t.label) },
+-                        label = { Text(t.label, fontSize = 11.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal) },
+-                        colors = NavigationBarItemDefaults.colors(
+-                            selectedIconColor = MaterialTheme.colorScheme.onSurface,
+-                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+-                            indicatorColor = Color.Transparent,
+-                        ),
+-                    )
+-                }
+-            }
++                // V213: 收敛底部导航体量（用户反馈"四个 tab 有点大"）——
++                // M3 NavigationBar 固定 80dp 且内部尺寸不可调，改为自绘紧凑条：
++                // 总高 58dp + 系统手势/按键 inset，图标 22dp、文字 10.5sp，选中主色。
++                CompactNavBar(tabs = tabs, selected = tab, onSelect = { tab = it })
+             }
+         },
+     ) { padding ->
+@@ -151,6 +137,49 @@
+             }
+         }
+     }
++}
++
++/** V213: 紧凑底部导航（58dp）——手绘替代 M3 NavigationBar（其 80dp 行高不可调）。
++ *  insets 处理：windowInsetsPadding(navigationBars) 在 height 之前，条体恒 58dp、
++ *  手势/三键区自然外扩，不裁内容。选中：填充图标 + 主色；未选：线框图标 + 变体色。 */
++@Composable
++private fun CompactNavBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit) {
++    val cs = MaterialTheme.colorScheme
++    Surface(color = cs.surface, tonalElevation = 0.dp) {
++        Row(
++            Modifier
++                .fillMaxWidth()
++                .windowInsetsPadding(WindowInsets.navigationBars)
++                .height(58.dp),
++            verticalAlignment = Alignment.CenterVertically,
++        ) {
++            tabs.forEachIndexed { i, t ->
++                val sel = selected == i
++                Column(
++                    Modifier
++                        .weight(1f)
++                        .fillMaxHeight()
++                        .clickable { onSelect(i) },
++                    horizontalAlignment = Alignment.CenterHorizontally,
++                    verticalArrangement = Arrangement.Center,
++                ) {
++                    Icon(
++                        if (sel) t.iconSel else t.icon,
++                        contentDescription = t.label,
++                        tint = if (sel) cs.primary else cs.onSurfaceVariant,
++                        modifier = Modifier.size(22.dp),
++                    )
++                    Spacer(Modifier.height(2.dp))
++                    Text(
++                        t.label,
++                        fontSize = 10.5.sp,
++                        fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
++                        color = if (sel) cs.primary else cs.onSurfaceVariant,
++                    )
++                }
++            }
++        }
++    }
+ }
+ 
+ /** 未登录占位：私人页面（工作台/动态）在未登录时显示，引导去登录。 */

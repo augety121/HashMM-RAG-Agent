@@ -1,0 +1,100 @@
+name: tests
+
+# HashMM CI（V308 重写）——真门禁：任何失败都会让 CI 红，不再用 "|| true" / continue-on-error 掩盖。
+# 覆盖 Ubuntu + Windows 双平台的 Python 全量测试、桌面 Node 测试、前端类型检查+单测+生产构建。
+# needs_gpu / needs_data 的用例通过测试内的 skip 守卫在 CI 自动跳过（无 GPU/语料），
+# 这是【显式 skip】而非隐藏失败——skip 数会在报告里可见。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  # ── 后端 Python：Ubuntu + Windows 双平台全量 ──
+  python:
+    strategy:
+      fail-fast: false          # 一个平台挂不掩盖另一个平台的结果
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-randomly
+          # 契约/HTTP 测试需要的运行依赖（此前缺失导致这些用例被"缺依赖跳过"）
+          pip install fastapi "uvicorn[standard]" httpx python-multipart
+          pip install ruff
+      # Lint 分两层：真 bug 类【强制门禁】，风格类【只报不拦】。
+      # 理由：F821(未定义名)/F811(重复定义)/F823 这类是真会崩的 bug——V308 就靠它揪出了
+      # loop.py 缺 GuardDecision import（外泄闸一触发就 NameError）、streaming.py 的
+      # user_id 未定义（多租户文档 ACL 完全失效）、tool_functions.py 缺 TOOLS_DESC/re/json
+      # （agent_plan 调用即崩）等 5 个潜伏真 bug。这类必须拦住。
+      # E501(行长)/I001(import 排序) 等风格问题有 ~1500 条存量，一次性清理风险大于收益，
+      # 先只报不拦，逐步清理后再提为门禁（不要用 "|| true" 假装通过——那正是审计批评的）。
+      # 门禁只放【会真崩】的规则：F821 未定义名、F823 引用未赋值局部、F601/F602 重复字面量键、
+      # F702 语法级错误。F811（函数内重复 import）多为冗余而非崩溃，降级为报告。
+      - name: Lint — 真 bug 类（强制门禁，必须为 0）
+        run: ruff check hashmm --select F821,F823,F601,F602,F702
+      - name: Lint — 风格/冗余类（只报告，不阻塞；逐步清理后再提为门禁）
+        run: ruff check hashmm --select E,I,F401,F841,F811 --statistics --exit-zero
+      - name: Run FULL test suite —— 真门禁
+        run: |
+          # 全量 tests/，不再是白名单子集，也不用 --continue-on-collection-errors 掩盖收集错误。
+          # 随机顺序（pytest-randomly）暴露测试间污染；失败即 CI 红。
+          python -m pytest tests/ -q --tb=short
+      - name: Verify release contracts
+        run: python scripts/verify-contracts.py
+      - name: Syntax check (all modules)
+        run: python -c "import compileall,sys; sys.exit(0 if compileall.compile_dir('hashmm',quiet=1) else 1)"
+
+  # ── 桌面 Electron 侧：纯 Node 逻辑测试（跨平台） ──
+  desktop-node:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax check main.js + modules
+        run: node --check desktop/main.js
+      - name: Run desktop node tests —— 真门禁
+        shell: bash
+        run: |
+          fail=0
+          for f in desktop/tests-node/*.js; do
+            echo "── $f ──"
+            node "$f" || fail=1
+          done
+          exit $fail
+
+  # ── 前端 Next.js：类型检查 + 单测 + 生产构建 ──
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-next
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm ci || npm install
+      - name: Typecheck —— 真门禁
+        run: npx tsc --noEmit
+      - name: Unit tests (vitest) —— 真门禁
+        run: npx vitest run
+      - name: Production build —— 真门禁
+        run: npm run build
