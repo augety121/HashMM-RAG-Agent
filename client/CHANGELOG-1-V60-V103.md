@@ -2587,7 +2587,7 @@ python -m hashmm.evaluation.gate --api http://127.0.0.1:6006 --stream --user adm
    登录 200——这就是你的真实 RAG（截图也写「5576 个知识切片」），跑在内部 6006 / 公网 `http://111.115.7.14:20014`。
 2. **两台机器都报 `unrecognized arguments: --api`** = `--api` 这个新参数**还没到你跑命令的那台机器上**——
    你 Windows 和 AutoDL 用的都还是旧 `gate.py`。所以第一步是**把新的 `gate.py` 弄上去**。
-3. 你 Windows（D:\sheji\agent\hashmm）那台**没数据、没装 transformers、没配模型**，在它上面直连管线跑永远是 0.18 假分——别在那台直连跑。
+3. 你 Windows（C:/workspace/hashmm）那台**没数据、没装 transformers、没配模型**，在它上面直连管线跑永远是 0.18 假分——别在那台直连跑。
 
 ## 这版把 `--api` 模式做得更省心
 - 新增 `--user` / `--password`：**自动登录**拿 token（你后端要鉴权，admin 账号能登），不用自己折腾 token；
@@ -2599,9 +2599,9 @@ python -m hashmm.evaluation.gate --api http://127.0.0.1:6006 --stream --user adm
 ## 怎么跑（二选一，推荐第一种，贴着你现有习惯）
 
 ### 方式 A（推荐）：在 Windows 上跑，打 AutoDL 的公网地址
-你本来就会把我的 zip 解压到 `D:\sheji\agent\hashmm`。这次解压完**不用 build**，直接在那个目录跑：
+你本来就会把我的 zip 解压到 `C:/workspace/hashmm`。这次解压完**不用 build**，直接在那个目录跑：
 ```powershell
-cd D:\sheji\agent\hashmm
+cd C:/workspace/hashmm
 python -m hashmm.evaluation.gate --api http://111.115.7.14:20014 --user admin --password admin123 --gate 0.85 --baseline hashmm/evaluation/baseline.json --update-baseline
 ```
 - `--api http://111.115.7.14:20014`：打你 AutoDL 公网后端（就是截图那个地址）；
@@ -3795,7 +3795,7 @@ P1 该捡的低风险果子（接通孤儿开关 V103.21、删死代码+消歧 V
 - **这会改变线上行为**：重新部署后端到 111.115.7.14 后，这 4 个特性会在你**有 KG/索引的线上库**上真正激活
   → 答案更好 + 带出处，但 CRAG/回炉会**增加一些延迟和 token**（云模型上更明显）。若想省成本，随时
   `HASHMM_EVAL_OPTIMIZE=0` 或 `HASHMM_CRAG=0` 关掉。
-- **你这个开发目录（D:\sheji\agent\hashmm）没数据**：KG 0 实体、索引 0 向量，所以本地 smoke 仍会返回
+- **你这个开发目录（C:/workspace/hashmm）没数据**：KG 0 实体、索引 0 向量，所以本地 smoke 仍会返回
   「命中 0 条」——这些特性只在有 KG/语料的库上才有效果（即你的线上后端）。
 - **建议部署后做一次回归**：你已有评测门 `python -m hashmm.evaluation.gate`（或对应入口），部署后跑一遍，
   用数字确认这 4 个开关没让质量退化——这正是把你已建的评测基建用起来。

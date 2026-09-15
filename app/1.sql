@@ -3,7 +3,7 @@
 --  在你的 Supabase 项目 → SQL Editor → 整段粘贴运行一次即可。
 --
 --  ⚠️ 先确认：App 的 local.properties 里 SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY
---     必须指向「你创建用户(2721985705@qq.com)的同一个项目」。否则用户不在 App 查询的
+--     必须指向「你创建用户(admin@example.invalid)的同一个项目」。否则用户不在 App 查询的
 --     项目里，怎么都登不进。项目 URL 见 Supabase → Project Settings → API。
 -- ============================================================
 
@@ -65,7 +65,7 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- ============================================================
--- 3) 给「已经存在」的用户补建 profile（你现在的 2721985705@qq.com 是在加触发器之前注册的，
+-- 3) 给「已经存在」的用户补建 profile（你现在的 admin@example.invalid 是在加触发器之前注册的，
 --    所以没有 profile 行；这句把所有现存用户补上，第一个用户设为 admin）
 -- ============================================================
 insert into public.profiles (id, username, is_admin)
@@ -407,12 +407,12 @@ end $$;
 
 update auth.users
 set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
-where email = '2721985705@qq.com';
+where email = 'admin@example.invalid';
 
 -- 确认结果（应能看到 role: admin）
 select email, raw_app_meta_data ->> 'role' as role
 from auth.users
-where email = '2721985705@qq.com';
+where email = 'admin@example.invalid';
 
 -- ── 如需再设别的管理员，把邮箱换掉再跑一次即可 ──
 -- update auth.users
@@ -422,7 +422,7 @@ where email = '2721985705@qq.com';
 -- ── 如需取消某账号的管理员 ──
 -- update auth.users
 -- set raw_app_meta_data = raw_app_meta_data - 'role'
--- where email = '2721985705@qq.com';
+-- where email = 'admin@example.invalid';
 
 -- ============================================================
 -- 完成。该账号重新登录后，客户端 / App 里即为管理员。

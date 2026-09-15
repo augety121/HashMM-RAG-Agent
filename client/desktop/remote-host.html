@@ -699,8 +699,8 @@ if (ipc) {
 // ── Supabase 信令模式（P2P，无需后端/隧道）─────────────────
 // 同账号 + 联网即可：被控端凭账号令牌(=Supabase access token)向 remote_presence 上报在线，
 // 轮询 remote_signals 取 viewer 的 connect/answer/ice/input，offer/ice 写回。屏幕走 P2P。
-const SB_FALLBACK_URL = "https://mzqircwqwhsboxnwucja.supabase.co";
-const SB_FALLBACK_KEY = "sb_publishable_ceCv3XQfvc4nLmNaao-nRA_pLUVaE9P";
+const SB_FALLBACK_URL = "";
+const SB_FALLBACK_KEY = "";
 function _jwtSub(tok) {
   try {
     const b = tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -710,6 +710,7 @@ function _jwtSub(tok) {
 async function connectSupabase() {
   const SB_URL = qs.get("sbUrl") || SB_FALLBACK_URL;
   const SB_KEY = qs.get("sbKey") || SB_FALLBACK_KEY;
+  if (!SB_URL || !SB_KEY) { log("Supabase 未配置"); return; }
   const ROOM = _jwtSub(TOKEN);
   if (!ROOM) { log("账号令牌无效，无法启动 Supabase 远程信令"); return; }
   // 稳定 host_id：持久化到 localStorage，重启/多次启动复用同一条 presence 行（避免设备列表里同一台机器出现多条）。

@@ -12,7 +12,7 @@
 - Hermes Agent 压缩包：`D:/edge downloads/hermes-agent-main (4).zip`
   - SHA-256：`2bbfd002635138aa50cdf6fbcb8acb9fda4335614c8dda9387696a26258174f6`
   - 压缩包内 `LICENSE` 为 MIT；本轮未复制其源码，只移植经重新实现的产品机制。
-- 面试实战资料：`C:/Users/Administrator/Desktop/大模型应用!算法学习路线+八股+面试实战4.md`
+- 面试实战资料：`C:/Users/USER/Desktop/大模型应用!算法学习路线+八股+面试实战4.md`
   - 大小：1,427,064 bytes
   - SHA-256：`ee6d42a4e8a14af33da24d13ab85cf4cefc12c26635b7efa978ffda82f80742f`
 

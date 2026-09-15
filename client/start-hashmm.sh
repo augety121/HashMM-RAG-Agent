@@ -24,19 +24,14 @@ export HASHMM_SEARCHR1_LORA=/root/autodl-tmp/models/qwen2.5-7b-hashmm-final-v2
 export HASHMM_ACCESS_TTL=2592000                    # 30 天
 
 # ── Supabase（App 与客户端共用账号 + 跨端同步）──
-export HASHMM_SUPABASE_URL=https://mzqircwqwhsboxnwucja.supabase.co
-export HASHMM_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ceCv3XQfvc4nLmNaao-nRA_pLUVaE9P
-export HASHMM_SUPABASE_ADMIN_EMAILS=2721985705@qq.com
+# 在本机 .env 或进程环境设置 HASHMM_SUPABASE_URL、HASHMM_SUPABASE_PUBLISHABLE_KEY
+# 和 HASHMM_SUPABASE_ADMIN_EMAILS；此脚本不覆盖这些值。
 
 # ★★ 同步到 Supabase 必需！没有它 App 看不到对话/记忆/动态。
-#    Supabase 控制台 → Project Settings → API → 复制 service_role secret，粘到下面。
-#    ⚠️ 安全提醒：你之前把这串密钥贴进脚本/截图了，等于全库可写，务必去控制台 ROTATE 重置一个新的再用，
-#       且不要再提交进库或截图外发。这里留空位让你贴新的：
-# HASHMM_SUPABASE_SERVICE_KEY must come from .env or the process environment.
+#    HASHMM_SUPABASE_SERVICE_KEY 只从未跟踪的 .env 或进程环境加载，禁止写入脚本。
 
 # ★★ 公网地址（App 工作台「自动同步、无需手填」靠这个）。
 #    uvicorn 跑在 6006，AutoDL 把它映射到外部 20014，所以填外部地址：
-export HASHMM_PUBLIC_URL=http://111.115.7.14:20014
 
 # ★★★ 权限审计 / 运行轨迹（管理后台这俩面板要数据就开着）★★★
 export HASHMM_AUDIT_TOOLS=1

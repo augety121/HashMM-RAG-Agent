@@ -2677,7 +2677,7 @@ V174 的 Navigate（沿单文档 section 树 + chunk 连接补相邻块/本节�
 - 影响：tools 通路不再 502；UI 里「截图已跳过」的提示也名副其实了（之前是显示跳过、但 API 仍被历史图毒到）。
 
 ## 修复 2：工作台目录默认在 C 盘 —— 改为「受限默认 + 用户可选 + 系统目录拒绝」
-**你的要求**：工作台目录默认是 C 盘（`C:\Users\Administrator`），对会跑命令/写文件的 Agent 有风险；要能让用户选，且 C 盘系统区不能动。
+**你的要求**：工作台目录默认是 C 盘（`C:/Users/USER`），对会跑命令/写文件的 Agent 有风险；要能让用户选，且 C 盘系统区不能动。
 **改法**（桌面端 `main.js` / `preload.js` / `WorkbenchView.tsx`）：
 1. 新增**工作区**概念 `cuWorkspaceDir()`：默认用「文档\HashMM」这类**受限子目录**（按需自动创建），**不再是裸主目录、更不是盘根**；用户设过就用用户的。
 2. **用户可选**：工作台文件区顶部新增「工作区：<路径> · 更换」。点「更换」弹原生选择目录框，选完即切：文件区当场重挂到新目录、之后新开的终端也用新目录。
@@ -2886,8 +2886,8 @@ delete from public.remote_signals where created_at < now() - interval '5 hours';
 - 测试 `tests/test_v107_supabase_auth.py`（7 项，**用自造 EC P-256 密钥真实签 ES256 token 验签**）：
   验签 roundtrip、错误 aud 拒绝、过期拒绝、claims→用户映射、admin 白名单、未配零变化、无 sub 拒绝。
 
-**怎么启用**：客户端管理后台 → 搜索配置 → 填 `supabase_url`=`https://mzqircwqwhsboxnwucja.supabase.co`、
-`supabase_publishable_key`=`sb_publishable_ceCv3XQfvc4nLmNaao-nRA_pLUVaE9P`、`supabase_admin_emails`=你的管理员
+**怎么启用**：客户端管理后台 → 搜索配置 → 填 `supabase_url`=`https://your-project.supabase.co`、
+`supabase_publishable_key`=`YOUR_SUPABASE_PUBLISHABLE_KEY`、`supabase_admin_emails`=你的管理员
 邮箱 → 重启后端。
 
 ---
@@ -3030,8 +3030,8 @@ Supabase。
 `sdk.dir`，我不重打整个 App）：
 
 ```
-SUPABASE_URL=https://mzqircwqwhsboxnwucja.supabase.co
-SUPABASE_PUBLISHABLE_KEY=sb_publishable_ceCv3XQfvc4nLmNaao-nRA_pLUVaE9P
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 ```
 
 改完在 Android Studio **Sync + 重新构建**即可。`di/SupabaseModule.kt` 从 `BuildConfig.SUPABASE_URL/

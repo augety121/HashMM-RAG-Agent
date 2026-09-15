@@ -40,5 +40,5 @@ where table_schema = 'public' and table_name = 'profiles'
   and column_name in ('display_name','bio','search_count','avatar_url','is_admin')
 order by column_name;
 
--- 提醒（不在本脚本执行）：1.sql 末尾有一段把 2721985705@qq.com 密码重置为
+-- 提醒（不在本脚本执行）：1.sql 末尾有一段把 admin@example.invalid 密码重置为
 -- 123456 的语句——那是你自己的运维便捷段，正式环境务必删除或改成强密码。
