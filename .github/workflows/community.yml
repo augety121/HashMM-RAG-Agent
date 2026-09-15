@@ -1,0 +1,33 @@
+name: Public collaboration
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: community-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  public-documents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            COMMUNITY.md
+            .github/pull_request_template.md
+          sparse-checkout-cone-mode: false
+      - name: Check public collaboration documents
+        shell: python
+        run: |
+          from pathlib import Path
+          required = ("COMMUNITY.md", ".github/pull_request_template.md")
+          for name in required:
+              content = Path(name).read_text(encoding="utf-8")
+              if not content.strip() or "\x00" in content:
+                  raise SystemExit("Invalid public document")
+          print("Public collaboration documents checked. Private product tests were not run.")
