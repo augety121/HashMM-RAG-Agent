@@ -357,7 +357,6 @@ HashMM-RAG-Agent/
 │   └── docs/                    架构、协议、审计与发布说明
 ├── docs/                        README 图片素材
 ├── server/
-│   ├── README.md                服务器部署与验收
 │   └── README.md               历史源码部署说明（旧预打包下载已撤下）
 ├── .gitignore                   密钥、用户数据与构建物边界
 ├── LICENSE

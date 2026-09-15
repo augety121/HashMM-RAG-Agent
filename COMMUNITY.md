@@ -14,7 +14,7 @@
 
 ## 历史内容
 
-历史公开版本恢复自本仓库提交 `c2bbd3a`，包括 `app/`、`client/`、`docs/`、`server/` 和原 README，继续按已有 LICENSE 保留。README 中的功能、版本、安装包及验证数据属于该历史版本，不表示当前私有产品已经开源。恢复使用本仓库已有 Git 历史，不从当前私有检出复制内容。
+历史公开版本恢复自本仓库提交 `60aba8d`，包括 `app/`、`client/`、`docs/`、`server/` 和原 README，继续按已有 LICENSE 保留。README 中的功能、版本、安装包及验证数据属于该历史版本，不表示当前私有产品已经开源。恢复使用本仓库已有 Git 历史，不从当前私有检出复制内容。
 
 ## 产品入口
 
@@ -22,3 +22,7 @@
 - [服务状态](https://hashlens.org/hashmm/status)
 
 公开仓库标准 GitHub 托管 runner 的免费额度规则见 [GitHub Actions 计费说明](https://docs.github.com/en/actions/concepts/billing-and-usage)。公共检查和私有源码验证是分别记录的两类结果。
+
+## 历史隐私清理
+
+2026-09-16 按所有者授权清理公开分支与标签历史中的个人配置、敏感图片和旧服务器包，保留其余旧代码、README 与提交内容。旧 APK/EXE 附件已撤下。提交编号已改变，已有克隆应重新克隆或按 GitHub 官方说明迁移自己的改动，不能将旧历史直接合并推回。GitHub 旧 PR 引用、托管缓存及他人的既有克隆不由分支重写自动清除。
