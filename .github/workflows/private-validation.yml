@@ -2,8 +2,13 @@ name: Private validation
 on:
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: Reviewed private pull request number
+        required: true
+        default: '4'
+        type: string
       source_sha:
-        description: Reviewed private PR 3 full head commit
+        description: Reviewed private pull request full head commit
         required: true
         type: string
 permissions:
@@ -32,14 +37,17 @@ jobs:
         env:
           READ_TOKEN: ${{ secrets.HASHMM_SOURCE_READ }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           import json, os, re, urllib.request
           try:
               sha = os.environ['SOURCE_SHA']
+              number = os.environ['PR_NUMBER']
+              assert re.fullmatch('[1-9][0-9]{0,8}', number)
               assert re.fullmatch('[0-9a-f]{40}', sha)
               assert os.environ['READ_TOKEN']
               assert os.environ.get('ACTIONS_STEP_DEBUG', '').lower() != 'true'
-              req = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/pulls/3', headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              req = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/pulls/' + number, headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
               with urllib.request.urlopen(req, timeout=30) as response:
                   pr = json.load(response)
               assert pr['state'] == 'open' and pr['head']['sha'] == sha
