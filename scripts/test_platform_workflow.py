@@ -1,5 +1,7 @@
 """Synthetic privacy regressions: no private repository or credential is used."""
 import os
+import io
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -12,9 +14,40 @@ WORKFLOW = Path(__file__).resolve().parents[1] / '.github/workflows/private-plat
 DOCUMENT = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
 STEPS = DOCUMENT['jobs']['build']['steps']
 ENCRYPT = next(step['run'] for step in STEPS if step.get('id') == 'sealed')
+ADMIT = next(step['run'] for step in STEPS if step.get('id') == 'admission')
+REPORT = next(step['run'] for step in STEPS if step.get('name') == 'Report candidate status privately')
 
 
 class WorkflowPrivacyTests(unittest.TestCase):
+    def admission(self, state, merged, status='ahead', wrong_head=False):
+        sha = 'a' * 40
+        pr = {'state': state, 'merged_at': '2026-01-01' if merged else None, 'merge_commit_sha': 'c' * 40,
+              'head': {'sha': 'b' * 40 if wrong_head else sha, 'repo': {'full_name': 'augety121/hashmm'}}}
+        responses = [io.BytesIO(json.dumps(pr).encode()), io.BytesIO(json.dumps({'status': status, 'base_commit': {'sha': sha}}).encode())]
+        with patch.dict(os.environ, {'SOURCE_SHA': sha, 'PR_NUMBER': '7', 'READ_TOKEN': 'synthetic', 'RECIPIENT': 'age1' + 'a' * 58, 'ACTIONS_STEP_DEBUG': 'false'}), patch('urllib.request.urlopen', side_effect=responses):
+            exec(compile(ADMIT, '<admit>', 'exec'), {})
+
+    def test_exact_open_head_is_admitted(self):
+        self.admission('open', False)
+
+    def test_changed_open_head_is_rejected(self):
+        with self.assertRaises(SystemExit): self.admission('open', False, wrong_head=True)
+
+    def test_merged_ancestor_is_admitted(self):
+        self.admission('closed', True)
+
+    def test_unmerged_closed_pr_is_rejected(self):
+        with self.assertRaises(SystemExit): self.admission('closed', False)
+
+    def test_merged_commit_removed_from_main_is_rejected(self):
+        with self.assertRaises(SystemExit): self.admission('closed', True, status='diverged')
+
+    def test_upload_failure_cannot_report_success(self):
+        with patch.dict(os.environ, {'BUILD_OUTCOME': 'success', 'SEAL_OUTCOME': 'success',
+                'DELIVERY_OUTCOME': 'failure', 'TARGET': 'ios', 'ARCH': 'arm64', 'STATUS_TOKEN': 'synthetic', 'SOURCE_SHA': 'a'*40}), patch('urllib.request.urlopen', return_value=io.BytesIO(b'{}')) as call:
+            exec(compile(REPORT, '<report>', 'exec'), {})
+            self.assertEqual(json.loads(call.call_args.args[0].data)['state'], 'failure')
+
     def test_all_python_steps_compile(self):
         for step in STEPS:
             if step.get('shell') == 'python':
