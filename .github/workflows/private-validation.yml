@@ -68,6 +68,7 @@ jobs:
         with:
           node-version: '22'
       - name: Run full suite with private output
+        id: private-suite
         shell: python
         env:
           SUITE: ${{ matrix.suite }}
@@ -80,6 +81,7 @@ jobs:
               if key.startswith(('GITHUB_', 'ACTIONS_', 'RUNNER_')):
                   env.pop(key, None)
           env['CI'] = 'true'
+          env['HASHMM_CI_RESULT_PATH'] = str(pathlib.Path(os.environ['RUNNER_TEMP']) / 'hashmm-private-ci-result.json')
           log = pathlib.Path(os.environ['RUNNER_TEMP']) / 'private-validation.log'
           try:
               with log.open('wb') as stream:
@@ -88,6 +90,77 @@ jobs:
               code = 1
           print('Private suite passed.' if code == 0 else 'Private suite failed; raw output was not published.')
           raise SystemExit(0 if code == 0 else 1)
+      - name: Send bounded diagnostic only to private commit status
+        if: ${{ always() && steps.private-suite.outcome != 'skipped' }}
+        shell: python
+        env:
+          STATUS_TOKEN: ${{ secrets.HASHMM_STATUS_WRITE }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SUITE: ${{ matrix.suite }}
+          PLATFORM: ${{ matrix.os }}
+          SUITE_OUTCOME: ${{ steps.private-suite.outcome }}
+        run: |
+          import json, os, pathlib, re, urllib.request
+          # PRIVATE_DIAGNOSTIC_FUNCTION_BEGIN
+          def diagnostic_description(report, suite, outcome):
+              if outcome == 'success':
+                  return 'Private suite passed.'
+              unavailable = 'Private suite failed; bounded diagnostic unavailable.'
+              if not isinstance(report, dict) or report.get('schema') != 'hashmm.private-ci-diagnostic.v1' or report.get('suite') != suite:
+                  return unavailable
+              stages = {'dependencies', 'test-dependencies', 'lint-required', 'lint-advisory', 'cli-archive',
+                        'pytest', 'contracts', 'compile', 'node-syntax', 'desktop-dependencies',
+                        'frontend-dependencies', 'desktop-tests', 'typecheck', 'frontend-tests',
+                        'frontend-build', 'iteration-tests', 'project-config'}
+              steps = report.get('steps')
+              if not isinstance(steps, list) or len(steps) > 1000:
+                  return unavailable
+              failed = [step for step in steps if isinstance(step, dict) and step.get('stage') in stages
+                        and step.get('status') in {'failed', 'error', 'running'}]
+              if not failed:
+                  return unavailable
+              stage = failed[0]['stage']
+              description = stage + ': failed'
+              detail = report.get('pytest')
+              if stage == 'pytest' and isinstance(detail, dict) and detail.get('status') == 'available':
+                  counts = [detail.get(key) for key in ('failed', 'errors')]
+                  if all(type(value) is int and 0 <= value <= 1000000 for value in counts):
+                      description = 'pytest: failed=' + str(counts[0]) + ' errors=' + str(counts[1])
+                  identifiers = detail.get('test_ids')
+                  if isinstance(identifiers, list):
+                      for value in identifiers[:10]:
+                          if isinstance(value, str) and len(value) <= 240 and re.fullmatch(r'(?:tests\.)?test_[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)*::test_[A-Za-z0-9_]+', value):
+                              description += ' ' + value
+                              break
+              return description[:140]
+          # PRIVATE_DIAGNOSTIC_FUNCTION_END
+          try:
+              sha, suite, platform = os.environ['SOURCE_SHA'], os.environ['SUITE'], os.environ['PLATFORM']
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              assert suite in {'python', 'desktop-node', 'frontend', 'iteration'}
+              assert platform in {'windows-latest', 'ubuntu-latest'}
+              assert os.environ['STATUS_TOKEN']
+              outcome = os.environ['SUITE_OUTCOME']
+              assert outcome in {'success', 'failure', 'cancelled'}
+              path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'hashmm-private-ci-result.json'
+              report = None
+              if path.is_file() and not path.is_symlink() and path.stat().st_size <= 65536:
+                  try:
+                      report = json.loads(path.read_text(encoding='utf-8'))
+                  except (ValueError, OSError):
+                      pass
+              # Never print the report, identifiers, payload, response or token.
+              payload = {'state': 'success' if outcome == 'success' else 'failure',
+                         'context': 'private-diagnostic/' + platform + '/' + suite,
+                         'description': diagnostic_description(report, suite, outcome),
+                         'target_url': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']}
+              request = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/statuses/' + sha,
+                  data=json.dumps(payload).encode(), headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  assert response.status == 201
+              print('Bounded diagnostic written to the private repository; no raw output published.')
+          except Exception:
+              raise SystemExit('Private diagnostic reporting failed; no raw output published.')
   report:
     if: always() && github.actor == 'augety121' && github.ref == 'refs/heads/main'
     needs: validate
