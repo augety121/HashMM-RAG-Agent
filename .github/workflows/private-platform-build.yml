@@ -1,0 +1,181 @@
+name: Private platform candidates
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Reviewed private pull request number
+        required: true
+        type: string
+      source_sha:
+        description: Exact reviewed private pull request head
+        required: true
+        type: string
+      recipient:
+        description: Local age public recipient; never enter the secret identity
+        required: true
+        type: string
+      target:
+        description: Native candidate target
+        required: true
+        default: all
+        type: choice
+        options: [all, ios, macos, linux]
+permissions:
+  contents: read
+concurrency:
+  group: private-platform-candidates
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
+    environment: private-validation
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - {os: macos-15, target: ios, arch: arm64}
+          - {os: macos-15, target: macos, arch: arm64}
+          - {os: macos-15-intel, target: macos, arch: x64}
+          - {os: ubuntu-24.04, target: linux, arch: x64}
+    steps:
+      - name: Admit exact private source
+        if: inputs.target == 'all' || inputs.target == matrix.target
+        id: admission
+        shell: python
+        env:
+          READ_TOKEN: ${{ secrets.HASHMM_SOURCE_READ }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RECIPIENT: ${{ inputs.recipient }}
+        run: |
+          import json, os, re, urllib.request
+          try:
+              sha, number = os.environ['SOURCE_SHA'], os.environ['PR_NUMBER']
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              assert re.fullmatch('[1-9][0-9]{0,8}', number)
+              assert re.fullmatch('age1[023456789acdefghjklmnpqrstuvwxyz]{58}', os.environ['RECIPIENT'])
+              assert os.environ['READ_TOKEN']
+              assert os.environ.get('ACTIONS_STEP_DEBUG', '').lower() != 'true'
+              request = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/pulls/' + number,
+                  headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  pr = json.load(response)
+              assert pr['state'] == 'open' and pr['head']['sha'] == sha
+              assert pr['head']['repo']['full_name'] == 'augety121/hashmm'
+          except Exception:
+              raise SystemExit('Private source admission failed; no source output published.')
+      - uses: actions/setup-go@v5
+        if: steps.admission.outcome == 'success'
+        with:
+          go-version: '1.23.8'
+          cache: false
+      - name: Prepare fixed encryption tool
+        if: steps.admission.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP/delivery-tools" go install filippo.io/age/cmd/age@v1.2.1
+      - uses: actions/checkout@v4
+        if: steps.admission.outcome == 'success'
+        with:
+          repository: augety121/hashmm
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.HASHMM_SOURCE_READ }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        if: steps.admission.outcome == 'success'
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        if: steps.admission.outcome == 'success'
+        with:
+          node-version: '22'
+      - name: Build native candidate with private output
+        id: candidate
+        if: steps.admission.outcome == 'success'
+        shell: python
+        env:
+          TARGET: ${{ matrix.target }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          import os, pathlib, platform, signal, subprocess, sys
+          env = {k: v for k, v in os.environ.items() if not k.startswith(('GITHUB_', 'ACTIONS_', 'RUNNER_'))}
+          env.update(CI='true', HASHMM_EPHEMERAL_BUILD='github-hosted', PYTHONUTF8='1', NEXT_TELEMETRY_DISABLED='1')
+          arch = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x64', 'amd64': 'x64'}.get(platform.machine().lower())
+          if arch != os.environ['EXPECTED_ARCH']:
+              raise SystemExit('Runner architecture mismatch; no candidate accepted.')
+          try:
+              with (pathlib.Path(os.environ['RUNNER_TEMP']) / 'private-platform.log').open('wb') as stream:
+                  process = subprocess.Popen([sys.executable, 'scripts/run-platform-ci.py', os.environ['TARGET']],
+                      env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+                  try:
+                      code = process.wait(timeout=4500)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(process.pid, signal.SIGKILL)
+                      process.wait()
+                      code = 1
+          except Exception:
+              code = 1
+          print('Native candidate passed.' if code == 0 else 'Native candidate failed; details are encrypted.')
+          raise SystemExit(0 if code == 0 else 1)
+      - name: Encrypt private receipts and candidate files
+        id: sealed
+        if: always() && steps.candidate.outcome != 'skipped' && steps.admission.outcome == 'success'
+        shell: python
+        env:
+          RECIPIENT: ${{ inputs.recipient }}
+        run: |
+          import os, pathlib, subprocess, tarfile
+          temporary = pathlib.Path(os.environ['RUNNER_TEMP'])
+          plain = temporary / 'private-platform.tar'
+          sealed = temporary / 'private-platform.tar.age'
+          try:
+              with tarfile.open(plain, 'w') as archive:
+                  log = temporary / 'private-platform.log'
+                  if log.is_file(): archive.add(log, arcname='build.log')
+                  delivery = pathlib.Path('.delivery')
+                  if delivery.is_dir(): archive.add(delivery, arcname='delivery')
+              result = subprocess.run([str(temporary / 'delivery-tools/age'), '-r', os.environ['RECIPIENT'],
+                  '-o', str(sealed), str(plain)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              if result.returncode or not sealed.is_file() or sealed.stat().st_size == 0:
+                  raise ValueError('Encryption failed')
+          except Exception:
+              sealed.unlink(missing_ok=True)
+              raise SystemExit('Encrypted delivery failed; no raw data uploaded.')
+          finally:
+              plain.unlink(missing_ok=True)
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.sealed.outcome == 'success'
+        with:
+          name: encrypted-${{ matrix.target }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/private-platform.tar.age
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+      - name: Report candidate status privately
+        if: always() && steps.admission.outcome == 'success'
+        shell: python
+        env:
+          STATUS_TOKEN: ${{ secrets.HASHMM_STATUS_WRITE }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+          BUILD_OUTCOME: ${{ steps.candidate.outcome }}
+          SEAL_OUTCOME: ${{ steps.sealed.outcome }}
+        run: |
+          import json, os, urllib.request
+          passed = os.environ['BUILD_OUTCOME'] == 'success' and os.environ['SEAL_OUTCOME'] == 'success'
+          body = {'state': 'success' if passed else 'failure',
+              'context': 'platform/' + os.environ['TARGET'] + '-' + os.environ['ARCH'],
+              'description': 'Candidate built; installation and signing are separate.' if passed else 'Candidate failed; inspect encrypted private diagnostics.'}
+          request = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/statuses/' + os.environ['SOURCE_SHA'],
+              data=json.dumps(body).encode(), headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'],
+              'Accept': 'application/vnd.github+json'})
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response: response.read()
+          except Exception:
+              raise SystemExit('Private status update failed; credentials and source output withheld.')
