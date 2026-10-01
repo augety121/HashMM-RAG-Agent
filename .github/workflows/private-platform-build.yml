@@ -1,4 +1,5 @@
 name: Private platform candidates
+run-name: Private candidates ${{ inputs.source_sha }} (${{ inputs.target }})
 on:
   workflow_dispatch:
     inputs:
