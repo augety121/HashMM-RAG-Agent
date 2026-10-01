@@ -18,6 +18,18 @@ RULES = {
     'jwt': rb'\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}',
 }
 LIMIT = 64 * 1024 * 1024
+PUBLIC_FILES = {
+    '.gitignore', 'README.md', 'LICENSE', 'COMMUNITY.md', 'MAINTAINERS.md',
+    '.github/pull_request_template.md', '.github/workflows/community.yml',
+    '.github/workflows/private-validation.yml', '.github/workflows/private-platform-build.yml',
+    'docs/PRIVATE-PLATFORM-BUILDS.md', 'scripts/check_public_privacy.py',
+    'scripts/test_platform_workflow.py', 'scripts/tests/test_public_privacy.py',
+    'tests/test_private_validation_diagnostics.py',
+}
+
+
+def check_public_path(name):
+    return [] if name in PUBLIC_FILES else [(name, 'outside-public-build-allowlist')]
 
 
 def scan(name, data, depth=0):
@@ -49,6 +61,7 @@ def main():
     paths = subprocess.check_output(['git', 'ls-files', '-z']).decode('utf-8').split('\0')
     findings = []
     for name in filter(None, paths):
+        findings.extend(check_public_path(name))
         path = Path(name)
         if path.is_file():
             findings.extend(scan(name, path.read_bytes()))

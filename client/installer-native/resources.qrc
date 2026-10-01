@@ -1,7 +1,0 @@
-<RCC>
-  <qresource prefix="/">
-    <file>icon.png</file>
-    <file>icon.ico</file>
-    <file>eula.html</file>
-  </qresource>
-</RCC>

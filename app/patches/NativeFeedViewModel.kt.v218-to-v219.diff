@@ -1,8 +1,0 @@
---- /tmp/b-NativeFeedViewModel.kt	2026-07-03 14:39:09.174590573 +0000
-+++ app/src/main/java/com/hashmm/app/ui/workbench/NativeFeedViewModel.kt	2026-07-03 14:37:42.514374017 +0000
-@@ -10,4 +10,5 @@
- @HiltViewModel
- class NativeFeedViewModel @Inject constructor(private val repo: FeedRepository) : ViewModel() {
-     suspend fun load(): FeedData = repo.feed()
-+    suspend fun health(): Pair<Boolean, String> = repo.health()
- }

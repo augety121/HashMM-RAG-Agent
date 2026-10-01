@@ -10,6 +10,14 @@ spec.loader.exec_module(privacy)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_product_source_is_rejected_even_without_credentials(self):
+        for name in ('client/hashmm/api/server.py', 'app/Main.kt', 'server/app.py', 'docs/example.tsx', 'anything.zip'):
+            self.assertEqual(privacy.check_public_path(name), [(name, 'outside-public-build-allowlist')])
+
+    def test_only_explicit_public_workflow_and_synthetic_tools_allowed(self):
+        self.assertEqual(privacy.check_public_path('.github/workflows/private-platform-build.yml'), [])
+        self.assertEqual(privacy.check_public_path('scripts/test_platform_workflow.py'), [])
+        self.assertTrue(privacy.check_public_path('scripts/private-product-copy.py'))
     def test_detects_credentials_without_returning_value(self):
         value = b'sb_' + b'secret_' + b'x' * 32
         result = privacy.scan('config.txt', value)
