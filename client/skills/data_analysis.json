@@ -1,7 +1,0 @@
-{
-  "name": "数据分析",
-  "description": "如何处理数据、生成可视化、统计分析",
-  "triggers": ["数据", "data", "分析", "统计", "可视化", "图表", "plot", "chart", "pandas", "matplotlib", "excel", "csv"],
-  "prompt": "## 数据分析规范\n1. 数据读取：使用 pandas，处理缺失值和异常值\n2. 数据探索：df.describe()、df.info()、相关性分析\n3. 可视化：matplotlib/seaborn，设置中文字体，添加标题和标签\n4. 统计分析：给出关键统计指标和解读\n5. 代码包含完整的数据处理 pipeline\n6. 图表要美观、专业、可直接用于论文/报告",
-  "tools": ["code_generate", "file_create"]
-}
