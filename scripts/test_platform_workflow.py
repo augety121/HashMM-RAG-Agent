@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -44,7 +45,7 @@ class WorkflowPrivacyTests(unittest.TestCase):
 
     def test_upload_failure_cannot_report_success(self):
         with patch.dict(os.environ, {'BUILD_OUTCOME': 'success', 'SEAL_OUTCOME': 'success',
-                'DELIVERY_OUTCOME': 'failure', 'TARGET': 'ios', 'ARCH': 'arm64', 'STATUS_TOKEN': 'synthetic', 'SOURCE_SHA': 'a'*40}), patch('urllib.request.urlopen', return_value=io.BytesIO(b'{}')) as call:
+                'DELIVERY_OUTCOME': 'failure', 'DIAGNOSTIC_OUTCOME': 'success', 'TARGET': 'ios', 'ARCH': 'arm64', 'STATUS_TOKEN': 'synthetic', 'SOURCE_SHA': 'a'*40}), patch('urllib.request.urlopen', return_value=io.BytesIO(b'{}')) as call:
             exec(compile(REPORT, '<report>', 'exec'), {})
             self.assertEqual(json.loads(call.call_args.args[0].data)['state'], 'failure')
 
@@ -55,16 +56,28 @@ class WorkflowPrivacyTests(unittest.TestCase):
 
     def test_only_encrypted_attachment_is_uploaded(self):
         uploads = [s for s in STEPS if s.get('uses', '').startswith('actions/upload-artifact@')]
-        self.assertEqual(len(uploads), 1)
-        self.assertEqual(uploads[0]['with']['path'], '${{ runner.temp }}/private-platform.tar.age')
-        self.assertIn("steps.sealed.outcome == 'success'", uploads[0]['if'])
+        self.assertEqual(len(uploads), 2)
+        self.assertEqual({step['with']['path'] for step in uploads},
+                         {'${{ runner.temp }}/private-platform.tar.age', '${{ runner.temp }}/private-diagnostics.tar.age'})
+        for step in uploads: self.assertIn("steps.sealed.outcome == 'success'", step['if'])
 
     def execute_encryption(self, success):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'private-platform.log').write_text('synthetic confidential failure', encoding='utf-8')
+            candidate = root / '.delivery/run/macos/candidate.dmg'
+            candidate.parent.mkdir(parents=True)
+            candidate.write_bytes(b'synthetic candidate')
+            (candidate.parent / 'unpacked-intermediate.bin').write_bytes(b'not a deliverable')
+            (root / '.delivery/run/build-0.log').write_text('synthetic diagnostic')
+            (root / '.delivery/run/receipt.json').write_text(json.dumps({'targets': [
+                {'status': 'built_not_installed', 'target': 'macos',
+                 'artifacts': [{'path': '.delivery/run/macos/candidate.dmg'}]}]}))
+            sealed_members = {}
             def encrypt(argv, **kwargs):
                 # Simulate age writing partial output even when it fails.
+                with tarfile.open(argv[-1]) as archive:
+                    sealed_members[Path(argv[-1]).name] = archive.getnames()
                 Path(argv[argv.index('-o') + 1]).write_bytes(b'ciphertext' if success else b'partial')
                 return subprocess.CompletedProcess(argv, 0 if success else 1)
             old = Path.cwd()
@@ -77,8 +90,16 @@ class WorkflowPrivacyTests(unittest.TestCase):
                         with self.assertRaises(SystemExit):
                             exec(compile(ENCRYPT, '<encryption>', 'exec'), {})
                 self.assertFalse((root / 'private-platform.tar').exists())
+                self.assertFalse((root / 'private-diagnostics.tar').exists())
                 self.assertEqual((root / 'private-platform.tar.age').exists(), success)
+                self.assertEqual((root / 'private-diagnostics.tar.age').exists(), success)
                 self.assertTrue((root / 'private-platform.log').exists())
+                if success:
+                    self.assertIn('delivery/run/macos/candidate.dmg', sealed_members['private-platform.tar'])
+                    self.assertNotIn('delivery/run/macos/candidate.dmg', sealed_members['private-diagnostics.tar'])
+                    for members in sealed_members.values():
+                        self.assertIn('delivery/run/receipt.json', members)
+                        self.assertNotIn('delivery/run/macos/unpacked-intermediate.bin', members)
             finally:
                 os.chdir(old)
 

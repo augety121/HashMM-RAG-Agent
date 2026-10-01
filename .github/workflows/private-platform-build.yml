@@ -20,7 +20,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, ios, macos, linux]
+        options: [all, ios, macos, macos-arm64, macos-x64, linux]
 permissions:
   contents: read
 concurrency:
@@ -43,7 +43,7 @@ jobs:
           - {os: ubuntu-24.04, target: linux, arch: x64}
     steps:
       - name: Admit exact private source
-        if: inputs.target == 'all' || inputs.target == matrix.target
+        if: inputs.target == 'all' || inputs.target == matrix.target || inputs.target == format('{0}-{1}', matrix.target, matrix.arch)
         id: admission
         shell: python
         env:
@@ -139,25 +139,57 @@ jobs:
         env:
           RECIPIENT: ${{ inputs.recipient }}
         run: |
-          import os, pathlib, subprocess, tarfile
+          import json, os, pathlib, subprocess, tarfile
           temporary = pathlib.Path(os.environ['RUNNER_TEMP'])
           plain = temporary / 'private-platform.tar'
           sealed = temporary / 'private-platform.tar.age'
+          diagnostic_plain = temporary / 'private-diagnostics.tar'
+          diagnostic_sealed = temporary / 'private-diagnostics.tar.age'
           try:
-              with tarfile.open(plain, 'w') as archive:
-                  log = temporary / 'private-platform.log'
-                  if log.is_file(): archive.add(log, arcname='build.log')
-                  delivery = pathlib.Path('.delivery')
-                  if delivery.is_dir(): archive.add(delivery, arcname='delivery')
-              result = subprocess.run([str(temporary / 'delivery-tools/age'), '-r', os.environ['RECIPIENT'],
-                  '-o', str(sealed), str(plain)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-              if result.returncode or not sealed.is_file() or sealed.stat().st_size == 0:
-                  raise ValueError('Encryption failed')
+              delivery = pathlib.Path('.delivery').resolve()
+              records = sorted(delivery.glob('*/receipt.json'))
+              logs = records + sorted(delivery.glob('*/*.log'))
+              with tarfile.open(plain, 'w') as archive, tarfile.open(diagnostic_plain, 'w') as diagnostic:
+                  for output in (archive, diagnostic):
+                      log = temporary / 'private-platform.log'
+                      if log.is_file(): output.add(log, arcname='build.log')
+                      for log in logs:
+                          if log.is_symlink(): raise ValueError('Linked diagnostic rejected')
+                          output.add(log, arcname='delivery/' + log.relative_to(delivery).as_posix())
+                  for receipt in records:
+                      report = json.loads(receipt.read_text(encoding='utf-8'))
+                      for row in report.get('targets', []):
+                          if row.get('status') != 'built_not_installed': continue
+                          for item in row.get('artifacts', []):
+                              source = pathlib.Path(item['path'])
+                              resolved = source.resolve()
+                              if source.is_symlink() or delivery not in resolved.parents:
+                                  raise ValueError('Artifact outside delivery root')
+                              allowed = source.is_file() and source.suffix in {'.dmg', '.zip', '.deb', '.AppImage', '.ipa'}
+                              allowed = allowed or (row.get('target') == 'ios' and source.is_dir() and source.suffix == '.app')
+                              if not allowed: raise ValueError('Unexpected candidate artifact')
+                              archive.add(source, arcname='delivery/' + resolved.relative_to(delivery).as_posix())
+              for src, dest in ((plain, sealed), (diagnostic_plain, diagnostic_sealed)):
+                  result = subprocess.run([str(temporary / 'delivery-tools/age'), '-r', os.environ['RECIPIENT'],
+                      '-o', str(dest), str(src)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  if result.returncode or not dest.is_file() or dest.stat().st_size == 0:
+                      raise ValueError('Encryption failed')
           except Exception:
               sealed.unlink(missing_ok=True)
+              diagnostic_sealed.unlink(missing_ok=True)
               raise SystemExit('Encrypted delivery failed; no raw data uploaded.')
           finally:
               plain.unlink(missing_ok=True)
+              diagnostic_plain.unlink(missing_ok=True)
+      - uses: actions/upload-artifact@v4
+        id: diagnostic_delivery
+        if: always() && steps.sealed.outcome == 'success'
+        with:
+          name: diagnostics-${{ matrix.target }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/private-diagnostics.tar.age
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
       - uses: actions/upload-artifact@v4
         id: delivery
         if: always() && steps.sealed.outcome == 'success'
@@ -178,9 +210,10 @@ jobs:
           BUILD_OUTCOME: ${{ steps.candidate.outcome }}
           SEAL_OUTCOME: ${{ steps.sealed.outcome }}
           DELIVERY_OUTCOME: ${{ steps.delivery.outcome }}
+          DIAGNOSTIC_OUTCOME: ${{ steps.diagnostic_delivery.outcome }}
         run: |
           import json, os, urllib.request
-          passed = all(os.environ[key] == 'success' for key in ('BUILD_OUTCOME', 'SEAL_OUTCOME', 'DELIVERY_OUTCOME'))
+          passed = all(os.environ[key] == 'success' for key in ('BUILD_OUTCOME', 'SEAL_OUTCOME', 'DELIVERY_OUTCOME', 'DIAGNOSTIC_OUTCOME'))
           body = {'state': 'success' if passed else 'failure',
               'context': 'platform/' + os.environ['TARGET'] + '-' + os.environ['ARCH'],
               'description': 'Candidate built; installation and signing are separate.' if passed else 'Candidate failed; inspect encrypted private diagnostics.'}
