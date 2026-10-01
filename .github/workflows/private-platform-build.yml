@@ -64,8 +64,17 @@ jobs:
                   headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
               with urllib.request.urlopen(request, timeout=30) as response:
                   pr = json.load(response)
-              assert pr['state'] == 'open' and pr['head']['sha'] == sha
               assert pr['head']['repo']['full_name'] == 'augety121/hashmm'
+              if pr['state'] == 'open':
+                  assert pr['head']['sha'] == sha
+              else:
+                  assert pr.get('merged_at') and sha in {pr['head']['sha'], pr.get('merge_commit_sha')}
+                  compare_request = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/compare/' + sha + '...main',
+                      headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                  with urllib.request.urlopen(compare_request, timeout=30) as response:
+                      comparison = json.load(response)
+                  assert comparison['status'] in {'ahead', 'identical'}
+                  assert comparison['base_commit']['sha'] == sha
           except Exception:
               raise SystemExit('Private source admission failed; no source output published.')
       - uses: actions/setup-go@v5
@@ -150,6 +159,7 @@ jobs:
           finally:
               plain.unlink(missing_ok=True)
       - uses: actions/upload-artifact@v4
+        id: delivery
         if: always() && steps.sealed.outcome == 'success'
         with:
           name: encrypted-${{ matrix.target }}-${{ matrix.arch }}
@@ -167,9 +177,10 @@ jobs:
           ARCH: ${{ matrix.arch }}
           BUILD_OUTCOME: ${{ steps.candidate.outcome }}
           SEAL_OUTCOME: ${{ steps.sealed.outcome }}
+          DELIVERY_OUTCOME: ${{ steps.delivery.outcome }}
         run: |
           import json, os, urllib.request
-          passed = os.environ['BUILD_OUTCOME'] == 'success' and os.environ['SEAL_OUTCOME'] == 'success'
+          passed = all(os.environ[key] == 'success' for key in ('BUILD_OUTCOME', 'SEAL_OUTCOME', 'DELIVERY_OUTCOME'))
           body = {'state': 'success' if passed else 'failure',
               'context': 'platform/' + os.environ['TARGET'] + '-' + os.environ['ARCH'],
               'description': 'Candidate built; installation and signing are separate.' if passed else 'Candidate failed; inspect encrypted private diagnostics.'}
