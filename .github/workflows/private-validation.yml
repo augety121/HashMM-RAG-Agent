@@ -122,10 +122,16 @@ jobs:
               stage = failed[0]['stage']
               description = stage + ': failed'
               detail = report.get('pytest')
-              if stage == 'pytest' and isinstance(detail, dict) and detail.get('status') == 'available':
-                  counts = [detail.get(key) for key in ('failed', 'errors')]
-                  if all(type(value) is int and 0 <= value <= 1000000 for value in counts):
-                      description = 'pytest: failed=' + str(counts[0]) + ' errors=' + str(counts[1])
+              if stage == 'pytest' and isinstance(detail, dict) and detail.get('status') in {'available', 'in_progress', 'finishing'}:
+                  if detail['status'] == 'available':
+                      counts = [detail.get(key) for key in ('failed', 'errors')]
+                      if all(type(value) is int and 0 <= value <= 1000000 for value in counts):
+                          description = 'pytest: failed=' + str(counts[0]) + ' errors=' + str(counts[1])
+                  else:
+                      description = 'pytest: interrupted'
+                      completed = detail.get('completed')
+                      if type(completed) is int and 0 <= completed <= 1000000:
+                          description += ' completed=' + str(completed)
                   identifiers = detail.get('test_ids')
                   if isinstance(identifiers, list):
                       for value in identifiers[:10]:

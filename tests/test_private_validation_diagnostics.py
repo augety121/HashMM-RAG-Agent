@@ -52,6 +52,23 @@ class Diagnostics(unittest.TestCase):
             'test_ids': ['tests.test_'+'x'*150+'::test_failure']})
         self.assertLessEqual(len(describe(report, 'python', 'failure')), 140)
 
+    def test_interruption_keeps_active_test_distinct_from_assertion_failure(self):
+        result = describe(self.report(steps=[{'stage': 'pytest', 'status': 'running'}],
+            pytest={'status': 'in_progress', 'completed': 7,
+                    'test_ids': ['tests.test_sample::test_slow']}), 'python', 'failure')
+        self.assertEqual(result, 'pytest: interrupted completed=7 tests.test_sample::test_slow')
+
+    def test_interruption_never_forwards_parameter_or_invalid_count(self):
+        result = describe(self.report(pytest={'status': 'in_progress',
+            'completed': 'synthetic-private-count',
+            'test_ids': ['tests.test_sample::test_slow[synthetic-private-value]']}), 'python', 'failure')
+        self.assertEqual(result, 'pytest: interrupted')
+
+    def test_finishing_without_final_result_is_not_a_pass(self):
+        result = describe(self.report(pytest={'status': 'finishing', 'completed': 20,
+            'test_ids': []}), 'python', 'failure')
+        self.assertEqual(result, 'pytest: interrupted completed=20')
+
     def test_status_secret_is_confined_to_post_test_step(self):
         suite_step = workflow.split('      - name: Run full suite with private output', 1)[1].split('      - name: Send bounded diagnostic', 1)[0]
         self.assertNotIn('STATUS_TOKEN', suite_step)
