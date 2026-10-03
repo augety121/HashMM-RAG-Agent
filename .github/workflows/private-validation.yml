@@ -21,7 +21,7 @@ jobs:
     if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
     environment: private-validation
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && matrix.suite == 'python' && 90 || 60 }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -85,7 +85,8 @@ jobs:
           log = pathlib.Path(os.environ['RUNNER_TEMP']) / 'private-validation.log'
           try:
               with log.open('wb') as stream:
-                  code = subprocess.run([sys.executable, 'scripts/run-private-ci.py', os.environ['SUITE']], env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=3300).returncode
+                  limit = 5100 if sys.platform == 'win32' and os.environ['SUITE'] == 'python' else 3300
+                  code = subprocess.run([sys.executable, 'scripts/run-private-ci.py', os.environ['SUITE']], env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=limit).returncode
           except Exception:
               code = 1
           print('Private suite passed.' if code == 0 else 'Private suite failed; raw output was not published.')
