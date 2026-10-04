@@ -103,6 +103,31 @@ jobs:
         run: |
           import json, os, pathlib, re, urllib.request
           # PRIVATE_DIAGNOSTIC_FUNCTION_BEGIN
+          def diagnostic_failure_ids(report, suite, outcome):
+              if outcome != 'failure' or suite != 'python' or not isinstance(report, dict):
+                  return []
+              if report.get('schema') != 'hashmm.private-ci-diagnostic.v1' or report.get('suite') != suite:
+                  return []
+              steps, detail = report.get('steps'), report.get('pytest')
+              if (not isinstance(steps, list) or len(steps) > 1000 or
+                      not any(isinstance(step, dict) and step.get('stage') == 'pytest' and
+                              step.get('status') in {'failed', 'error'} for step in steps) or
+                      not isinstance(detail, dict) or detail.get('status') != 'available'):
+                  return []
+              identifiers = detail.get('test_ids')
+              if not isinstance(identifiers, list):
+                  return []
+              result = []
+              for value in identifiers[:10]:
+                  if not isinstance(value, str) or len(value) > 1024:
+                      continue
+                  identifier = value.split('[', 1)[0]
+                  if (len(identifier) <= 140 and re.fullmatch(
+                          r'(?:tests\.)?test_[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)*::test_[A-Za-z0-9_]+', identifier)
+                          and identifier not in result):
+                      result.append(identifier)
+              return result
+
           def diagnostic_description(report, suite, outcome):
               if outcome == 'success':
                   return 'Private suite passed.'
@@ -165,6 +190,19 @@ jobs:
                   data=json.dumps(payload).encode(), headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'], 'Accept': 'application/vnd.github+json'})
               with urllib.request.urlopen(request, timeout=30) as response:
                   assert response.status == 201
+              # Separate bounded private statuses preserve every admitted ID.
+              # Run/attempt identity prevents stale slots from earlier runs.
+              run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
+              assert re.fullmatch('[0-9]{1,20}', run_id) and re.fullmatch('[0-9]{1,10}', attempt)
+              for index, identifier in enumerate(diagnostic_failure_ids(report, suite, outcome), 1):
+                  # Delivery receipts are informational; only the stable suite
+                  # status controls failure, so later success can clear it.
+                  detail_payload = dict(payload, state='success', description=identifier,
+                      context='private-diagnostic/' + platform + '/' + suite + '/' + run_id + '-' + attempt + '/failure-' + str(index))
+                  request = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/statuses/' + sha,
+                      data=json.dumps(detail_payload).encode(), headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      assert response.status == 201
               print('Bounded diagnostic written to the private repository; no raw output published.')
           except Exception:
               raise SystemExit('Private diagnostic reporting failed; no raw output published.')
