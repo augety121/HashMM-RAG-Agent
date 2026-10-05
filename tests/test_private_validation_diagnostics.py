@@ -13,6 +13,26 @@ describe = namespace['diagnostic_description']
 
 
 class Diagnostics(unittest.TestCase):
+    def test_node_failure_files_are_bounded_and_private_only(self):
+        identify = namespace['diagnostic_failure_ids']
+        report = {'schema': 'hashmm.private-ci-diagnostic.v1', 'suite': 'desktop-node',
+                  'steps': [{'stage': 'desktop-tests', 'status': 'failed',
+                             'test_file': 'desktop/tests-node/test_synthetic.js',
+                             'output': 'synthetic-secret'}]}
+        self.assertEqual(identify(report, 'desktop-node', 'failure'), ['desktop/tests-node/test_synthetic.js'])
+        self.assertEqual(identify(report, 'desktop-node', 'success'), [])
+        self.assertNotIn('test_synthetic', describe(report, 'desktop-node', 'failure'))
+        for unsafe in ('../private.js', 'desktop/tests-node/../../secret.js',
+                       'desktop/tests-node/test_x.js?token=synthetic', 'desktop/tests-node/test_x.js\nsecret',
+                       'desktop/tests-node/' + 'x' * 140 + '.js', None):
+            report['steps'][0]['test_file'] = unsafe
+            self.assertEqual(identify(report, 'desktop-node', 'failure'), [])
+        report['steps'] = [{'stage': 'desktop-tests', 'status': 'failed',
+                            'test_file': f'desktop/tests-node/test_synthetic_{i}.js'} for i in range(12)]
+        self.assertEqual(len(identify(report, 'desktop-node', 'failure')), 10)
+        report['steps'][0]['status'] = 'passed'
+        self.assertNotIn('desktop/tests-node/test_synthetic_0.js', identify(report, 'desktop-node', 'failure'))
+
     def report(self, **updates):
         return {'schema': 'hashmm.private-ci-diagnostic.v1', 'suite': 'python',
                 'steps': [{'stage': 'pytest', 'status': 'failed'}], **updates}
