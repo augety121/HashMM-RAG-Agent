@@ -104,10 +104,27 @@ jobs:
           import json, os, pathlib, re, urllib.request
           # PRIVATE_DIAGNOSTIC_FUNCTION_BEGIN
           def diagnostic_failure_ids(report, suite, outcome):
-              if outcome != 'failure' or suite != 'python' or not isinstance(report, dict):
+              if outcome != 'failure' or suite not in {'python', 'desktop-node'} or not isinstance(report, dict):
                   return []
               if report.get('schema') != 'hashmm.private-ci-diagnostic.v1' or report.get('suite') != suite:
                   return []
+              if suite == 'desktop-node':
+                  steps = report.get('steps')
+                  if not isinstance(steps, list) or len(steps) > 1000:
+                      return []
+                  result = []
+                  for step in steps:
+                      if (not isinstance(step, dict) or step.get('stage') != 'desktop-tests'
+                              or step.get('status') not in {'failed', 'error'}):
+                          continue
+                      value = step.get('test_file')
+                      if (isinstance(value, str) and len(value) <= 140 and re.fullmatch(
+                              r'desktop/tests-node/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|cjs)', value)
+                              and value not in result):
+                          result.append(value)
+                          if len(result) == 10:
+                              break
+                  return result
               steps, detail = report.get('steps'), report.get('pytest')
               if (not isinstance(steps, list) or len(steps) > 1000 or
                       not any(isinstance(step, dict) and step.get('stage') == 'pytest' and
