@@ -35,3 +35,4 @@ jobs:
         run: |
           python -m pip install PyYAML==6.0.2
           python scripts/test_platform_workflow.py
+          python -m unittest discover -s tests -p test_private_validation_diagnostics.py -v

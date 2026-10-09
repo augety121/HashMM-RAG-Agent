@@ -13,6 +13,25 @@ describe = namespace['diagnostic_description']
 
 
 class Diagnostics(unittest.TestCase):
+    def test_interrupted_phase_timing_is_bounded_and_separate(self):
+        timing = namespace['diagnostic_timing']
+        report = self.report(pytest={'status': 'in_progress', 'phase': 'setup',
+            'phase_started_at': 100, 'random_seed': 42, 'output': 'synthetic-private-value'})
+        self.assertEqual(timing(report, 'python', 'failure', 180),
+                         'Interrupted phase=setup elapsed=80s random_seed=42')
+        self.assertEqual(describe(report, 'python', 'failure'), 'pytest: interrupted')
+        for suite, outcome in [('frontend', 'failure'), ('python', 'success')]:
+            self.assertIsNone(timing(report, suite, outcome, 180))
+        for field, value in [('phase', 'secret'), ('phase_started_at', 'secret'),
+                             ('phase_started_at', True), ('phase_started_at', 181),
+                             ('phase_started_at', -100000), ('status', 'available')]:
+            bad = self.report(pytest={**report['pytest'], field: value})
+            self.assertIsNone(timing(bad, 'python', 'failure', 180))
+        for seed in ('secret', True, -1, 2**32):
+            bad = self.report(pytest={**report['pytest'], 'random_seed': seed})
+            self.assertEqual(timing(bad, 'python', 'failure', 180), 'Interrupted phase=setup elapsed=80s')
+        self.assertIsNone(timing(self.report(), 'python', 'failure', 180))
+
     def test_node_failure_files_are_bounded_and_private_only(self):
         identify = namespace['diagnostic_failure_ids']
         report = {'schema': 'hashmm.private-ci-diagnostic.v1', 'suite': 'desktop-node',

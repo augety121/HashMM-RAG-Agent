@@ -182,6 +182,25 @@ jobs:
                               description += ' ' + value
                               break
               return description[:140]
+
+          def diagnostic_timing(report, suite, outcome, now):
+              # Optional runner metadata only. No stack, source, test input,
+              # free-form text, path or assertion body is admitted here.
+              if (suite != 'python' or outcome == 'success' or not isinstance(report, dict)
+                      or report.get('schema') != 'hashmm.private-ci-diagnostic.v1'
+                      or report.get('suite') != suite):
+                  return None
+              detail = report.get('pytest')
+              if not isinstance(detail, dict) or detail.get('status') != 'in_progress':
+                  return None
+              phase, started, seed = (detail.get(key) for key in ('phase', 'phase_started_at', 'random_seed'))
+              if (phase not in ('setup', 'call', 'teardown') or type(started) is not int
+                      or type(now) is not int or not 0 <= now - started <= 86400):
+                  return None
+              result = 'Interrupted phase=' + phase + ' elapsed=' + str(now - started) + 's'
+              if type(seed) is int and 0 <= seed < 2**32:
+                  result += ' random_seed=' + str(seed)
+              return result
           # PRIVATE_DIAGNOSTIC_FUNCTION_END
           try:
               sha, suite, platform = os.environ['SOURCE_SHA'], os.environ['SUITE'], os.environ['PLATFORM']
@@ -211,6 +230,16 @@ jobs:
               # Run/attempt identity prevents stale slots from earlier runs.
               run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
               assert re.fullmatch('[0-9]{1,20}', run_id) and re.fullmatch('[0-9]{1,10}', attempt)
+              import time
+              timing = diagnostic_timing(report, suite, outcome, int(time.time()))
+              if timing is not None:
+                  # Informational receipt; does not turn the failed suite green.
+                  timing_payload = dict(payload, state='success', description=timing,
+                      context='private-diagnostic/' + platform + '/' + suite + '/' + run_id + '-' + attempt + '/timing')
+                  request = urllib.request.Request('https://api.github.com/repos/augety121/hashmm/statuses/' + sha,
+                      data=json.dumps(timing_payload).encode(), headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      assert response.status == 201
               for index, identifier in enumerate(diagnostic_failure_ids(report, suite, outcome), 1):
                   # Delivery receipts are informational; only the stable suite
                   # status controls failure, so later success can clear it.
