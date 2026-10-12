@@ -24,12 +24,15 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: private-platform-candidates
+  group: private-platform-candidates-${{ inputs.target }}
   cancel-in-progress: false
 jobs:
   build:
     if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
     environment: private-validation
+    concurrency:
+      group: private-platform-${{ matrix.target }}-${{ matrix.arch }}
+      cancel-in-progress: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
