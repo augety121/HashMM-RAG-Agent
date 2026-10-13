@@ -1,0 +1,19 @@
+--- /tmp/b-AdminToolsViewModel.kt	2026-07-03 23:50:54.943310116 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/AdminToolsViewModel.kt	2026-07-03 23:50:01.351755928 +0000
+@@ -4,6 +4,7 @@
+ import com.hashmm.app.data.remote.AdminToolsRepository
+ import com.hashmm.app.data.remote.AdvancedData
+ import com.hashmm.app.data.remote.AuditItem
++import com.hashmm.app.data.remote.NotifData
+ import com.hashmm.app.data.remote.QualityData
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import javax.inject.Inject
+@@ -13,6 +14,8 @@
+ class AdminToolsViewModel @Inject constructor(private val repo: AdminToolsRepository) : ViewModel() {
+     suspend fun audit(): Pair<List<AuditItem>, String?> = repo.audit()
+     suspend fun auditQuery(username: String, startTs: Long): Pair<List<AuditItem>, String?> = repo.auditQuery(username, startTs)
++    suspend fun notifications(): NotifData = repo.notifications()
++    suspend fun notificationsReadAll(): Boolean = repo.notificationsReadAll()
+     suspend fun quality(): QualityData = repo.quality()
+     suspend fun advanced(): AdvancedData = repo.advanced()
+     suspend fun dispatch(kind: String, payload: org.json.JSONObject): Pair<Boolean, String> = repo.createDispatch(kind, payload)

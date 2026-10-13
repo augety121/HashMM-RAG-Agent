@@ -1,0 +1,76 @@
+--- /tmp/b-ActivityScreen.kt	2026-07-04 03:22:07.699446151 +0000
++++ app/src/main/java/com/hashmm/app/ui/activity/ActivityScreen.kt	2026-07-04 03:20:56.881446817 +0000
+@@ -2,6 +2,7 @@
+ 
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
++import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Brush
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Box
+@@ -161,14 +162,20 @@
+                     // ── V230 站内通知条：@提及 / 新评论（未读>0 才出现） ──
+                     val nd = notif
+                     if (nd != null && nd.unread > 0) item {
+-                        Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+-                            shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
++                        val csN = MaterialTheme.colorScheme
++                        Surface(color = csN.surface, shape = RoundedCornerShape(16.dp),
++                            border = androidx.compose.foundation.BorderStroke(1.dp, csN.primary.copy(alpha = 0.35f)),
++                            modifier = Modifier.fillMaxWidth()) {
+                             Column(Modifier.clickable { notifOpen = !notifOpen }
+-                                .padding(horizontal = 14.dp, vertical = 11.dp)) {
++                                .padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                 Row(verticalAlignment = Alignment.CenterVertically) {
+-                                    Icon(Icons.Outlined.Notifications, null,
+-                                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+-                                    Spacer(Modifier.width(8.dp))
++                                    Box(
++                                        Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(
++                                            Brush.linearGradient(listOf(csN.primary, csN.primary.copy(alpha = 0.78f)))),
++                                        contentAlignment = Alignment.Center,
++                                    ) { Icon(Icons.Outlined.Notifications, null,
++                                        tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(16.dp)) }
++                                    Spacer(Modifier.width(10.dp))
+                                     Text("${nd.unread} 条新通知（@提及 · 回复 · 画布评论）",
+                                         fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                                         color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+@@ -212,9 +219,11 @@
+                         val runsToday = f.runs.count { it.tsSec >= dayStart }
+                         val schedToday = f.scheduled.count { it.lastRunSec >= dayStart }
+                         val cs2 = MaterialTheme.colorScheme
+-                        Surface(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
++                        Surface(shape = RoundedCornerShape(18.dp),
++                            border = androidx.compose.foundation.BorderStroke(1.dp, cs2.primary.copy(alpha = 0.25f)),
++                            modifier = Modifier.fillMaxWidth()) {
+                             Column(
+-                                Modifier.background(Brush.linearGradient(listOf(cs2.primary.copy(alpha = 0.16f), cs2.primary.copy(alpha = 0.05f))))
++                                Modifier.background(Brush.linearGradient(listOf(cs2.primary.copy(alpha = 0.14f), cs2.primary.copy(alpha = 0.04f))))
+                                     .padding(horizontal = 16.dp, vertical = 14.dp),
+                             ) {
+                                 Text("今日简报", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cs2.primary)
+@@ -332,11 +341,19 @@
+ @Composable
+ private fun QuickCmd(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+     val cs = MaterialTheme.colorScheme
+-    Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = modifier.clickable(onClick = onClick)) {
+-        Column(Modifier.padding(vertical = 12.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+-            Icon(icon, null, tint = cs.primary, modifier = Modifier.size(20.dp))
+-            Spacer(Modifier.height(5.dp))
+-            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = cs.onSurface)
++    Surface(
++        color = cs.surface, shape = RoundedCornerShape(16.dp),
++        border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.55f)),
++        modifier = modifier.clickable(onClick = onClick),
++    ) {
++        Column(Modifier.padding(vertical = 13.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
++            Box(
++                Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(
++                    Brush.linearGradient(listOf(cs.primary, cs.primary.copy(alpha = 0.78f)))),
++                contentAlignment = Alignment.Center,
++            ) { Icon(icon, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(18.dp)) }
++            Spacer(Modifier.height(7.dp))
++            Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
+         }
+     }
+ }

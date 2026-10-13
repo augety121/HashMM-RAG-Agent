@@ -1,0 +1,20 @@
+--- app_pr/HashMM-App-V269/gradle/libs.versions.toml	2026-07-10 09:15:58.000000000 +0000
++++ app/HashMM-App-V268/gradle/libs.versions.toml	2026-07-10 13:10:50.612674945 +0000
+@@ -10,6 +10,8 @@
+ lifecycle = "2.10.0"
+ core-ktx = "1.17.0"
+ activity-compose = "1.12.3"
++# V270: 单元测试（app/src/test 的 JVM 测试，./gradlew test 运行）
++junit = "4.13.2"
+ datastore = "1.1.7"
+ coroutines = "1.10.2"
+ serialization = "1.10.0"
+@@ -27,6 +29,8 @@
+ security-crypto = "1.1.0-alpha06"
+ 
+ [libraries]
++# V270: 单元测试
++junit = { module = "junit:junit", version.ref = "junit" }
+ # AndroidX Core
+ core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
+ activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }

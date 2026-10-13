@@ -1,0 +1,72 @@
+--- /tmp/b-AuditScreen.kt	2026-07-03 22:33:54.026799385 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/AuditScreen.kt	2026-07-03 22:30:03.332550557 +0000
+@@ -18,7 +18,10 @@
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.outlined.AdminPanelSettings
+ import androidx.compose.material.icons.outlined.Terminal
++import androidx.compose.material3.Button
+ import androidx.compose.material3.ExperimentalMaterial3Api
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.TextButton
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.Surface
+ import androidx.compose.material3.Text
+@@ -49,6 +52,19 @@
+     var error by remember { mutableStateOf<String?>(null) }
+     var refreshing by remember { mutableStateOf(false) }
+     var selTool by remember { mutableStateOf("") }
++    // V228 高级筛选（直连 /audit/query）：用户名 + 时间窗
++    var advOpen by remember { mutableStateOf(false) }
++    var qUser by remember { mutableStateOf("") }
++    var qDays by remember { mutableStateOf(0) }   // 0=全部 1=今天 7=近7天
++    var filtered by remember { mutableStateOf(false) }
++    fun runQuery() {
++        scope.launch {
++            refreshing = true
++            val start = if (qDays > 0) System.currentTimeMillis() / 1000 - qDays * 86400L else 0L
++            val (l2, e2) = viewModel.auditQuery(qUser.trim(), start)
++            items = l2; error = e2; filtered = true; refreshing = false
++        }
++    }
+     fun reload() { scope.launch { refreshing = true; val (l, e) = viewModel.audit(); items = l; error = e; refreshing = false } }
+     LaunchedEffect(Unit) { reload() }
+     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+@@ -62,6 +78,38 @@
+                     title = "暂无审计记录", message = "Agent 每次调用工具都会留痕；需开启 HASHMM_AUDIT_TOOLS=1（默认开）")
+                 else -> Column(Modifier.fillMaxSize()) {
+                     val tools = l!!.map { it.tool }.filter { it.isNotBlank() }.distinct()
++                    // ── V228 高级筛选条 ──
++                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
++                        verticalAlignment = Alignment.CenterVertically) {
++                        TextButton(onClick = { advOpen = !advOpen }) {
++                            Text(if (advOpen) "收起高级筛选" else "高级筛选（用户 / 时间）", fontSize = 12.sp)
++                        }
++                        if (filtered) TextButton(onClick = { qUser = ""; qDays = 0; filtered = false; reload() }) {
++                            Text("清空", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
++                        }
++                    }
++                    if (advOpen) {
++                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
++                            OutlinedTextField(value = qUser, onValueChange = { qUser = it }, singleLine = true,
++                                placeholder = { Text("按用户名筛（留空=全部）", fontSize = 12.5.sp) },
++                                modifier = Modifier.fillMaxWidth())
++                            Spacer(Modifier.height(8.dp))
++                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
++                                listOf(0 to "全部时间", 1 to "今天", 7 to "近7天").forEach { (dd, label) ->
++                                    val sel = qDays == dd
++                                    Surface(
++                                        color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
++                                        shape = RoundedCornerShape(50), modifier = Modifier.clickable { qDays = dd },
++                                    ) { Text(label, fontSize = 12.sp,
++                                        color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
++                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) }
++                                }
++                                Spacer(Modifier.weight(1f))
++                                Button(onClick = { runQuery() }) { Text("查询", fontSize = 12.5.sp) }
++                            }
++                            Spacer(Modifier.height(6.dp))
++                        }
++                    }
+                     StatTriple("记录" to "${l!!.size}", "工具种类" to "${tools.size}",
+                         "最新" to (kitAgo(l!!.maxOfOrNull { it.tsSec } ?: 0L).ifBlank { "—" }))
+                     if (tools.size > 1) {

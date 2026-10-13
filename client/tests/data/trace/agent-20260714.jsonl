@@ -1,0 +1,44 @@
+{"kind": "tool_call", "name": "create_file", "latency_ms": 2, "ok": true, "ts": 1784070512.0398088, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070512.0408633, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070512.041504, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070512.0419571, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070512.042447, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "_t_echo", "latency_ms": 0, "ok": true, "ts": 1784070530.7248614, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "_t_doc", "latency_ms": 0, "ok": true, "ts": 1784070530.7264876, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "kb_search", "latency_ms": 0, "ok": true, "ts": 1784070530.7267616, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "_t_write", "latency_ms": 0, "ok": true, "ts": 1784070530.7281773, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070530.7307036, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "kb_search", "latency_ms": 0, "ok": true, "ts": 1784070530.7309594, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070531.9858181, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "read_file_range", "latency_ms": 0, "ok": true, "ts": 1784070531.9863055, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070531.9880736, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070531.9899597, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070531.9916897, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070531.9934504, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070532.0423522, "conv_id": "cV50edit", "trace_id": "xyz"}
+{"kind": "tool_call", "name": "read_file_range", "latency_ms": 0, "ok": true, "ts": 1784070532.049268, "conv_id": "cV50edit", "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070532.0520809, "conv_id": "cV50edit", "trace_id": "xyz"}
+{"kind": "tool_call", "name": "execute_code", "latency_ms": 54, "ok": true, "ts": 1784070532.1088572, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "execute_code", "latency_ms": 20, "ok": true, "ts": 1784070532.130813, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 2, "ok": true, "ts": 1784070545.3114312, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070545.3122923, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070545.312894, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070545.3134303, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070545.313891, "trace_id": "req-123"}
+{"kind": "tool_call", "name": "_t_echo", "latency_ms": 0, "ok": true, "ts": 1784070562.3696692, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "_t_doc", "latency_ms": 0, "ok": true, "ts": 1784070562.3716114, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "kb_search", "latency_ms": 0, "ok": true, "ts": 1784070562.3720024, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "_t_write", "latency_ms": 0, "ok": true, "ts": 1784070562.374382, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070562.3774548, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "kb_search", "latency_ms": 0, "ok": true, "ts": 1784070562.3777392, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070563.4221423, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "read_file_range", "latency_ms": 0, "ok": true, "ts": 1784070563.422519, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070563.424244, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070563.4268956, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070563.4289515, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070563.4305649, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "create_file", "latency_ms": 0, "ok": true, "ts": 1784070563.4484203, "conv_id": "cV50edit", "trace_id": "xyz"}
+{"kind": "tool_call", "name": "read_file_range", "latency_ms": 0, "ok": true, "ts": 1784070563.451503, "conv_id": "cV50edit", "trace_id": "xyz"}
+{"kind": "tool_call", "name": "str_replace", "latency_ms": 0, "ok": true, "ts": 1784070563.4541566, "conv_id": "cV50edit", "trace_id": "xyz"}
+{"kind": "tool_call", "name": "execute_code", "latency_ms": 21, "ok": true, "ts": 1784070563.478197, "trace_id": "xyz"}
+{"kind": "tool_call", "name": "execute_code", "latency_ms": 20, "ok": true, "ts": 1784070563.4999917, "trace_id": "xyz"}

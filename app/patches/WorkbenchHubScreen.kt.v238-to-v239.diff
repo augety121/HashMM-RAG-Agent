@@ -1,0 +1,58 @@
+--- /tmp/b-WorkbenchHubScreen.kt	2026-07-04 16:56:02.201366358 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/WorkbenchHubScreen.kt	2026-07-04 16:54:44.840291536 +0000
+@@ -254,9 +254,15 @@
+ /** 分区标题：小号大写感的 section 标题 + 一行说明，克制不抢戏。 */
+ @Composable
+ private fun SectionHeader(title: String, subtitle: String) {
+-    Column(Modifier.padding(start = 2.dp, bottom = 10.dp)) {
+-        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+-        Text(subtitle, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
++    val cs = MaterialTheme.colorScheme
++    Column(Modifier.padding(start = 2.dp, top = 4.dp, bottom = 12.dp)) {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Box(Modifier.size(5.dp).clip(CircleShape).background(cs.primary))
++            Spacer(Modifier.width(7.dp))
++            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = cs.onSurface, letterSpacing = 0.2.sp)
++        }
++        Spacer(Modifier.height(3.dp))
++        Text(subtitle, fontSize = 12.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp))
+     }
+ }
+ 
+@@ -267,25 +273,26 @@
+     val alpha = if (enabled) 1f else 0.5f
+     Surface(
+         color = cs.surface,
+-        shape = RoundedCornerShape(15.dp),
+-        border = BorderStroke(1.dp, cs.outline.copy(alpha = 0.22f)),
+-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).then(
++        shape = RoundedCornerShape(16.dp),
++        border = BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.6f)),
++        shadowElevation = if (enabled) 1.dp else 0.dp,
++        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).then(
+             if (enabled) Modifier.clickable(onClick = onClick) else Modifier
+         ),
+     ) {
+-        Row(Modifier.fillMaxWidth().padding(13.dp).alpha(alpha), verticalAlignment = Alignment.CenterVertically) {
++        Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 15.dp).alpha(alpha), verticalAlignment = Alignment.CenterVertically) {
+             Box(
+-                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+-                    .background(cs.primary.copy(alpha = 0.10f)),   // V242 大厂克制：淡色底 + 品牌色图标（替满屏红实心）
++                Modifier.size(42.dp).clip(RoundedCornerShape(13.dp))
++                    .background(cs.primary.copy(alpha = 0.10f)),   // 淡色底 + 品牌色图标（大厂克制）
+                 contentAlignment = Alignment.Center,
+-            ) { Icon(icon, title, tint = cs.primary, modifier = Modifier.size(21.dp)) }
++            ) { Icon(icon, title, tint = cs.primary, modifier = Modifier.size(22.dp)) }
+             Spacer(Modifier.width(14.dp))
+             Column(Modifier.weight(1f)) {
+                 Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface, letterSpacing = (-0.2).sp)
+-                Spacer(Modifier.height(1.dp))
+-                Text(subtitle, fontSize = 12.5.sp, color = cs.onSurfaceVariant)
++                Spacer(Modifier.height(2.dp))
++                Text(subtitle, fontSize = 12.5.sp, color = cs.onSurfaceVariant, lineHeight = 16.sp)
+             }
+-            Icon(Icons.Outlined.ChevronRight, null, tint = cs.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
++            Icon(Icons.Outlined.ChevronRight, null, tint = cs.onSurfaceVariant.copy(alpha = 0.45f), modifier = Modifier.size(18.dp))
+         }
+     }
+ }

@@ -1,0 +1,10 @@
+--- /tmp/b-AdminToolsViewModel.kt	2026-07-03 22:33:54.018799385 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/AdminToolsViewModel.kt	2026-07-03 22:30:03.332061873 +0000
+@@ -12,6 +12,7 @@
+ @HiltViewModel
+ class AdminToolsViewModel @Inject constructor(private val repo: AdminToolsRepository) : ViewModel() {
+     suspend fun audit(): Pair<List<AuditItem>, String?> = repo.audit()
++    suspend fun auditQuery(username: String, startTs: Long): Pair<List<AuditItem>, String?> = repo.auditQuery(username, startTs)
+     suspend fun quality(): QualityData = repo.quality()
+     suspend fun advanced(): AdvancedData = repo.advanced()
+     suspend fun dispatch(kind: String, payload: org.json.JSONObject): Pair<Boolean, String> = repo.createDispatch(kind, payload)

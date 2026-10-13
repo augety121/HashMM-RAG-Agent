@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  network_security_config.xml — V309 修「App 显示未连接」（明文白名单误伤公网直连）。
+
+  ═══ 这次改动的来龙去脉（重要，别再改回去） ═══
+  V308 为堵「明文 HTTP 携带 token」漏洞，把明文默认禁掉、只白名单 localhost/127.0.0.1/
+  192.168.x。但用户的后端跑在 AutoDL 这类 GPU 云上，对外地址是【公网 IP + 非标端口 +
+  明文 HTTP】（如 http://111.115.7.14:20014），端口每次开机随机分配。这个地址：
+    · 不是局域网 IP → 不在 V308 白名单里；
+    · IP 和端口开机就变 → 根本无法预先写进静态白名单。
+  结果：Android 系统层直接掐断这个 HTTP 请求 → OkHttp 抛 CleartextNotPermitted →
+  ClientStatusRepository 的 catch 吞成 online=false → 界面永远「未连接」。
+  （这就是「上次修复后 App 连不上后端」的真正原因，与账号/登录无关。）
+
+  ═══ 正确的安全边界：明文不是漏洞，「把 token 发给任意地址」才是 ═══
+  V308 真正堵住风险的其实是 UrlSecurity.appendTokenIfSameOrigin —— token 只对「与用户
+  配置的后端 base 同源」的 URL 附加，外部域名一律不带凭证（见 UrlSecurity.kt + 其单测）。
+  只要这条同源门在，恢复明文连接不会让 token 裸奔：攻击者即使让 App 打一个明文外部地址，
+  也拿不到 token。所以这里恢复「允许明文」，把公网直连的真实场景放回来，同时凭证安全由
+  UrlSecurity（应用层同源判定）+ CleartextCredentialInterceptor（OkHttp 纵深防御）守住。
+
+  取舍记录：也考虑过继续禁明文、要求用户为后端配 HTTPS，但 AutoDL 动态端口 + 自签证书
+  对普通用户门槛过高，会把「能用」直接堵死。两害相权，选「允许明文 + 应用层锁死凭证去向」。
+-->
+<network-security-config>
+    <!-- 允许明文：公网/局域网私有云直连都放行（AutoDL 动态 IP:port 无法白名单）。
+         凭证安全不靠「禁明文」，靠 UrlSecurity 的同源判定：token 只发给已配置的后端。 -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

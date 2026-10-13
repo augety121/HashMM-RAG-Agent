@@ -1,0 +1,92 @@
+--- /home/claude/app-base/app/src/main/java/com/hashmm/app/ui/workbench/WorkbenchScreen.kt	2026-07-03 07:28:48.487053679 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/WorkbenchScreen.kt	2026-07-03 07:33:03.516701714 +0000
+@@ -2,6 +2,8 @@
+ 
+ import android.annotation.SuppressLint
+ import android.webkit.WebView
++import android.webkit.WebResourceError
++import android.webkit.WebResourceRequest
+ import android.webkit.WebViewClient
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.foundation.background
+@@ -10,6 +12,8 @@
+ import androidx.compose.foundation.text.KeyboardOptions
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
++import androidx.compose.material.icons.outlined.Refresh
++import androidx.compose.material.icons.outlined.WifiOff
+ import androidx.compose.material3.*
+ import androidx.compose.runtime.*
+ import androidx.compose.ui.Alignment
+@@ -39,6 +43,7 @@
+     val clientUrl by viewModel.clientUrl.collectAsStateWithLifecycle()
+     var webView by remember { mutableStateOf<WebView?>(null) }
+     var loading by remember { mutableStateOf(true) }
++    var loadError by remember { mutableStateOf<String?>(null) }   // V213: 主帧加载失败 → 全屏重试
+ 
+     BackHandler(enabled = clientUrl.isNotBlank()) {
+         val wv = webView
+@@ -61,6 +66,12 @@
+                 Text("工作台", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
+                 Text("电脑端客户端 · 全部模块", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+             }
++            // V213: 刷新（WebView 里没有浏览器地址栏，给个显式重载入口）
++            if (clientUrl.isNotBlank()) {
++                IconButton(onClick = { loadError = null; webView?.reload() }) {
++                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
++                }
++            }
+         }
+ 
+         if (clientUrl.isBlank()) {
+@@ -100,6 +111,18 @@
+                                     super.onPageFinished(view, url)
+                                     loading = false
+                                 }
++                                override fun onReceivedError(
++                                    view: WebView?,
++                                    request: WebResourceRequest?,
++                                    error: WebResourceError?,
++                                ) {
++                                    super.onReceivedError(view, request, error)
++                                    // 只在主帧失败时给全屏错误态；子资源失败（图标/字体）不打扰
++                                    if (request?.isForMainFrame == true) {
++                                        loading = false
++                                        loadError = error?.description?.toString() ?: "加载失败"
++                                    }
++                                }
+                             }
+                             webView = this
+                             loadUrl(buildUrl(clientUrl, token, refresh))
+@@ -107,8 +130,29 @@
+                     },
+                     update = { }
+                 )
+-                if (loading) {
+-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
++                // V213: 加载中改为顶部细进度条（不再用居中大圈挡内容）
++                if (loading && loadError == null) {
++                    LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
++                }
++                // V213: 主帧加载失败 → 全屏占位 + 重试（此前是白屏）
++                loadError?.let { err ->
++                    Column(
++                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
++                        horizontalAlignment = Alignment.CenterHorizontally,
++                        verticalArrangement = Arrangement.Center,
++                    ) {
++                        Icon(Icons.Outlined.WifiOff, contentDescription = null,
++                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
++                        Spacer(Modifier.height(14.dp))
++                        Text("工作台加载失败", fontSize = 17.sp, fontWeight = FontWeight.Bold,
++                            color = MaterialTheme.colorScheme.onSurface)
++                        Spacer(Modifier.height(6.dp))
++                        Text("$err\n检查后端是否在线、地址是否正确", fontSize = 12.5.sp,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
++                        Spacer(Modifier.height(18.dp))
++                        Button(onClick = { loadError = null; loading = true; webView?.reload() },
++                            shape = RoundedCornerShape(12.dp)) { Text("重试", fontWeight = FontWeight.SemiBold) }
++                    }
+                 }
+             }
+         }

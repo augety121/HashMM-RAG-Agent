@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="HashMM 小哈夜航图标提案">
+  <path d="M128 8C47 8 8 47 8 128s39 120 120 120 120-39 120-120S209 8 128 8Z" fill="#1a1b1f"/>
+  <path d="M134 67c2-14 9-23 20-31" fill="none" stroke="#ff4b52" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="159" cy="32" r="9" fill="#ff4b52"/>
+  <path d="M128 65c-41 0-63 20-63 59s22 59 63 59 63-20 63-59-22-59-63-59Z" fill="#f5f1e8"/>
+  <circle cx="102" cy="121" r="13.5" fill="#1a1b1f"/>
+  <circle cx="151" cy="121" r="13.5" fill="#1a1b1f"/>
+  <circle cx="98" cy="117" r="5.2" fill="#f5f1e8"/>
+  <circle cx="147" cy="117" r="5.2" fill="#f5f1e8"/>
+  <rect x="67" y="184" width="122" height="19" rx="9.5" fill="#ff4b52"/>
+  <path d="M83 193c0 15-4 26-14 33-8 6-18 6-27 1 12-2 18-10 19-25l1-9Z" fill="#ff4b52"/>
+</svg>

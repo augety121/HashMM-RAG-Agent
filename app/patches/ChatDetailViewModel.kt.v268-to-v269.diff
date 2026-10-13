@@ -1,0 +1,26 @@
+--- app_pristine/files/ChatDetailViewModel.kt	2026-07-10 09:15:43.987366208 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/chat/ChatDetailViewModel.kt	2026-07-10 08:46:30.495605839 +0000
+@@ -48,6 +48,7 @@
+     private val direct: com.hashmm.app.data.remote.DirectLlmRepository,
+     private val appSettings: com.hashmm.app.data.settings.SettingsStore,
+     private val liveRepo: ChatLiveRepository,
++    private val liveManager: com.hashmm.app.data.remote.LiveChatManager,
+     private val fileDispatch: FileDispatchRepository,
+     private val sttRepo: SttRepository,
+     private val streamStt: StreamingSttClient,
+@@ -370,9 +371,12 @@
+                 return@launch
+             }
+             val acc = StringBuilder()
+-            val ok = liveRepo.streamMessage(convId, msg) { token ->
+-                acc.append(token)
+-                val cur = acc.toString()
++            // V269 后台化：经 LiveChatManager 在**应用级作用域**跑流式——离开会话页 ViewModel 被清
++            // 也不取消，后端继续生成并每 1.5s 落 partial；用户回到本会话时 start() 的重连轮询就能续看
++            // 到增长中的内容，不再"点进去先空白"。回调给的是累计内容，直接替换气泡；acc 同步维护以
++            // 兼容下方 acc.isEmpty() 的空回复判断。
++            val ok = liveManager.stream(convId, msg) { cur ->
++                acc.setLength(0); acc.append(cur)
+                 _ui.value = _ui.value.copy(messages = _ui.value.messages.map {
+                     if (it.id == pendingId) it.copy(content = cur) else it
+                 })

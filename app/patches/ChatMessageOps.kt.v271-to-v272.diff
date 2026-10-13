@@ -1,0 +1,30 @@
+--- app_pr/HashMM-App-V271/app/src/main/java/com/hashmm/app/ui/chat/ChatMessageOps.kt	2026-07-10 14:40:15.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/chat/ChatMessageOps.kt	2026-07-10 15:31:23.242041581 +0000
+@@ -34,6 +34,27 @@
+     fun hasStreaming(list: List<ChatMessage>): Boolean = list.any { it.status == "streaming" }
+ 
+     /**
++     * V272 会话列表排序键：把 updatedAt（ISO 或 epoch 字符串）解析成可比毫秒，供"最新在顶"倒序。
++     * updatedAt 空则回退 createdAt；都空/无法解析返回 0（排最后）。ISO-8601 UTC 串本身按字典序即
++     * 时序，但混入 epoch/空值时按字典序会错位——统一解析成 Long 才稳。
++     */
++    fun convSortKey(updatedAt: String, createdAt: String = ""): Long {
++        fun toMillis(s: String): Long? {
++            if (s.isBlank()) return null
++            s.toLongOrNull()?.let { return if (it < 1_000_000_000_000L) it * 1000 else it }  // 秒→毫秒
++            return try {
++                java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli()
++            } catch (_: Exception) {
++                // 退一步：yyyy-MM-dd[THH:mm[:ss]] 无时区
++                try {
++                    java.time.LocalDateTime.parse(s.replace(' ', 'T')).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
++                } catch (_: Exception) { null }
++            }
++        }
++        return toMillis(updatedAt) ?: toMillis(createdAt) ?: 0L
++    }
++
++    /**
+      * 用服务端规范列表覆盖本地，但**保留仍在生成的本地尾巴**：当服务端还没落库那条 streaming 占位
+      * 时，直接替换会让正在生成的气泡闪没。规则：若本地最后一条是 streaming 且服务端列表里没有同 id，
+      * 则把它接在服务端列表尾部。

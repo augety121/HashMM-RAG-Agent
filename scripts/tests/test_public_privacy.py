@@ -10,6 +10,13 @@ spec.loader.exec_module(privacy)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_restored_legacy_requires_exact_original_bytes(self):
+        original = {'client/hashmm/legacy.py': b'original public version\n'}
+        self.assertEqual(privacy.check_public_path('client/hashmm/legacy.py', original['client/hashmm/legacy.py'], original), [])
+        self.assertEqual(privacy.check_public_path('client/hashmm/legacy.py', b'new private code', original), [('client/hashmm/legacy.py', 'changed-legacy-source-not-authorized')])
+        self.assertTrue(privacy.check_public_path('client/hashmm/new.py', b'new code', original))
+        self.assertTrue(privacy.scan('legacy.env', b'github_' + b'pat_' + b'a' * 60))
+
     def test_product_source_is_rejected_even_without_credentials(self):
         for name in ('client/hashmm/api/server.py', 'app/Main.kt', 'server/app.py', 'docs/example.tsx', 'anything.zip'):
             self.assertEqual(privacy.check_public_path(name), [(name, 'outside-public-build-allowlist')])

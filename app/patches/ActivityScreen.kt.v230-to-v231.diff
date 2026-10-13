@@ -1,0 +1,97 @@
+--- /tmp/b-ActivityScreen.kt	2026-07-04 10:28:30.586568282 +0000
++++ app/src/main/java/com/hashmm/app/ui/activity/ActivityScreen.kt	2026-07-04 10:27:27.455427601 +0000
+@@ -408,11 +408,12 @@
+     val ext = file.filename.substringAfterLast('.', "").lowercase()
+     val isCanvas = ext == "html" || ext == "htm"
+     Surface(
+-        color = cs.surfaceVariant,
+-        shape = RoundedCornerShape(14.dp),
++        color = cs.surface,
++        shape = RoundedCornerShape(16.dp),
++        border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.55f)),
+         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+     ) {
+-        Row(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
++        Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+             Box(
+                 Modifier.size(38.dp).background(
+                     if (isCanvas) cs.primary.copy(alpha = 0.14f) else cs.onSurfaceVariant.copy(alpha = 0.10f),
+@@ -447,7 +448,7 @@
+ private fun RunnersCard(f: FeedData) {
+     val cs = MaterialTheme.colorScheme
+     val anyOnline = f.runners.any { it.online }
+-    Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
++    Surface(color = cs.surface, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.55f)), modifier = Modifier.fillMaxWidth()) {
+         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+             Icon(Icons.Outlined.Computer, null, tint = if (anyOnline) cs.primary else cs.onSurfaceVariant, modifier = Modifier.size(18.dp))
+             Spacer(Modifier.width(12.dp))
+@@ -464,7 +465,7 @@
+ @Composable
+ private fun ScheduledCard(s: FeedScheduled) {
+     val cs = MaterialTheme.colorScheme
+-    Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
++    Surface(color = cs.surface, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.55f)), modifier = Modifier.fillMaxWidth()) {
+         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+             Icon(Icons.Outlined.Schedule, null, tint = cs.primary, modifier = Modifier.size(18.dp))
+             Spacer(Modifier.width(12.dp))
+@@ -484,7 +485,7 @@
+ @Composable
+ private fun RunRow(r: FeedRun) {
+     val cs = MaterialTheme.colorScheme
+-    Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
++    Surface(color = cs.surface, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.55f)), modifier = Modifier.fillMaxWidth()) {
+         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+             Icon(Icons.Outlined.Bolt, null, tint = cs.primary, modifier = Modifier.size(16.dp))
+             Spacer(Modifier.width(12.dp))
+@@ -500,7 +501,7 @@
+ @Composable
+ private fun EpisodeRow(e: FeedEpisode) {
+     val cs = MaterialTheme.colorScheme
+-    Surface(color = cs.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
++    Surface(color = cs.surface, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.55f)), modifier = Modifier.fillMaxWidth()) {
+         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.Top) {
+             Icon(Icons.Outlined.Description, null, tint = cs.onSurfaceVariant, modifier = Modifier.size(16.dp))
+             Spacer(Modifier.width(12.dp))
+@@ -520,27 +521,31 @@
+         t >= 1_000 -> String.format("%.1fk", t / 1_000.0)
+         else -> t.toString()
+     }
++    val cs = MaterialTheme.colorScheme
+     Surface(
+-        color = MaterialTheme.colorScheme.surfaceVariant,
+-        shape = RoundedCornerShape(16.dp),
++        color = cs.surface,
++        shape = RoundedCornerShape(18.dp),
++        border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant.copy(alpha = 0.6f)),
+         modifier = Modifier.fillMaxWidth(),
+     ) {
+         Row(
+-            Modifier.fillMaxWidth().padding(vertical = 14.dp),
+-            horizontalArrangement = Arrangement.SpaceEvenly,
++            Modifier.fillMaxWidth().padding(vertical = 18.dp),
++            verticalAlignment = Alignment.CenterVertically,
+         ) {
+-            OverviewStat("近7天请求", stat.requests.toString())
+-            OverviewStat("Token", fmtTokens(stat.tokens))
+-            OverviewStat("花费", "¥" + String.format("%.2f", stat.cost))
++            OverviewStat("近7天请求", stat.requests.toString(), Modifier.weight(1f))
++            Box(Modifier.width(1.dp).height(30.dp).background(cs.outlineVariant.copy(alpha = 0.5f)))
++            OverviewStat("Token", fmtTokens(stat.tokens), Modifier.weight(1f))
++            Box(Modifier.width(1.dp).height(30.dp).background(cs.outlineVariant.copy(alpha = 0.5f)))
++            OverviewStat("花费", "¥" + String.format("%.2f", stat.cost), Modifier.weight(1f))
+         }
+     }
+ }
+ 
+ @Composable
+-private fun OverviewStat(label: String, value: String) {
+-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+-        Text(value, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+-        Spacer(Modifier.height(2.dp))
++private fun OverviewStat(label: String, value: String, modifier: Modifier = Modifier) {
++    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
++        Text(value, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, letterSpacing = (-0.5).sp)
++        Spacer(Modifier.height(3.dp))
+         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+     }
+ }

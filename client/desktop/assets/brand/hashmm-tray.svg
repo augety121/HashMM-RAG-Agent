@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="HashMM Observer V4 tray icon">
+  <path d="M16 8.5V5.9" fill="none" stroke="#ef4148" stroke-width="1.5" stroke-linecap="round"/>
+  <circle cx="16" cy="4.9" r="1.35" fill="#ef4148"/>
+  <path d="M16 8.3c-5 0-7.7 2.3-7.7 7.2s2.7 7.2 7.7 7.2 7.7-2.3 7.7-7.2S21 8.3 16 8.3Z" fill="#18191c"/>
+  <ellipse cx="13.1" cy="15.5" rx="2.15" ry="1.9" fill="#fff"/>
+  <ellipse cx="19.25" cy="15.35" rx="2.25" ry="2.1" fill="#fff"/>
+  <circle cx="13.75" cy="15.25" r=".72" fill="#18191c"/>
+  <circle cx="19.9" cy="15.1" r=".72" fill="#18191c"/>
+  <path d="M16 25.25h1.9v2c0 .75-.4 1.4-1.05 1.8-.6-.4-.85-.9-.85-1.65Z" fill="#ef4148"/>
+  <rect x="9.1" y="23.55" width="13.8" height="2.25" rx="1.125" fill="#ef4148"/>
+</svg>

@@ -1,0 +1,52 @@
+{"ts": 1784070509.841, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070509.874, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070509.879, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070509.884, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070509.893, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070512.04, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 2, "args": {"filename": "rbtree.cpp", "content": "struct Node { int key; };\nint main(){return 0;}"}}
+{"ts": 1784070512.041, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "main.py", "content": "print('hello')\n# a comment"}}
+{"ts": 1784070512.042, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "a.py", "content": "x = 1\nprint(x)"}}
+{"ts": 1784070512.042, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "b.js", "content": "const x = 1;\nconsole.log(x)"}}
+{"ts": 1784070512.043, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "c.ts", "content": "const x: number = 1;\nexport {}"}}
+{"ts": 1784070512.065, "actor": "u", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "f0.cpp", "content": "void f0() {}\nvoid f1() {}\nvoid f2() {}\nvoid f3() {}\nvoid f4() {}\nvoid f5() {}\nvoid f6() {}\nvoid f7() {}\nvoid f8() {}\nvoid f9() {}\nvoid f10() {}\nvoid f11() {}\nvoid f12() {}\nvoid f13() {}\nvoid f14() {}\n…(+69)"}}
+{"ts": 1784070515.774, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "qsort.py", "content": "def qsort(a):\n    return sorted(a)\n"}}
+{"ts": 1784070515.805, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "calc.py", "content": "def add(a, b):\n    return a + b\n"}}
+{"ts": 1784070515.831, "actor": "bench", "tenant": "", "tool": "str_replace", "risk": "low", "ok": true, "latency_ms": 14, "args": {"filepath": "calc.py", "old_str": "add", "new_str": "plus"}}
+{"ts": 1784070515.841, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "utils.py", "content": "def helper():\n    return 42\n"}}
+{"ts": 1784070515.848, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "main.py", "content": "from utils import helper\nprint(helper())\n"}}
+{"ts": 1784070515.867, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "qsort.py", "content": "def qsort(a):\n    return a if len(a)<2 else qsort([x for x in a[1:] if x<a[0]])+[a[0]]+qsort([x for x in a[1:] if x>=a[0]])\n"}}
+{"ts": 1784070515.881, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "qsort.py", "content": "def qsort(a):\n    return sorted(a)\n"}}
+{"ts": 1784070515.897, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "note.py", "content": "x = 1\n"}}
+{"ts": 1784070515.928, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "a.py", "content": "def add(x):\n    return x\n"}}
+{"ts": 1784070515.936, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "b.py", "content": "B = 2\n"}}
+{"ts": 1784070515.945, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "c.py", "content": "def c():\n    return 3\n"}}
+{"ts": 1784070515.95, "actor": "bench", "tenant": "", "tool": "str_replace", "risk": "low", "ok": true, "latency_ms": 1, "args": {"filepath": "a.py", "old_str": "add", "new_str": "plus"}}
+{"ts": 1784070515.966, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "proc1.py", "content": "def p1(d):\n    return d\n"}}
+{"ts": 1784070515.977, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "proc2.py", "content": "def p2(d):\n    return d\n"}}
+{"ts": 1784070515.991, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "real.py", "content": "x = 1\n"}}
+{"ts": 1784070544.34, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070544.357, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070544.362, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070544.367, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070544.377, "actor": "u", "tenant": "", "tool": "kb_search", "risk": "low", "ok": true, "latency_ms": 0, "args": {"query": "红黑树"}}
+{"ts": 1784070545.312, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 2, "args": {"filename": "rbtree.cpp", "content": "struct Node { int key; };\nint main(){return 0;}"}}
+{"ts": 1784070545.312, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "main.py", "content": "print('hello')\n# a comment"}}
+{"ts": 1784070545.313, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "a.py", "content": "x = 1\nprint(x)"}}
+{"ts": 1784070545.314, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "b.js", "content": "const x = 1;\nconsole.log(x)"}}
+{"ts": 1784070545.314, "actor": "system", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "c.ts", "content": "const x: number = 1;\nexport {}"}}
+{"ts": 1784070545.332, "actor": "u", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "f0.cpp", "content": "void f0() {}\nvoid f1() {}\nvoid f2() {}\nvoid f3() {}\nvoid f4() {}\nvoid f5() {}\nvoid f6() {}\nvoid f7() {}\nvoid f8() {}\nvoid f9() {}\nvoid f10() {}\nvoid f11() {}\nvoid f12() {}\nvoid f13() {}\nvoid f14() {}\n…(+69)"}}
+{"ts": 1784070546.764, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "qsort.py", "content": "def qsort(a):\n    return sorted(a)\n"}}
+{"ts": 1784070546.789, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "calc.py", "content": "def add(a, b):\n    return a + b\n"}}
+{"ts": 1784070546.8, "actor": "bench", "tenant": "", "tool": "str_replace", "risk": "low", "ok": true, "latency_ms": 1, "args": {"filepath": "calc.py", "old_str": "add", "new_str": "plus"}}
+{"ts": 1784070546.813, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "utils.py", "content": "def helper():\n    return 42\n"}}
+{"ts": 1784070546.82, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "main.py", "content": "from utils import helper\nprint(helper())\n"}}
+{"ts": 1784070546.835, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "qsort.py", "content": "def qsort(a):\n    return a if len(a)<2 else qsort([x for x in a[1:] if x<a[0]])+[a[0]]+qsort([x for x in a[1:] if x>=a[0]])\n"}}
+{"ts": 1784070546.848, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "qsort.py", "content": "def qsort(a):\n    return sorted(a)\n"}}
+{"ts": 1784070546.864, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "note.py", "content": "x = 1\n"}}
+{"ts": 1784070546.888, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "a.py", "content": "def add(x):\n    return x\n"}}
+{"ts": 1784070546.896, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "b.py", "content": "B = 2\n"}}
+{"ts": 1784070546.903, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "c.py", "content": "def c():\n    return 3\n"}}
+{"ts": 1784070546.908, "actor": "bench", "tenant": "", "tool": "str_replace", "risk": "low", "ok": true, "latency_ms": 0, "args": {"filepath": "a.py", "old_str": "add", "new_str": "plus"}}
+{"ts": 1784070546.921, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "proc1.py", "content": "def p1(d):\n    return d\n"}}
+{"ts": 1784070546.93, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "proc2.py", "content": "def p2(d):\n    return d\n"}}
+{"ts": 1784070546.942, "actor": "bench", "tenant": "", "tool": "create_file", "risk": "high", "ok": true, "latency_ms": 0, "args": {"filename": "real.py", "content": "x = 1\n"}}

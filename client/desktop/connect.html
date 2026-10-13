@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HashMM — 连接后端</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700&family=Inter:wght@400;450;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #F5F0E8; --paper-2: #FAF6EF; --paper-3: #EFE8DB; --card: #FBF8F2;
+    --ink: #191919; --ink-2: #5C564C; --ink-3: #8C8474;
+    --terra: #CC785C; --terra-2: #D97757; --terra-ink: #A85A40;
+    --line: #E2D9C8; --line-2: #D8CDB8; --green: #7A8B5E;
+    --shadow: rgba(70,55,35,.13);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font-family: 'Inter', -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: radial-gradient(140% 120% at 50% -10%, var(--paper-2) 0%, var(--paper) 55%, var(--paper-3) 100%);
+    color: var(--ink); -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 480px; max-width: 92vw; background: var(--card);
+    border: 1px solid var(--line); border-radius: 18px;
+    padding: 38px 38px 30px; box-shadow: 0 24px 64px var(--shadow);
+    position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, var(--terra), var(--terra-2));
+  }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+  .logo { width: 44px; height: 44px; flex-shrink: 0;
+    background: url("./assets/brand/hashmm-app-tile.svg") center/contain no-repeat;
+    filter: drop-shadow(0 4px 10px rgba(24,25,28,.12)); }
+  .brand .name { font-family: 'Fraunces', serif; font-weight: 600; font-size: 23px; line-height: 1; }
+  .brand .en { font-family: 'Geist Mono', monospace; font-size: 9.5px; letter-spacing: 2.4px;
+    color: var(--terra-ink); text-transform: uppercase; margin-top: 5px; }
+  h1 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 19px; margin: 0 0 6px; }
+  p.sub { margin: 0 0 22px; color: var(--ink-2); font-size: 13px; line-height: 1.7; }
+  .sec-label {
+    font-family: 'Geist Mono', monospace; font-size: 9.5px; letter-spacing: 1.6px;
+    text-transform: uppercase; color: var(--ink-3); margin: 18px 0 7px; display: flex;
+    align-items: center; gap: 9px;
+  }
+  .sec-label::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
+  label { display: block; font-size: 12px; color: var(--ink-2); margin: 14px 0 6px; font-weight: 450; }
+  input {
+    width: 100%; padding: 12px 13px; border-radius: 10px; border: 1px solid var(--line-2);
+    background: var(--paper-2); color: var(--ink); font-size: 14px; outline: none;
+    font-family: 'Inter', sans-serif; transition: border-color .15s, box-shadow .15s;
+  }
+  input::placeholder { color: var(--ink-3); }
+  input:focus { border-color: var(--terra); box-shadow: 0 0 0 3px rgba(204,120,92,.13); }
+  button.primary {
+    margin-top: 22px; width: 100%; padding: 13px; border: 0; border-radius: 10px;
+    background: var(--terra); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+    font-family: 'Inter', sans-serif; transition: background .15s, transform .05s;
+  }
+  button.primary:hover { background: var(--terra-2); }
+  button.primary:active { transform: translateY(1px); }
+  button.primary:disabled { opacity: .55; cursor: default; }
+  .status { margin-top: 13px; font-size: 13px; min-height: 18px; line-height: 1.5; }
+  .status.err { color: #C0392B; } .status.ok { color: var(--green); } .status.info { color: var(--ink-3); }
+  .hint { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 11px; color: var(--ink-3); line-height: 1.9; }
+  code { font-family: 'Geist Mono', monospace; background: var(--paper-3);
+    padding: 1px 6px; border-radius: 5px; color: var(--terra-ink); font-size: 11px; }
+  .recent-item {
+    display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--paper-2); margin-bottom: 7px; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .recent-item:hover { border-color: var(--terra); background: var(--paper-3); }
+  .recent-url { flex: 1; font-size: 12.5px; color: var(--ink); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; font-family: 'Geist Mono', monospace; }
+  .recent-ms { font-family: 'Geist Mono', monospace; font-size: 10px; color: var(--green); }
+  .recent-ms.bad { color: #C0392B; }
+  .recent-del { border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 15px;
+    line-height: 1; padding: 0 2px; }
+  .recent-del:hover { color: #C0392B; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="logo" role="img" aria-label="HashMM Observer"></div>
+      <div>
+        <div class="name">HashMM</div>
+        <div class="en">Local-first RAG Agent</div>
+      </div>
+    </div>
+
+    <h1>连接你的后端</h1>
+    <p class="sub">桌面端是你的工作台，模型与算力跑在 GPU 服务器上的 HashMM 后端。
+      填入地址连上后，对话、检索、知识图谱、Agent —— 全部功能在这里直接用。</p>
+
+    <div id="recentBox" style="display:none">
+      <div class="sec-label">最近连接</div>
+      <div id="recentList"></div>
+    </div>
+
+    <label for="url">后端地址</label>
+    <input id="url" type="text" placeholder="111.115.7.14:20014 或 http://你的域名" autofocus />
+
+    <label for="token">访问令牌（可选）</label>
+    <input id="token" type="password" placeholder="若后端开启了鉴权则填写" />
+
+    <button id="connect" class="primary">连接</button>
+    <div class="status info" id="status"></div>
+
+    <div class="hint">
+      · 不用加 <code>https://</code>——直接填 <code>IP:端口</code> 即可，会自动补全。<br>
+      · autodl 用户：填「自定义服务」给出的外网映射地址。<br>
+      · 地址保存在本机，下次自动连。菜单「切换后端」(Ctrl+Shift+B) 可随时换。
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $("status");
+  function setStatus(msg, kind) { statusEl.textContent = msg; statusEl.className = "status " + (kind || "info"); }
+
+  // 地址清洗：修「https://http://...」叠加、补 scheme、去尾斜杠、去空格
+  function normalizeUrl(raw) {
+    let u = String(raw || "").trim().replace(/\s+/g, "");
+    if (!u) return "";
+    const m = u.match(/^(https?:\/\/)+/i);
+    if (m) {
+      const schemes = u.match(/https?:\/\//gi) || [];
+      const last = schemes[schemes.length - 1];   // 取最后一个 scheme（修 https://http://）
+      u = last + u.slice(m[0].length);
+    } else {
+      u = "http://" + u;
+    }
+    return u.replace(/\/+$/, "");
+  }
+
+  async function connectTo(rawUrl, token) {
+    const url = normalizeUrl(rawUrl);
+    if (!/^https?:\/\/.+/.test(url)) { setStatus("地址无效，请填 IP:端口 或完整地址", "err"); return; }
+    $("url").value = url;
+    $("connect").disabled = true;
+    setStatus("正在连接 " + url + " …", "info");
+    try {
+      const ok = await window.hashmmDesktop.connect({ url, token });
+      if (ok && ok.success) setStatus("连接成功（" + ok.ms + "ms），正在加载…", "ok");
+      else { setStatus((ok && ok.error) || "连接失败：后端不可达或健康检查未通过", "err"); $("connect").disabled = false; }
+    } catch (e) {
+      setStatus("连接出错：" + (e && e.message ? e.message : e), "err"); $("connect").disabled = false;
+    }
+  }
+
+  (() => { const err = new URLSearchParams(location.search).get("err"); if (err) setStatus(err, "err"); })();
+
+  (async () => {
+    try {
+      const cfg = await window.hashmmDesktop.getConfig();
+      if (cfg && cfg.url) $("url").value = cfg.url;
+      if (cfg && cfg.token) $("token").value = cfg.token;
+      const recent = (cfg && cfg.recent) || [];
+      if (recent.length) {
+        $("recentBox").style.display = "block";
+        const list = $("recentList");
+        for (const r of recent) {
+          const row = document.createElement("div");
+          row.className = "recent-item";
+          row.innerHTML = '<span class="recent-url"></span><span class="recent-ms">测速中…</span><button class="recent-del" title="移除">×</button>';
+          row.querySelector(".recent-url").textContent = r.url;
+          row.addEventListener("click", () => connectTo(r.url, r.token || ""));
+          row.querySelector(".recent-del").addEventListener("click", async (e) => {
+            e.stopPropagation(); await window.hashmmDesktop.forgetRecent(r.url); row.remove();
+          });
+          list.appendChild(row);
+          window.hashmmDesktop.probe(r.url).then((p) => {
+            const ms = row.querySelector(".recent-ms");
+            if (p && p.ok) ms.textContent = p.ms + "ms";
+            else { ms.textContent = "离线"; ms.className = "recent-ms bad"; }
+          }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+  })();
+
+  $("connect").addEventListener("click", () => connectTo($("url").value, $("token").value.trim()));
+  $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") $("connect").click(); });
+  $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("connect").click(); });
+</script>
+</body>
+</html>

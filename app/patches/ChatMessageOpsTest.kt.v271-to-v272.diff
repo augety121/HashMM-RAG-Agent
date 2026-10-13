@@ -1,0 +1,35 @@
+--- app_pr/HashMM-App-V271/app/src/test/java/com/hashmm/app/ui/chat/ChatMessageOpsTest.kt	2026-07-10 14:40:15.000000000 +0000
++++ app/HashMM-App-V268/app/src/test/java/com/hashmm/app/ui/chat/ChatMessageOpsTest.kt	2026-07-10 15:30:14.207394196 +0000
+@@ -83,4 +83,32 @@
+         val local = listOf(msg("1", "user", "离线也要能看历史"))
+         assertEquals(local, ChatMessageOps.reconcile(local, emptyList()))
+     }
++
++    @Test fun convSortKey_isoOrdersNewestFirst() {
++        val older = ChatMessageOps.convSortKey("2026-07-01T08:00:00Z")
++        val newer = ChatMessageOps.convSortKey("2026-07-10T08:00:00Z")
++        assertTrue("较新的 ISO 时间应有更大的排序键", newer > older)
++    }
++
++    @Test fun convSortKey_fallbackToCreatedAtWhenUpdatedBlank() {
++        val k = ChatMessageOps.convSortKey("", "2026-07-05T00:00:00Z")
++        assertTrue("updatedAt 空时应回退 createdAt", k > 0)
++    }
++
++    @Test fun convSortKey_blankIsZeroSortsLast() {
++        assertEquals(0L, ChatMessageOps.convSortKey("", ""))
++    }
++
++    @Test fun convSortKey_epochSecondsSupported() {
++        // 纯数字 epoch 秒也要能比（1751328000 = 2025-07-01）
++        val k = ChatMessageOps.convSortKey("1751328000")
++        assertTrue("epoch 秒应被解析成毫秒级排序键", k > 1_000_000_000_000L)
++    }
++
++    @Test fun convSortKey_sortsListNewestFirst() {
++        data class C(val id: String, val u: String)
++        val convs = listOf(C("a", "2026-07-01T00:00:00Z"), C("b", "2026-07-10T00:00:00Z"), C("c", "2026-07-05T00:00:00Z"))
++        val sorted = convs.sortedByDescending { ChatMessageOps.convSortKey(it.u) }
++        assertEquals(listOf("b", "c", "a"), sorted.map { it.id })   // 最新 b 在最前
++    }
+ }

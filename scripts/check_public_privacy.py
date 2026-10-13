@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 import zipfile
 
 RULES = {
@@ -26,10 +27,29 @@ PUBLIC_FILES = {
     'scripts/test_platform_workflow.py', 'scripts/tests/test_public_privacy.py',
     'tests/test_private_validation_diagnostics.py',
 }
+LEGACY_COMMIT = 'e676bc3caacb4d238b9026c6025aae5049d71060'
 
 
-def check_public_path(name):
-    return [] if name in PUBLIC_FILES else [(name, 'outside-public-build-allowlist')]
+def check_public_path(name, data=None, legacy=None):
+    if name in PUBLIC_FILES:
+        return []
+    if legacy is not None and name in legacy:
+        return [] if data == legacy[name] else [(name, 'changed-legacy-source-not-authorized')]
+    return [(name, 'outside-public-build-allowlist')]
+
+
+def legacy_files():
+    # Read the previously sanitized public snapshot, not a private checkout or
+    # a generated digest manifest. Content must match these exact original bytes.
+    archive = subprocess.check_output(['git', 'archive', '--format=tar', LEGACY_COMMIT])
+    entries = {}
+    with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as bundle:
+        for item in bundle:
+            if item.isfile():
+                entries[item.name] = bundle.extractfile(item).read()
+            elif not item.isdir():
+                raise ValueError('Unexpected legacy object type')
+    return entries
 
 
 def scan(name, data, depth=0):
@@ -58,13 +78,15 @@ def scan(name, data, depth=0):
 
 
 def main():
+    legacy = legacy_files()
     paths = subprocess.check_output(['git', 'ls-files', '-z']).decode('utf-8').split('\0')
     findings = []
     for name in filter(None, paths):
-        findings.extend(check_public_path(name))
         path = Path(name)
         if path.is_file():
-            findings.extend(scan(name, path.read_bytes()))
+            data = path.read_bytes()
+            findings.extend(check_public_path(name, data, legacy))
+            findings.extend(scan(name, data))
         else:
             findings.append((name, 'missing-tracked-file'))
     for name, rule in findings:

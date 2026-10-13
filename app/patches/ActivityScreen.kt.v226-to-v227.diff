@@ -1,0 +1,18 @@
+--- /tmp/b-ActivityScreen.kt	2026-07-04 01:27:48.078622237 +0000
++++ app/src/main/java/com/hashmm/app/ui/activity/ActivityScreen.kt	2026-07-04 01:21:37.133330282 +0000
+@@ -47,6 +47,7 @@
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.saveable.rememberSaveable
+@@ -58,6 +59,7 @@
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import androidx.hilt.navigation.compose.hiltViewModel
++import kotlinx.coroutines.launch
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import com.hashmm.app.data.remote.ActiveChat
+ import com.hashmm.app.data.remote.FeedData

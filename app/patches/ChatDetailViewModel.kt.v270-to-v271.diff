@@ -1,0 +1,21 @@
+--- app_pr/HashMM-App-V270/app/src/main/java/com/hashmm/app/ui/chat/ChatDetailViewModel.kt	2026-07-10 13:21:09.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/chat/ChatDetailViewModel.kt	2026-07-10 14:21:19.917509005 +0000
+@@ -460,16 +460,8 @@
+ 
+     /** V217 防御：服务器侧（如快照恢复）可能把同一条消息重复入库——相邻同角色同内容折叠为一条。
+      *  窗口极窄（相邻），不误伤用户刻意重发（中间隔了助手回复就不相邻）。 */
+-    private fun dedupeAdjacent(list: List<ChatMessage>): List<ChatMessage> {
+-        if (list.size < 2) return list
+-        val out = ArrayList<ChatMessage>(list.size)
+-        for (m in list) {
+-            val last = out.lastOrNull()
+-            if (last != null && last.role == m.role && last.content == m.content && m.content.isNotBlank()) continue
+-            out.add(m)
+-        }
+-        return out
+-    }
++    private fun dedupeAdjacent(list: List<ChatMessage>): List<ChatMessage> =
++        ChatMessageOps.dedupeAdjacent(list)   // V270：逻辑抽到 ChatMessageOps（纯函数，可 ./gradlew test 单测）
+ 
+     private suspend fun refreshFromRealtime() {
+         if (_ui.value.messages.any { it.status == "streaming" }) return  // 流式时交给轮询

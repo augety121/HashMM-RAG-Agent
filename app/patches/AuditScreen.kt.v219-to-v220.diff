@@ -1,0 +1,64 @@
+--- /tmp/b-AuditScreen.kt	2026-07-03 15:17:41.316635186 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/AuditScreen.kt	2026-07-03 15:16:45.971182600 +0000
+@@ -1,6 +1,9 @@
+ package com.hashmm.app.ui.workbench
+ 
+ import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.Row
+@@ -52,6 +55,7 @@
+     var items by remember { mutableStateOf<List<AuditItem>?>(null) }
+     var error by remember { mutableStateOf<String?>(null) }
+     var refreshing by remember { mutableStateOf(false) }
++    var selTool by remember { mutableStateOf("") }   // V220: 空=全部
+     fun reload() { scope.launch { refreshing = true; val (l, e) = viewModel.audit(); items = l; error = e; refreshing = false } }
+     LaunchedEffect(Unit) { reload() }
+     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+@@ -71,8 +75,33 @@
+                 error != null -> HmmStateView(kind = HmmStateKind.Error, title = "加载失败", message = error!!, onRetry = { reload() })
+                 l!!.isEmpty() -> HmmStateView(kind = HmmStateKind.Empty, icon = Icons.Outlined.AdminPanelSettings,
+                     title = "暂无审计记录", message = "Agent 每次调用工具都会留痕；需开启 HASHMM_AUDIT_TOOLS=1（默认开）")
+-                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+-                    itemsIndexed(l, key = { i, _ -> "a$i" }) { _, e ->
++                else -> Column(Modifier.fillMaxSize()) {
++                    // V220 按工具筛选：从已加载条目提取 distinct 工具名（前 8 个）
++                    val tools = l!!.map { it.tool }.filter { it.isNotBlank() }.distinct().take(8)
++                    if (tools.size > 1) {
++                        Row(
++                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
++                                .padding(horizontal = 16.dp, vertical = 4.dp),
++                            horizontalArrangement = Arrangement.spacedBy(8.dp),
++                        ) {
++                            (listOf("") + tools).forEach { t ->
++                                val sel = selTool == t
++                                Surface(
++                                    color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
++                                    shape = RoundedCornerShape(50),
++                                    modifier = Modifier.clickable { selTool = t },
++                                ) {
++                                    Text(if (t.isBlank()) "全部" else t, fontSize = 12.sp,
++                                        fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
++                                        color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
++                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
++                                }
++                            }
++                        }
++                    }
++                    val shown = if (selTool.isBlank()) l!! else l!!.filter { it.tool == selTool }
++                    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
++                    itemsIndexed(shown, key = { i, _ -> "a$i" }) { _, e ->
+                         Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(13.dp), modifier = Modifier.fillMaxWidth()) {
+                             Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                                 Column(Modifier.weight(1f)) {
+@@ -86,6 +115,7 @@
+                         }
+                     }
+                     item { Spacer(Modifier.height(12.dp)) }
++                    }
+                 }
+             }
+         }
