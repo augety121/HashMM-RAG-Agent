@@ -1,0 +1,103 @@
+name: Private review tooling checks
+run-name: Private review tooling ${{ inputs.source_sha }}
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Reviewed private pull request number
+        required: true
+        type: string
+      source_sha:
+        description: Exact reviewed private head commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: private-review-tooling-${{ inputs.pr_number }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
+    environment: private-validation
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    steps:
+      - name: Admit fixed private source
+        shell: python
+        env:
+          READ_TOKEN: ${{ secrets.HASHMM_SOURCE_READ }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          import json, os, re, urllib.request
+          try:
+              sha, number = os.environ['SOURCE_SHA'], os.environ['PR_NUMBER']
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              assert re.fullmatch('[1-9][0-9]{0,8}', number)
+              assert os.environ.get('ACTIONS_STEP_DEBUG', '').lower() != 'true'
+              def read(path):
+                  request = urllib.request.Request('https://api.github.com/repos/augety121/spec-review' + path, headers={'Authorization': 'Bearer ' + os.environ['READ_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                  with urllib.request.urlopen(request, timeout=30) as response: return json.load(response)
+              assert read('')['private'] is True
+              pr = read('/pulls/' + number)
+              assert pr['state'] == 'open' and pr['head']['sha'] == sha
+              assert pr['head']['repo']['full_name'] == 'augety121/spec-review'
+              assert pr['base']['repo']['full_name'] == 'augety121/spec-review'
+          except Exception:
+              raise SystemExit('Private source admission failed; no private content published.')
+      - uses: actions/checkout@v4
+        with:
+          repository: augety121/spec-review
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.HASHMM_SOURCE_READ }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Validate with private output
+        id: checks
+        shell: python
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          import os, pathlib, subprocess, sys
+          env = {k: v for k, v in os.environ.items() if not k.startswith(('GITHUB_', 'ACTIONS_', 'RUNNER_'))}
+          env['CI'] = 'true'
+          code = 1
+          try:
+              with (pathlib.Path(os.environ['RUNNER_TEMP']) / 'private-review-tooling.log').open('wb') as log:
+                  code = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], stdout=log, stderr=subprocess.STDOUT, env=env, timeout=600).returncode
+                  if code == 0:
+                      code = subprocess.run([sys.executable, 'scripts/check_package.py'], stdout=log, stderr=subprocess.STDOUT, env=env, timeout=60).returncode
+          except Exception:
+              code = 1
+          print('Private checks passed.' if code == 0 else 'Private checks failed; raw output retained only on the ephemeral runner.')
+          raise SystemExit(0 if code == 0 else 1)
+      - name: Record result on the exact private commit
+        if: ${{ always() }}
+        shell: python
+        env:
+          STATUS_TOKEN: ${{ secrets.HASHMM_STATUS_WRITE }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          OUTCOME: ${{ steps.checks.outcome }}
+          PLATFORM: ${{ matrix.os }}
+          PYTHON_VERSION: ${{ matrix.python }}
+        run: |
+          import json, os, re, urllib.request
+          try:
+              sha = os.environ['SOURCE_SHA']
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              success = os.environ['OUTCOME'] == 'success'
+              payload = {'state': 'success' if success else 'failure', 'context': 'public-ci/spec-review/' + os.environ['PLATFORM'] + '/python-' + os.environ['PYTHON_VERSION'], 'description': 'Private checks passed.' if success else 'Private checks unavailable or failed; inspect admission and generic step status.', 'target_url': 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']}
+              req = urllib.request.Request('https://api.github.com/repos/augety121/spec-review/statuses/' + sha, data=json.dumps(payload).encode(), headers={'Authorization': 'Bearer ' + os.environ['STATUS_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response: assert response.status == 201
+          except Exception:
+              raise SystemExit('Private status write failed; no response body or credentials published.')
