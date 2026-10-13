@@ -27,7 +27,36 @@ concurrency:
   group: private-platform-candidates-${{ inputs.target }}
   cancel-in-progress: false
 jobs:
+  select-platforms:
+    if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.selection.outputs.matrix }}
+    steps:
+      - name: Select only requested native platforms
+        id: selection
+        shell: python
+        env:
+          REQUESTED_TARGET: ${{ inputs.target }}
+        run: |
+          import json, os
+          target = os.environ['REQUESTED_TARGET']
+          assert target in {'all', 'ios', 'macos', 'macos-arm64', 'macos-x64', 'linux', 'windows', 'android'}
+          platforms = [
+              {'os': 'macos-15', 'target': 'ios', 'arch': 'arm64'},
+              {'os': 'macos-15', 'target': 'macos', 'arch': 'arm64'},
+              {'os': 'macos-15-intel', 'target': 'macos', 'arch': 'x64'},
+              {'os': 'ubuntu-24.04', 'target': 'linux', 'arch': 'x64'},
+              {'os': 'windows-2022', 'target': 'windows', 'arch': 'x64'},
+              {'os': 'ubuntu-24.04', 'target': 'android', 'arch': 'x64'},
+          ]
+          selected = [p for p in platforms if target in {'all', p['target'], p['target'] + '-' + p['arch']}]
+          assert selected
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('matrix=' + json.dumps({'include': selected}, separators=(',', ':')) + '\n')
   build:
+    needs: select-platforms
     if: github.actor == 'augety121' && github.ref == 'refs/heads/main'
     environment: private-validation
     concurrency:
@@ -38,14 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 6
-      matrix:
-        include:
-          - {os: macos-15, target: ios, arch: arm64}
-          - {os: macos-15, target: macos, arch: arm64}
-          - {os: macos-15-intel, target: macos, arch: x64}
-          - {os: ubuntu-24.04, target: linux, arch: x64}
-          - {os: windows-2022, target: windows, arch: x64}
-          - {os: ubuntu-24.04, target: android, arch: x64}
+      matrix: ${{ fromJSON(needs.select-platforms.outputs.matrix) }}
     steps:
       - name: Admit exact private source
         if: inputs.target == 'all' || inputs.target == matrix.target || inputs.target == format('{0}-{1}', matrix.target, matrix.arch)
