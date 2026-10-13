@@ -1,0 +1,71 @@
+--- /tmp/app-v213-base/src/main/java/com/hashmm/app/ui/workbench/WorkbenchHubScreen.kt	2026-07-03 09:24:52.234997669 +0000
++++ app/src/main/java/com/hashmm/app/ui/workbench/WorkbenchHubScreen.kt	2026-07-03 09:24:52.310706176 +0000
+@@ -139,7 +139,9 @@
+ 
+         // ── ③ 能力区：两列网格，同级能力并置，扫视成本低于长列表 ──
+         SectionHeader("桌面端能力", "数据 · 配置 · 运维")
+-        CapabilityGrid(
++        // V214: 用户点名——能力区与上方「对话任务」统一为同款横条卡（图标左置 · 主副标题 · 右箭头），
++        // 弃用两列小方卡（视觉密度与任务区打架）。
++        CapabilityList(
+             onOpenKnowledge, onOpenMemory, onOpenModels,
+             onOpenKg, onOpenAdmin, onOpenUsage, onOpenValidity, onOpenWebClient,
+         )
+@@ -209,9 +211,9 @@
+     }
+ }
+ 
+-/** 能力网格：两列小卡，图标在上、标题在下，副标题极简。 */
++/** V214 能力清单：与「对话任务」TaskCard 同款横条（图标左置 · 主副标题 · 右箭头），风格统一。 */
+ @Composable
+-private fun CapabilityGrid(
++private fun CapabilityList(
+     onOpenKnowledge: () -> Unit,
+     onOpenMemory: () -> Unit,
+     onOpenModels: () -> Unit,
+@@ -230,41 +232,14 @@
+         Cap(Icons.Outlined.AdminPanelSettings, "管理后台", "用户 · 审计", onOpenAdmin),
+         Cap(Icons.Outlined.BarChart, "用量", "Token · 成本", onOpenUsage),
+         Cap(Icons.Outlined.Schedule, "失效区", "时效 · 归档", onOpenValidity),
+-        // V213: 修复孤儿入口——onOpenWebClient 一直传进来但从未被使用，
+-        // 用户在 App 里没有任何按钮能进完整客户端（与桌面端"做了不显示"同款病）。
++        // V213 修复的孤儿入口保留：完整客户端（画布三入口在里面）
+         Cap(Icons.Outlined.OpenInBrowser, "完整客户端", "画布 · 全部面板", onOpenWebClient),
+     )
+     Column {
+-        caps.chunked(2).forEach { row ->
+-            Row(Modifier.fillMaxWidth()) {
+-                row.forEachIndexed { i, c ->
+-                    CapCard(c.icon, c.title, c.sub, Modifier.weight(1f), c.onClick)
+-                    if (i == 0 && row.size == 2) Spacer(Modifier.width(10.dp))
+-                }
+-                if (row.size == 1) { Spacer(Modifier.width(10.dp)); Spacer(Modifier.weight(1f)) }
+-            }
+-            Spacer(Modifier.height(10.dp))
++        caps.forEachIndexed { i, c ->
++            TaskCard(c.icon, c.title, c.sub, enabled = true, onClick = c.onClick)
++            if (i != caps.lastIndex) Spacer(Modifier.height(9.dp))
+         }
+     }
+ }
+ 
+-@Composable
+-private fun CapCard(icon: ImageVector, title: String, sub: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+-    val cs = MaterialTheme.colorScheme
+-    Surface(
+-        color = cs.surface,
+-        shape = RoundedCornerShape(15.dp),
+-        border = BorderStroke(1.dp, cs.outline.copy(alpha = 0.22f)),
+-        modifier = modifier.clip(RoundedCornerShape(15.dp)).clickable(onClick = onClick),
+-    ) {
+-        Column(Modifier.padding(14.dp)) {
+-            Box(
+-                Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(cs.primary.copy(alpha = 0.10f)),
+-                contentAlignment = Alignment.Center,
+-            ) { Icon(icon, title, tint = cs.primary, modifier = Modifier.size(20.dp)) }
+-            Spacer(Modifier.height(10.dp))
+-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
+-            Text(sub, fontSize = 11.5.sp, color = cs.onSurfaceVariant)
+-        }
+-    }
+-}

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hashmm-rag"
+version = "2.8.2"
+description = "Local-first enterprise RAG, GraphRAG, and agentic context platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "HashMM" }]
+keywords = ["rag", "agent", "graphrag", "retrieval", "llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dynamic = ["dependencies"]
+
+[project.urls]
+Documentation = "https://github.com/augety121/hashmm"
+Source = "https://github.com/augety121/hashmm"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hashmm*"]
+exclude = ["tests*", "frontend-next*", "desktop*", "installer-native*"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.package-data]
+hashmm = [
+  "**/*.json",
+  "**/*.md",
+  "**/*.html",
+  "**/*.js",
+  "**/*.css",
+  "**/*.ttf",
+  "**/*.txt",
+  "**/*.xsd",
+  "**/*.xml",
+]

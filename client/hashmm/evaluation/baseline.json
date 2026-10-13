@@ -1,0 +1,40 @@
+{
+  "overall_pass_rate": 0.1875,
+  "by_category": {
+    "refusal": {
+      "pass": 0,
+      "total": 40,
+      "rate": 0.0
+    },
+    "code": {
+      "pass": 2,
+      "total": 17,
+      "rate": 0.1176
+    },
+    "greeting": {
+      "pass": 13,
+      "total": 13,
+      "rate": 1.0
+    },
+    "analytical": {
+      "pass": 1,
+      "total": 19,
+      "rate": 0.0526
+    },
+    "factual": {
+      "pass": 5,
+      "total": 7,
+      "rate": 0.7143
+    },
+    "comparison": {
+      "pass": 0,
+      "total": 4,
+      "rate": 0.0
+    },
+    "adversarial": {
+      "pass": 0,
+      "total": 12,
+      "rate": 0.0
+    }
+  }
+}

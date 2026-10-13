@@ -1,0 +1,33 @@
+{
+  "schema": "hashmm.release-manifest.v1",
+  "product": "HashMM",
+  "product_version": "28.0.2",
+  "release": "V2802",
+  "backend_version": "2.8.2",
+  "api_version": "28.0.2",
+  "desktop_version": "17.0.2",
+  "android_version_name": "12.0.0",
+  "android_version_code": 280,
+  "database_schema_version": 28,
+  "protocols": {
+    "event": "hashmm.event.v1",
+    "sync": "hashmm.sync.v3",
+    "work": "hashmm.work-run.v1",
+    "remote": "hashmm.remote.v4",
+    "provider": "hashmm.provider-fabric.v2",
+    "canvas": "hashmm.canvas-ops.v1",
+    "behavior": "hashmm.behavior-kernel.v1"
+  },
+  "minimum_compatible": {
+    "desktop": "16.0.0",
+    "android_version_code": 270,
+    "backend_release": "V2700"
+  },
+  "artifact_policy": {
+    "debug_is_release": false,
+    "sha256_required": true,
+    "release_manifest_required": true,
+    "sbom_required": true,
+    "publisher_signature_required_for_production": true
+  }
+}

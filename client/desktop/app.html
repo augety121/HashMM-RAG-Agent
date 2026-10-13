@@ -1,0 +1,2106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>HashMM — 连接</title>
+<style>
+  /* 与主 UI（frontend-next）同一设计语言：灰底白卡、紫 accent、系统字体栈 */
+  :root {
+    --bg-primary:#FAFAFA; --bg-secondary:#FFFFFF; --bg-tertiary:#F4F4F5;
+    --text-primary:#18181B; --text-secondary:#52525B; --text-tertiary:#A1A1AA;
+    --border:#E4E4E7; --accent:#7C5CFC; --accent-hover:#6A4AE8;
+    --success:#16A34A; --danger:#DC2626;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body {
+    display:flex; align-items:center; justify-content:center;
+    background:var(--bg-primary); color:var(--text-primary);
+    font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* 无边框窗口拖拽条（隐形，右侧给 WCO 让位） */
+  .dragbar { position:fixed; top:0; left:0; right:146px; height:14px;
+    -webkit-app-region:drag; z-index:100; }
+  .card {
+    width:420px; background:var(--bg-secondary); border:1px solid var(--border);
+    border-radius:20px; padding:36px 34px 28px;
+    box-shadow:0 16px 48px rgba(0,0,0,.07);
+  }
+  .logo { width:64px; height:64px; margin:0 auto 16px;
+    background:url("./assets/brand/hashmm-app-tile.svg") center/contain no-repeat;
+    filter:drop-shadow(0 6px 16px rgba(24,25,28,.14)); }
+  h1 { margin:0 0 4px; font-size:18px; font-weight:700; text-align:center; }
+  p.sub { margin:0 0 20px; font-size:12.5px; color:var(--text-tertiary);
+    text-align:center; line-height:1.7; }
+  .recent-item { display:flex; align-items:center; gap:9px; padding:9px 12px;
+    border:1px solid var(--border); border-radius:12px; margin-bottom:7px;
+    cursor:pointer; transition:border-color .12s, background .12s; }
+  .recent-item:hover { border-color:var(--accent); background:var(--bg-tertiary); }
+  .recent-url { flex:1; font-family:Consolas,monospace; font-size:12px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .recent-ms { font-family:Consolas,monospace; font-size:10px; color:var(--success); }
+  .recent-ms.bad { color:var(--danger); }
+  input { width:100%; padding:11px 13px; border-radius:12px; border:1px solid var(--border);
+    background:var(--bg-tertiary); color:var(--text-primary); font-size:13px;
+    outline:none; margin-bottom:9px; font-family:Consolas,"Cascadia Code",monospace;
+    transition:border-color .15s, box-shadow .15s; }
+  input::placeholder { color:var(--text-tertiary); font-family:-apple-system,"Segoe UI",sans-serif; }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(124,92,252,.13); }
+  button.go { width:100%; padding:12px; border:0; border-radius:12px;
+    background:var(--accent); color:#fff; font-size:14px; font-weight:600;
+    cursor:pointer; transition:background .15s; }
+  button.go:hover { background:var(--accent-hover); }
+  button.go:disabled { opacity:.5; cursor:default; }
+  .status { font-size:12px; min-height:17px; margin-top:9px; text-align:center; }
+  .status.err { color:var(--danger); } .status.ok { color:var(--success); }
+  .status.info { color:var(--text-tertiary); }
+  .hint { margin-top:16px; padding-top:14px; border-top:1px solid var(--border);
+    font-size:10.5px; color:var(--text-tertiary); line-height:1.9; text-align:center; }
+  a.alt { display:block; margin-top:12px; text-align:center; font-size:12px;
+    color:var(--accent); cursor:pointer; text-decoration:none; }
+  a.alt:hover { text-decoration:underline; }
+  /* ── 直连对话视图 ── */
+  .chat-wrap { display:none; flex-direction:column; width:680px; max-width:94vw;
+    height:86vh; background:var(--bg-secondary); border:1px solid var(--border);
+    border-radius:20px; overflow:hidden; box-shadow:0 16px 48px rgba(0,0,0,.07); }
+  .chat-top { display:flex; align-items:center; gap:8px; padding:10px 14px;
+    border-bottom:1px solid var(--border); flex-shrink:0; }
+  .chat-top .ttl { font-size:13px; font-weight:700; margin-right:auto; }
+  .chat-top button, .chat-top input { font-size:11px; }
+  .mini { padding:5px 10px; border-radius:9px; border:1px solid var(--border);
+    background:var(--bg-secondary); color:var(--text-secondary); cursor:pointer; }
+  .mini:hover { border-color:var(--accent); }
+  .chat-msgs { flex:1; overflow-y:auto; padding:18px 20px; }
+  .m-row { margin-bottom:14px; }
+  .m-role { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+    color:var(--text-tertiary); margin-bottom:4px; }
+  .m-body { font-size:13.5px; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
+  .m-row.user .m-body { background:var(--bg-tertiary); border-radius:12px; padding:10px 13px; }
+  .chat-input { display:flex; gap:8px; padding:12px 14px; border-top:1px solid var(--border); flex-shrink:0; }
+  .chat-input textarea { flex:1; resize:none; padding:10px 12px; border-radius:12px;
+    border:1px solid var(--border); background:var(--bg-tertiary); color:var(--text-primary);
+    font-size:13px; outline:none; font-family:inherit; max-height:120px; }
+  .chat-input textarea:focus { border-color:var(--accent); }
+  .chat-input button { padding:0 18px; border:0; border-radius:12px; background:var(--accent);
+    color:#fff; font-size:13px; font-weight:600; cursor:pointer; }
+  .chat-input button:disabled { opacity:.5; }
+  /* V86: 截屏按钮 + 待发截图条 */
+  #shotBtn { padding:0 12px; background:var(--bg-tertiary); color:var(--text-secondary);
+    border:1px solid var(--border); display:flex; align-items:center; }
+  #shotBtn:hover { color:var(--accent); border-color:var(--accent); }
+  #attachStrip { display:none; gap:6px; padding:8px 14px 0; flex-wrap:wrap; flex-shrink:0; }
+  #attachStrip .att { position:relative; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  #attachStrip .att img { display:block; height:48px; max-width:110px; object-fit:cover; }
+  #attachStrip .att button { position:absolute; top:2px; right:2px; width:16px; height:16px; line-height:14px;
+    padding:0; border:0; border-radius:50%; background:rgba(0,0,0,.55); color:#fff; font-size:11px; cursor:pointer; }
+  .cfg-row { display:flex; gap:6px; padding:8px 14px; border-bottom:1px solid var(--border);
+    background:var(--bg-tertiary); flex-shrink:0; }
+  .cfg-row input { flex:1; padding:6px 9px; border-radius:8px; border:1px solid var(--border);
+    background:var(--bg-secondary); margin:0; font-size:11px; }
+  /* Computer Use 工具执行卡片 */
+  .tool-card { margin:8px 0; border:1px solid var(--border); border-radius:10px; overflow:hidden;
+    background:var(--bg-secondary); }
+  .tool-card-head { display:flex; align-items:center; gap:8px; padding:8px 11px; font-size:12px; }
+  .tool-card-icon { width:24px; height:24px; border-radius:6px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; }
+  .tool-card-name { font-weight:600; color:var(--ink); }
+  .tool-card-arg { color:var(--ink-3); font-family:Consolas,monospace; font-size:11px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .tool-card-status { font-size:10px; padding:2px 7px; border-radius:20px; flex-shrink:0; }
+  .tool-card-out { padding:8px 11px; border-top:1px solid var(--border); font-family:Consolas,monospace;
+    font-size:11px; color:var(--ink-2); white-space:pre-wrap; word-break:break-all;
+    max-height:160px; overflow-y:auto; background:var(--bg); }
+  /* V103.90 助手消息 Markdown 渲染样式 */
+  .m-body p,.m-body li,.m-body h1,.m-body h2,.m-body h3,.m-body h4,.m-body blockquote{white-space:normal;}
+  .m-body p{margin:0 0 8px;} .m-body p:last-child{margin-bottom:0;}
+  .m-body h1,.m-body h2,.m-body h3,.m-body h4{margin:12px 0 6px;font-weight:600;line-height:1.4;}
+  .m-body h1{font-size:17px;} .m-body h2{font-size:15px;} .m-body h3{font-size:14px;} .m-body h4{font-size:13px;}
+  .m-body ul,.m-body ol{margin:4px 0 8px;padding-left:20px;} .m-body li{margin:2px 0;}
+  .m-body code{background:var(--bg-tertiary);padding:1px 5px;border-radius:4px;font-family:Consolas,Monaco,monospace;font-size:12.5px;}
+  .m-body pre{position:relative;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:8px 0;overflow-x:auto;white-space:normal;}
+  .m-body pre code{display:block;background:none;padding:0;white-space:pre;font-size:12.5px;line-height:1.5;}
+  .m-body pre .code-lang{font-size:10px;color:var(--text-tertiary);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
+  .m-body pre .code-copy{position:absolute;top:6px;right:6px;font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg-secondary);color:var(--text-secondary);cursor:pointer;}
+  .m-body pre .code-copy:hover{border-color:var(--accent);color:var(--accent);}
+  .m-body blockquote{border-left:3px solid var(--border);margin:6px 0;padding:2px 10px;color:var(--text-secondary);}
+  .m-body a{color:var(--accent);} .m-body hr{border:none;border-top:1px solid var(--border);margin:10px 0;}
+  .m-body strong{font-weight:600;}
+  .msg-actions{display:flex;gap:8px;margin-top:6px;opacity:0;transition:opacity .15s;}
+  .m-row:hover .msg-actions{opacity:1;}
+  .msg-actions button{font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--text-tertiary);cursor:pointer;}
+  .msg-actions button:hover{border-color:var(--accent);color:var(--accent);}
+  /* V103.90 会话内搜索高亮 */
+  .m-body mark.search-hit{background:#ffe066;color:#1a1a1e;border-radius:2px;padding:0 1px;}
+  .m-body mark.search-hit.active{background:#ff9f1a;color:#1a1a1e;box-shadow:0 0 0 2px rgba(255,159,26,.4);}
+</style>
+</head>
+<body>
+  <div class="dragbar"></div>
+  <div class="card">
+    <div class="logo" role="img" aria-label="HashMM Observer"></div>
+    <h1>连接 HashMM 后端</h1>
+    <p class="sub">填入后端 API 地址，进入完整工作台<br>（对话 / 检索 / 知识图谱 / Agent / 文件 / 终端）</p>
+    <div id="recentList"></div>
+    <input id="url" placeholder="后端地址，如 111.115.7.14:20014" autofocus />
+    <input id="token" type="password" placeholder="访问令牌（可选）" />
+    <div style="display:flex;gap:8px">
+      <button class="go" id="btnConnect" style="flex:1">连接</button>
+      <button class="go" id="btnTest" title="只测试后端是否可达，不进入工作台" style="flex:0 0 auto;background:var(--bg-tertiary);color:var(--text-primary)">测试</button>
+    </div>
+    <div class="status info" id="connStatus"></div>
+    <div id="backendInfo" style="display:none;font-size:11px;color:var(--text-secondary);padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-top:4px;background:var(--bg-secondary)"></div>
+    <div class="hint">地址保存在本机，下次启动自动连接 · 不用写 http://</div>
+    <a class="alt" id="goDirect">没有后端？用自己的 API Key 直接对话 →</a>
+  </div>
+
+  <!-- V87: 本地后端（Marvis 本机服务层对应物）——不依赖任何服务器，
+       在本机起 HashMM 完整后端：对话/检索/知识库/Agent/文件 全功能。
+       首次点「初始化环境」自动创建 venv 并安装核心依赖（无 GPU 包，CPU 即可跑）。 -->
+  <div class="card" id="localCard" style="margin-top:14px">
+    <h1 style="font-size:16px">本地后端（无需服务器）</h1>
+    <p class="sub" id="lbSub">在这台电脑上直接运行 HashMM 完整功能；LLM 走你配置的云端 API。<br>需要本机已安装 Python ≥ 3.10。</p>
+    <div class="status info" id="lbStat">检测中…</div>
+    <input id="lbPy" placeholder="Python 路径（留空自动检测，如 C:\Python312\python.exe）" />
+    <input id="lbMirror" placeholder="pip 镜像（可选，如 https://pypi.tuna.tsinghua.edu.cn/simple）" />
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="go" id="lbSetup" style="flex:1">初始化环境</button>
+      <button class="go" id="lbStart" style="flex:1">启动并进入</button>
+      <button class="mini" id="lbStop" style="display:none">停止</button>
+      <button class="mini" id="lbReset" title="删除本地虚拟环境后重装（数据与知识库不受影响）">重置环境</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text-tertiary);cursor:pointer">
+      <input type="checkbox" id="lbAuto" style="width:auto;margin:0" /> 远程不可达时自动启动本地后端
+    </label>
+    <pre id="lbLog" style="display:none;margin-top:10px;max-height:150px;overflow-y:auto;text-align:left;
+      background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;
+      padding:8px 10px;font:11px/1.5 Consolas,monospace;color:var(--text-secondary);white-space:pre-wrap"></pre>
+  </div>
+
+  <!-- 直连对话视图（用户自己的 OpenAI 兼容 API，Key 只存本机） -->
+  <div class="chat-wrap" id="chatWrap">
+    <div class="chat-top">
+      <span class="ttl">直连对话</span>
+      <span style="font-size:10px;color:var(--text-tertiary)">Key 只存本机 · 请求直达服务商</span>
+      <button class="mini" id="btnKB" data-i18n="ui.btnKB">知识库</button>
+      <button class="mini" id="btnCfg" data-i18n="ui.btnConfig">配置</button>
+      <button class="mini" id="btnSettings" data-i18n="ui.btnSettings">设置</button>
+      <button class="mini" id="btnHistory" data-i18n="ui.btnHistory">历史</button>
+      <button class="mini" id="btnBack" data-i18n="ui.btnBack">← 连接后端</button>
+    </div>
+    <!-- V103.90 设置面板（主题/字号/行为 + 配置导入导出）-->
+    <div id="settingsPanel" style="display:none;flex-direction:column;gap:10px;padding:12px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);">
+      <div style="display:flex;align-items:center;"><span data-i18n="ui.settingsTitle" style="font-size:13px;font-weight:600;color:var(--text-primary);flex:1;">外观与偏好</span><button class="mini" id="settingsClose" data-i18n="ui.collapse">收起</button></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary);">
+        <span data-i18n="ui.theme">主题</span>
+        <select id="prefTheme" style="font-size:12px;padding:2px 6px;"><option value="dark" data-i18n="ui.themeDark">深色</option><option value="light" data-i18n="ui.themeLight">浅色</option><option value="auto" data-i18n="ui.themeAuto">跟随系统</option></select>
+        <span style="margin-left:8px;" data-i18n="ui.font">字号</span>
+        <input id="prefFont" type="range" min="12" max="20" step="1" style="width:120px;" /><span id="prefFontVal" style="color:var(--text-tertiary);">14px</span>
+        <span style="margin-left:8px;" data-i18n="ui.density">密度</span>
+        <select id="prefDensity" style="font-size:12px;padding:2px 6px;"><option value="comfortable" data-i18n="ui.densityComfortable">舒适</option><option value="compact" data-i18n="ui.densityCompact">紧凑</option></select>
+        <span style="margin-left:8px;" data-i18n="ui.language">界面语言</span>
+        <select id="prefLang" style="font-size:12px;padding:2px 6px;"></select>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary);">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="prefSendEnter" style="width:auto;margin:0;" /> <span data-i18n="ui.sendEnter">Enter 发送（关=Enter 换行/Ctrl+Enter 发送）</span></label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="prefMarkdown" style="width:auto;margin:0;" /> <span data-i18n="ui.markdown">渲染 Markdown</span></label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="窗口不在前台时，作答完成弹桌面通知并显示未读角标"><input type="checkbox" id="prefNotify" style="width:auto;margin:0;" /> <span data-i18n="ui.notify">桌面通知（后台时）</span></label>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;flex-direction:column;gap:8px;">
+        <div data-i18n="ui.ioTitle" style="font-size:12px;font-weight:600;color:var(--text-primary);">配置导入 / 导出</div>
+        <div style="font-size:11px;color:var(--text-tertiary);">把后端列表、模型配置、偏好导出成文件，用于备份或换机迁移。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="mini" id="cfgExportFull" data-i18n="ui.exportFull" title="含密钥，仅自己备份用">导出（含密钥·备份）</button>
+          <button class="mini" id="cfgExportSafe" data-i18n="ui.exportSafe" title="抹掉密钥，安全分享">导出（脱敏·分享）</button>
+          <button class="mini" id="cfgImport" data-i18n="ui.ioImport">导入配置文件</button>
+        </div>
+        <div id="cfgIOMsg" style="display:none;font-size:11px;"></div>
+      </div>
+    </div>
+    <!-- V103.90 对话历史面板 -->
+    <div id="historyPanel" style="display:none;flex-direction:column;gap:8px;padding:12px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);">
+      <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:13px;font-weight:600;color:var(--text-primary);flex:1;" data-i18n="ui.historyTitle">对话历史</span><button class="mini" id="histNew" data-i18n="ui.historyNew">＋ 新对话</button><button class="mini" id="historyClose">收起</button></div>
+      <div id="histList" style="display:flex;flex-direction:column;gap:5px;max-height:260px;overflow:auto;"></div>
+    </div>
+    <div class="cfg-row" id="cfgRow" style="display:none">
+      <input id="llmBase" placeholder="Base URL（默认 https://api.deepseek.com）" />
+      <input id="llmKey" type="password" placeholder="API Key（必填）" />
+      <input id="llmModel" placeholder="模型（默认 deepseek-chat）" style="max-width:150px" list="llmModelList" />
+      <datalist id="llmModelList"></datalist>
+      <button class="mini" id="llmTest" title="测试 Base URL/Key/模型是否可用，并列出端点支持的模型">测试模型</button>
+    </div>
+    <div id="llmTestOut" style="display:none;font-size:11px;padding:7px 10px;border-radius:6px;margin:2px 0;border:1px solid var(--border)"></div>
+    <div class="cfg-row" id="visionRow" style="display:none">
+      <input id="visBase" placeholder="视觉模型 Base URL（接 Codex 等，留空=不启用截屏）" />
+      <input id="visKey" type="password" placeholder="视觉模型 Key" />
+      <input id="visModel" placeholder="视觉模型名" style="max-width:150px" list="visModelList" />
+      <datalist id="visModelList"></datalist>
+      <button class="mini" id="visTest" title="测试视觉模型是否可用">测试视觉</button>
+    </div>
+    <div id="visTestOut" style="display:none;font-size:11px;padding:7px 10px;border-radius:6px;margin:2px 0;border:1px solid var(--border)"></div>
+    <div class="cfg-row" id="kbRow" style="display:none;align-items:center">
+      <span id="kbStat" style="flex:1;font-size:11px;color:var(--text-tertiary)">本地知识库：空</span>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary)">
+        <input type="checkbox" id="kbUse" checked style="width:auto;margin:0" /> 回答时检索
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary)" title="勾选后走后端深度检索（Self-RAG：模型驱动多跳 + deepseek 作答 + 自我校验 + 忠实度门控）。需已连接后端，且后端启动时带了模型环境变量。">
+        <input type="checkbox" id="deepUse" style="width:auto;margin:0" /> 深度检索
+      </label>
+      <label id="localLlmLabel" style="display:none;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary)" title="用你自训的模型（GGUF）在本机作答——配合本地知识库，文档与问答数据一字不出设备（企业级私有模式）。需装本地推理运行时并放好模型文件。">
+        <input type="checkbox" id="localLlmUse" style="width:auto;margin:0" /> 本地模型
+      </label>
+      <button class="mini" id="localLlmSetup" title="本地模型安装向导：硬件 / 运行时 / 模型文件 一步步检查">本地模型设置</button>
+      <button class="mini" id="kbAdd">＋ 添加文件夹</button>
+      <button class="mini" id="kbManage">管理</button>
+      <button class="mini" id="kbClear">清空</button>
+      <button class="mini" id="semBtn" title="ONNX 本地小模型语义检索（可选）">语义检索</button>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);margin-left:4px" title="开启后 Agent 可在你的电脑上执行命令/读写文件（危险操作会弹确认）">
+        <input type="checkbox" id="cuToggle" style="width:auto;margin:0" /> 电脑操控
+      </label>
+      <button class="mini" id="cuLogBtn" title="查看 Agent 在你电脑上做过的每一步操作（可视化审计）">操作记录</button>
+    </div>
+    <!-- V103.90 Computer Use 操作记录/安全面板（深做：动作流可视化 + 风险徽章 + 安全级别） -->
+    <div id="cuPanel" style="display:none;flex-direction:column;gap:8px;padding:10px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--text-secondary)">安全级别：</span>
+        <select id="cuSafety" style="font-size:11px;padding:2px 6px">
+          <option value="readonly">只读（禁止一切写操作）</option>
+          <option value="confirm">确认（写操作都先弹确认）</option>
+          <option value="auto">放行（仅危险操作确认）</option>
+        </select>
+        <div id="cuSummary" style="flex:1;font-size:11px;color:var(--text-tertiary);text-align:right"></div>
+        <button class="mini" id="cuLogRefresh">刷新</button>
+        <button class="mini" id="cuLogClear">清空记录</button>
+        <button class="mini" id="cuPanelClose">收起</button>
+      </div>
+      <div id="cuFeed" style="display:flex;flex-direction:column;gap:4px;max-height:260px;overflow:auto"></div>
+    </div>
+    <!-- V103.90 本地模型安装向导面板（硬件/运行时/模型文件 逐步检查 + 指引） -->
+    <div id="localLlmPanel" style="display:none;flex-direction:column;gap:8px;padding:10px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:12px;color:var(--text-primary);flex:1">本地模型安装向导<span id="llSetupSummary" style="font-size:11px;color:var(--text-tertiary);margin-left:8px"></span></div>
+        <button class="mini" id="llSetupRefresh">重新检查</button>
+        <button class="mini" id="llSetupClose">收起</button>
+      </div>
+      <div id="llSetupSteps" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div style="font-size:10px;color:var(--text-tertiary)">本地模型 = 你自训的 7B 导成 GGUF（q4_k_m）在本机推理，配合本地知识库可做到「文档与问答数据一字不出设备」的企业级私有模式。</div>
+    </div>
+    <!-- V103.90 知识库管理面板（深做：分组/单独同步·移除/搜索预览/详细进度） -->
+    <div id="kbPanel" style="display:none;flex-direction:column;gap:8px;padding:10px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div id="kbPanelStat" style="font-size:11px;color:var(--text-secondary);flex:1">本地知识库：空</div>
+        <button class="mini" id="kbPanelAdd">＋ 添加文件夹</button>
+        <button class="mini" id="kbPanelClose">收起</button>
+      </div>
+      <div id="kbProg" style="display:none;font-size:11px;color:var(--accent)"></div>
+      <div id="kbFolders" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto"></div>
+      <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:8px">
+        <div style="font-size:11px;color:var(--text-tertiary)">搜索预览（不调用大模型，直接看知识库会召回什么）</div>
+        <div style="display:flex;gap:6px">
+          <input id="kbSearchIn" placeholder="输入问题，回车预览召回的切片" style="flex:1;font-size:12px" />
+          <button class="mini" id="kbSearchBtn">搜索</button>
+        </div>
+        <div id="kbSearchOut" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow:auto"></div>
+      </div>
+    </div>
+    <div class="cfg-row" id="semRow" style="display:none;align-items:center">
+      <span id="semStat" style="flex:1;font-size:11px;color:var(--text-tertiary)">检测中…</span>
+      <button class="mini" id="semDownload" style="display:none">下载模型 (~24MB)</button>
+      <button class="mini" id="semToggle" style="display:none">启用</button>
+      <button class="mini" id="semReindex" style="display:none">重建向量索引</button>
+    </div>
+    <!-- V103.90 语义检索状态面板（设备/运行时/模型/启用/向量覆盖 逐步 + 说明） -->
+    <div id="semPanel" style="display:none;flex-direction:column;gap:6px;padding:10px;margin-top:4px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary)">
+      <div style="font-size:11px;color:var(--text-tertiary)">语义检索 = 在 BM25 词法检索之上加一层语义理解（按意思而非字面匹配），适合「问法和原文用词不同」的检索；纯本地 INT8 小模型，零云端。</div>
+      <div id="semSteps" style="display:flex;flex-direction:column;gap:5px"></div>
+    </div>
+    <!-- V103.90 多标签会话栏（每个标签一个对话，可同时开多个）-->
+    <div id="tabBar" style="display:none;align-items:center;gap:4px;padding:6px 10px 0;overflow-x:auto;">
+      <div id="tabList" style="display:flex;gap:4px;flex:0 1 auto;"></div>
+      <button class="mini" id="tabNew" title="新建标签对话（Ctrl/⌘+T）" style="flex:0 0 auto;">＋</button>
+    </div>
+    <!-- V103.90 会话内搜索栏（Ctrl/⌘+F）-->
+    <div id="chatSearchBar" style="display:none;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-secondary);">
+      <input id="chatSearchIn" data-i18n-ph="ui.searchPlaceholder" placeholder="在对话中查找…" style="flex:1;font-size:12px;padding:5px 8px;" />
+      <span id="chatSearchCount" style="font-size:11px;color:var(--text-tertiary);min-width:48px;text-align:center;">0/0</span>
+      <button class="mini" id="chatSearchPrev" title="上一个 (Shift+Enter)">↑</button>
+      <button class="mini" id="chatSearchNext" title="下一个 (Enter)">↓</button>
+      <button class="mini" id="chatSearchClose" title="关闭 (Esc)">×</button>
+    </div>
+    <div class="chat-msgs" id="chatMsgs">
+      <div class="m-row"><div class="m-role">提示</div>
+        <div class="m-body" style="color:var(--text-tertiary)">这是无检索的纯 LLM 对话（直连你配置的 API）。
+连上 HashMM 后端可获得知识库检索 / 图谱 / Agent 全能力。</div></div>
+    </div>
+    <div id="attachStrip"></div>
+    <div id="chatToolbar" style="display:none;gap:8px;padding:4px 14px 0;align-items:center">
+      <button class="mini" id="chatRegen" data-i18n="ui.regenerate" title="用上一个问题重新生成回答">重新生成</button>
+      <button class="mini" id="chatClear" data-i18n="ui.clear" title="清空当前对话">清空对话</button>
+      <div style="position:relative;">
+        <button class="mini" id="btnExportChat" data-i18n="ui.export" title="导出当前对话">导出</button>
+        <div id="exportMenu" style="display:none;position:absolute;top:100%;left:0;margin-top:2px;background:var(--bg-primary);border:1px solid var(--border);border-radius:7px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:20;overflow:hidden;min-width:130px;">
+          <div class="exportOpt" data-fmt="md" data-i18n="ui.exportMd" style="padding:8px 12px;font-size:12px;cursor:pointer;color:var(--text-primary);">Markdown (.md)</div>
+          <div class="exportOpt" data-fmt="pdf" data-i18n="ui.exportPdf" style="padding:8px 12px;font-size:12px;cursor:pointer;color:var(--text-primary);border-top:1px solid var(--border);">PDF (.pdf)</div>
+          <div class="exportOpt" data-fmt="txt" data-i18n="ui.exportTxt" style="padding:8px 12px;font-size:12px;cursor:pointer;color:var(--text-primary);border-top:1px solid var(--border);">纯文本 (.txt)</div>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input">
+      <textarea id="chatText" data-i18n-ph="ui.chatPlaceholder" rows="1" placeholder="输入消息，Enter 发送"></textarea>
+      <button id="shotBtn" title="截取屏幕区域（可标注）"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+      <button id="chatSend">发送</button>
+    </div>
+  </div>
+  <!-- V103.90 截图标注弹层（兑现"可标注"：拖拽画框圈重点 + 颜色 + 撤销，再加入对话）-->
+  <div id="shotModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);align-items:center;justify-content:center;">
+    <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:12px;padding:14px;max-width:92vw;max-height:92vh;display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:13px;color:var(--text-primary);font-weight:600;flex:1;">标注截图</span>
+        <span style="font-size:11px;color:var(--text-tertiary);">拖拽画框圈出重点</span>
+        <span id="shotColors" style="display:flex;gap:5px;"></span>
+        <button class="mini" id="shotUndo">撤销</button>
+        <button class="mini" id="shotClearAnno">清除</button>
+      </div>
+      <div id="shotCanvasWrap" style="position:relative;overflow:auto;max-height:68vh;display:flex;justify-content:center;background:var(--bg-secondary);border-radius:8px;">
+        <canvas id="shotCanvas" style="cursor:crosshair;max-width:100%;display:block;"></canvas>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="mini" id="shotCancel">取消</button>
+        <button class="mini" id="shotSkip" title="不标注，直接把原图加入对话">直接添加</button>
+        <button class="go" id="shotConfirm" style="padding:6px 16px;">加入对话</button>
+      </div>
+    </div>
+  </div>
+  <!-- V103.90 命令面板（Ctrl/⌘+K 唤起，输入即筛，回车执行）-->
+  <div id="cmdPalette" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);align-items:flex-start;justify-content:center;padding-top:12vh;">
+    <div style="width:520px;max-width:92vw;background:var(--bg-primary);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.4);overflow:hidden;">
+      <input id="cmdInput" placeholder="输入命令… (↑↓ 选择，回车执行，Esc 关闭)" style="width:100%;box-sizing:border-box;border:0;border-bottom:1px solid var(--border);padding:14px 16px;font-size:14px;background:transparent;color:var(--text-primary);outline:none;" />
+      <div id="cmdList" style="max-height:46vh;overflow:auto;padding:6px;"></div>
+    </div>
+  </div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const D = window.hashmmDesktop;
+  function setConn(m, k) { const el = $("connStatus"); el.textContent = m; el.className = "status " + (k||"info"); }
+  const VAL = window.hashmmValidate;
+  // 相对时间："刚刚 / N分钟前 / N小时前 / N天前"
+  function relTime(ts) {
+    if (!ts) return "";
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return "刚刚";
+    if (s < 3600) return Math.floor(s / 60) + "分钟前";
+    if (s < 86400) return Math.floor(s / 3600) + "小时前";
+    return Math.floor(s / 86400) + "天前";
+  }
+  // 结构化连接失败 → 人话提示 + 操作建议
+  function friendlyConnError(res) {
+    const kind = res && res.kind;
+    if (kind === "refused") return { msg: "连不上：后端没在该地址监听", hint: "确认后端已启动、IP和端口对（本地后端可在下方点「启动并进入」）" };
+    if (kind === "timeout") return { msg: "连接超时：后端可能在忙或网络不通", hint: "稍等重试，或检查网络/防火墙" };
+    if (kind === "http") return { msg: "地址能通，但 /api/health 返回异常", hint: "可能后端版本不匹配或未就绪" };
+    // 回退到通用归类（按 errno）
+    if (VAL && res) { const c = VAL.classifyConnError({ code: res.code, status: res.status }); return { msg: c.message, hint: c.hint }; }
+    return { msg: (res && res.error) || "连接失败", hint: "" };
+  }
+  // 健康详情 → 一句话"后端是什么"
+  function backendInfoText(d) {
+    if (!d || typeof d !== "object") return "";
+    const bits = [];
+    if (d.status || d.ready !== undefined) bits.push("就绪：" + (d.ready === false ? "未就绪" : "正常"));
+    const kbN = d.kb_vectors != null ? d.kb_vectors : (d.vectors != null ? d.vectors : (d.kb != null ? d.kb : null));
+    if (kbN != null) bits.push("知识库 " + kbN + " 向量");
+    if (d.model) bits.push("模型 " + d.model);
+    if (d.gpu) bits.push("GPU " + (typeof d.gpu === "string" ? d.gpu : "可用"));
+    if (d.version) bits.push("v" + d.version);
+    return bits.join(" · ");
+  }
+  function showBackendInfo(d) {
+    const el = $("backendInfo"); const t = backendInfoText(d);
+    if (t) { el.style.display = "block"; el.textContent = t; } else { el.style.display = "none"; }
+  }
+  function normalizeUrl(raw) {
+    let u = String(raw || "").trim().replace(/\s+/g, "");
+    if (!u) return "";
+    const m = u.match(/^(https?:\/\/)+/i);
+    if (m) { const sc = u.match(/https?:\/\//gi) || []; u = sc[sc.length-1] + u.slice(m[0].length); }
+    else u = "http://" + u;
+    return u.replace(/\/+$/, "");
+  }
+  async function connectTo(raw, token) {
+    // V103.90：提交前用 hashmmValidate 校验，给出具体原因而不是直接发请求
+    const v = VAL ? VAL.backendUrl(raw) : { ok: !!normalizeUrl(raw), normalized: normalizeUrl(raw) };
+    if (!v.ok) { setConn(v.reason || "地址无效", "err"); return; }
+    const url = v.normalized;
+    $("url").value = url; $("btnConnect").disabled = true; $("btnTest").disabled = true;
+    $("backendInfo").style.display = "none";
+    setConn("正在连接 " + url + " …", "info");
+    try {
+      const ok = await D.connect({ url, token });
+      if (ok && ok.success) {
+        setConn("已连接（" + ok.ms + "ms），正在进入工作台…", "ok");
+        showBackendInfo(ok.detail);
+      } else {
+        const f = friendlyConnError(ok);
+        setConn(f.msg + (f.hint ? "　—　" + f.hint : ""), "err");
+        $("btnConnect").disabled = false; $("btnTest").disabled = false;
+      }
+    } catch (e) { setConn("出错：" + (e && e.message || e), "err"); $("btnConnect").disabled = false; $("btnTest").disabled = false; }
+  }
+  // 测试连接：只探活、不进入工作台
+  async function testConn() {
+    const v = VAL ? VAL.backendUrl($("url").value) : { ok: true, normalized: normalizeUrl($("url").value) };
+    if (!v.ok) { setConn(v.reason || "地址无效", "err"); return; }
+    $("btnTest").disabled = true; setConn("正在测试 " + v.normalized + " …", "info");
+    try {
+      const p = await D.probe(v.normalized);
+      if (p && p.ok) { setConn("后端可达（" + p.ms + "ms）", "ok"); showBackendInfo(p.detail); }
+      else { const f = friendlyConnError(p); setConn(f.msg + (f.hint ? "　—　" + f.hint : ""), "err"); $("backendInfo").style.display = "none"; }
+    } catch (e) { setConn("测试出错：" + (e && e.message || e), "err"); }
+    $("btnTest").disabled = false;
+  }
+  (() => { const err = new URLSearchParams(location.search).get("err"); if (err) setConn(err, "err"); })();
+  async function renderRecent(cfg) {
+    const recent = ((cfg && cfg.recent) || []).slice(0, 5);
+    const list = $("recentList"); list.innerHTML = "";
+    for (const r of recent) {
+      const row = document.createElement("div");
+      row.className = "recent-item";
+      row.innerHTML =
+        '<span class="recent-url" style="flex:1;min-width:0"></span>' +
+        '<span class="recent-tok" title="已保存令牌" style="font-size:10px;color:var(--text-tertiary)"></span>' +
+        '<span class="recent-time" style="font-size:10px;color:var(--text-tertiary)"></span>' +
+        '<span class="recent-ms">…</span>' +
+        '<span class="recent-del" title="从列表移除" style="cursor:pointer;color:var(--text-tertiary);padding:0 2px">×</span>';
+      row.querySelector(".recent-url").textContent = r.url.replace(/^https?:\/\//, "");
+      row.querySelector(".recent-tok").textContent = r.token ? "已授权" : "";
+      row.querySelector(".recent-time").textContent = relTime(r.ts);
+      // 点 url 区域连接；点关闭字符移除（阻止冒泡）
+      row.querySelector(".recent-url").addEventListener("click", () => connectTo(r.url, r.token || ""));
+      row.querySelector(".recent-del").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try { await D.forgetRecent(r.url); } catch (_) {}
+        const cfg2 = await D.getConfig(); renderRecent(cfg2);
+      });
+      list.appendChild(row);
+      D.probe(r.url).then((p) => {
+        const ms = row.querySelector(".recent-ms");
+        if (p && p.ok) { ms.textContent = p.ms + "ms"; ms.className = "recent-ms"; }
+        else { ms.textContent = "离线"; ms.className = "recent-ms bad"; }
+      }).catch(() => {});
+    }
+  }
+  (async () => {
+    try {
+      const cfg = await D.getConfig();
+      const dft = D.getDefaultBackend ? await D.getDefaultBackend() : null;
+      if (cfg && cfg.url) $("url").value = cfg.url;
+      else if (dft && dft.url) $("url").value = dft.url;
+      if (cfg && cfg.token) $("token").value = cfg.token;
+      await renderRecent(cfg);
+    } catch (_) {}
+  })();
+  $("btnConnect").addEventListener("click", () => connectTo($("url").value, $("token").value.trim()));
+  $("btnTest").addEventListener("click", testConn);
+
+  // ── V87: 本地后端控制（hashmmBackend 桥）──
+  (function initLocalBackend() {
+    const B = window.hashmmBackend;
+    const card = $("localCard");
+    if (!B) { if (card) card.style.display = "none"; return; }
+    const stat = (m, k) => { const el = $("lbStat"); el.textContent = m; el.className = "status " + (k || "info"); };
+    const logEl = $("lbLog");
+    const appendLog = (line) => {
+      logEl.style.display = "block";
+      logEl.textContent += line + "\n";
+      if (logEl.textContent.length > 60000) logEl.textContent = logEl.textContent.slice(-40000);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+    B.onLog(appendLog);
+
+    let busy = false;
+    async function refresh(opt = {}) {
+      if (busy) return;                       // 初始化/启动进行中不抢状态行
+      try {
+        const [cfg, st, det] = await Promise.all([B.getCfg(), B.status(), B.detect($("lbPy").value.trim())]);
+        $("lbAuto").checked = !!cfg.localAuto;
+        $("lbStop").style.display = st.running ? "inline-block" : "none";
+        // V89: 内置运行时（安装包自带 Python+依赖）→ 用户零环境，相关控件全部隐藏
+        const bundled = !!cfg.bundled;
+        $("lbPy").style.display = bundled ? "none" : "block";
+        $("lbMirror").style.display = bundled ? "none" : "block";
+        $("lbSetup").style.display = bundled ? "none" : "inline-block";
+        $("lbReset").style.display = (bundled || st.running) ? "none" : "inline-block";
+        if (opt.keepStat) return;             // V88: 失败/重置后的提示保留，不被本次刷新覆盖
+        if (st.running) { stat(`本地后端运行中（${st.url}）`, "ok"); return; }
+        $("lbSub").innerHTML = bundled
+          ? "在这台电脑上直接运行 HashMM 完整功能；LLM 走你配置的云端 API。<br>运行时已内置且与系统隔离——不会改动你电脑上的 Python 或任何环境变量。"
+          : "在这台电脑上直接运行 HashMM 完整功能；LLM 走你配置的云端 API。<br>需要本机已安装 Python ≥ 3.10（仅用于创建独立虚拟环境，不影响系统）。";
+        if (bundled) { stat("内置运行时已就绪（无需安装任何环境）· 点「启动并进入」", "ok"); return; }
+        if (!det.ok) { stat(det.error, "err"); return; }
+        stat(cfg.envReady
+          ? `Python ${det.version} · 环境已就绪，点「启动并进入」`
+          : `Python ${det.version} · 首次使用请先「初始化环境」（约 2-5 分钟）`, cfg.envReady ? "ok" : "info");
+      } catch (e) { if (!opt.keepStat) stat("检测失败：" + (e && e.message || e), "err"); }
+    }
+    refresh();
+    $("lbPy").addEventListener("change", () => refresh());
+
+    $("lbSetup").addEventListener("click", async () => {
+      if (busy) return; busy = true;
+      $("lbSetup").disabled = true; logEl.textContent = "";
+      stat("正在初始化本地环境（venv + 核心依赖，无 GPU 包）…", "info");
+      let failed = false;
+      try {
+        const r = await B.setup({ python: $("lbPy").value.trim(), mirror: $("lbMirror").value.trim() });
+        if (r.ok) stat("环境就绪，现在可以「启动并进入」", "ok");
+        else { failed = true; stat(r.error || "初始化失败", "err"); }
+      } catch (e) { failed = true; stat("初始化出错：" + (e && e.message || e), "err"); }
+      $("lbSetup").disabled = false; busy = false;
+      refresh({ keepStat: failed });          // 失败信息留在状态行，控件照常刷新
+    });
+
+    $("lbStart").addEventListener("click", async () => {
+      if (busy) return; busy = true;
+      $("lbStart").disabled = true;
+      stat("正在启动本地后端…（首启需建索引会慢一些）", "info");
+      let failed = false;
+      try {
+        const r = await B.start({});
+        if (r.ok) {
+          stat("已就绪，正在进入工作台…（首次登录：admin / admin123，进入后请改密码）", "ok");
+          const ok = await D.connect({ url: r.url, token: "" });   // 复用既有连接流程（健康检查 + 壳层切换）
+          if (!ok || !ok.success) { failed = true; stat((ok && ok.error) || "进入失败", "err"); }
+        } else {
+          failed = true;
+          stat(r.error || "启动失败（看下方日志）", "err");
+        }
+      } catch (e) { failed = true; stat("启动出错：" + (e && e.message || e), "err"); }
+      $("lbStart").disabled = false; busy = false;
+      refresh({ keepStat: failed });
+    });
+
+    $("lbStop").addEventListener("click", async () => { await B.stop(); refresh(); });
+    $("lbReset").addEventListener("click", async () => {
+      if (busy) return;
+      if (!confirm("将删除本地虚拟环境（venv）并重新初始化才能使用。\n你的数据与知识库不受影响。继续？")) return;
+      busy = true;
+      const r = await B.resetEnv();
+      busy = false;
+      stat(r && r.ok ? "环境已重置，请重新「初始化环境」" : ((r && r.error) || "重置失败"), r && r.ok ? "info" : "err");
+      refresh({ keepStat: true });
+    });
+    $("lbAuto").addEventListener("change", () => B.setAuto($("lbAuto").checked));
+  })();
+  for (const id of ["url", "token"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnConnect").click(); });
+
+  // ── 直连对话（V71 离线对话一期） ──
+  const LLM = window.hashmmLLM;
+  const card = document.querySelector(".card");
+  const hist = [];
+  let chatting = false;
+  let lastUserText = "";   // V103.90 最近一次用户输入（供重新生成）
+
+  function loadLLMCfg() {
+    try { return JSON.parse(localStorage.getItem("hashmm_llm_cfg") || "{}"); } catch (_) { return {}; }
+  }
+  function saveLLMCfg() {
+    localStorage.setItem("hashmm_llm_cfg", JSON.stringify({
+      base: $("llmBase").value.trim(), key: $("llmKey").value.trim(), model: $("llmModel").value.trim(),
+    }));
+  }
+  $("goDirect").addEventListener("click", () => {
+    card.style.display = "none"; $("chatWrap").style.display = "flex";
+    const c = loadLLMCfg();
+    $("llmBase").value = c.base || ""; $("llmKey").value = c.key || ""; $("llmModel").value = c.model || "";
+    if (!c.key) { $("cfgRow").style.display = "flex"; $("llmKey").focus(); }
+    else $("chatText").focus();
+  });
+  $("btnBack").addEventListener("click", () => { $("chatWrap").style.display = "none"; card.style.display = "block"; });
+  $("btnCfg").addEventListener("click", () => {
+    const show = $("cfgRow").style.display === "none";
+    $("cfgRow").style.display = show ? "flex" : "none";
+    $("visionRow").style.display = show ? "flex" : "none";
+    if (show) { const v = loadVisionCfg(); $("visBase").value = v.base||""; $("visKey").value = v.key||""; $("visModel").value = v.model||""; }
+  });
+  for (const id of ["llmBase", "llmKey", "llmModel"]) $(id).addEventListener("change", saveLLMCfg);
+
+  // ── V103.90 模型连通性预检（配完一键测：连通/key/模型，并列出可用模型）──
+  const LLMB = window.hashmmLLM;
+  function showLlmTest(level, msg, hint) {
+    const el = $("llmTestOut");
+    const colors = { ok: "var(--success)", warn: "var(--accent)", error: "var(--danger)", info: "var(--text-secondary)" };
+    el.style.display = "block";
+    el.style.color = colors[level] || colors.info;
+    el.style.borderColor = level === "error" ? "var(--danger)" : "var(--border)";
+    el.innerHTML = msg + (hint ? `<div style="color:var(--text-tertiary);margin-top:3px">${hint}</div>` : "");
+  }
+  async function testLlmConn() {
+    if (!LLMB || !LLMB.testConnection) { showLlmTest("info", "当前版本不支持测试"); return; }
+    const base = $("llmBase").value.trim() || "https://api.deepseek.com";
+    const key = $("llmKey").value.trim();
+    const model = $("llmModel").value.trim();
+    // 提交前校验（key 必填，base 合法）
+    const _val = window.hashmmValidate;
+    if (_val) {
+      const v = _val.llmConfig({ base, key, model }, { keyRequired: true, modelRequired: false });
+      if (!v.ok) { const first = v.errors.base || v.errors.key || v.errors.model; showLlmTest("error", first); return; }
+    }
+    $("llmTest").disabled = true;
+    showLlmTest("info", "正在测试 " + base + " …");
+    let r;
+    try { r = await LLMB.testConnection({ baseUrl: base, apiKey: key, model }); }
+    catch (e) { showLlmTest("error", "测试出错：" + (e && e.message || e)); $("llmTest").disabled = false; return; }
+    $("llmTest").disabled = false;
+    if (!r) { showLlmTest("error", "测试无响应"); return; }
+    // 填充模型下拉（datalist），方便用户直接选
+    const dl = $("llmModelList"); dl.innerHTML = "";
+    for (const m of (r.models || []).slice(0, 200)) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
+    let hint = r.hint || "";
+    if ((r.models || []).length && !r.modelFound) hint = (hint ? hint + "　" : "") + "可用模型：" + r.models.slice(0, 8).join("、") + (r.models.length > 8 ? " …" : "");
+    showLlmTest(r.level || (r.ok ? "ok" : "error"), r.message || (r.ok ? "连通" : "失败"), hint);
+  }
+  if ($("llmTest")) $("llmTest").addEventListener("click", testLlmConn);
+
+  // ── V103.90 Computer Use 操作记录可视化 + 安全级别 ──
+  const CUV = window.hashmmCU;
+  function cuTone(tone) { return ({ muted: "var(--text-tertiary)", accent: "var(--accent)", danger: "var(--danger)" })[tone] || "var(--text-secondary)"; }
+  async function renderCuFeed() {
+    if (!CUV || $("cuPanel").style.display === "none") return;
+    let r; try { r = await CUV.replay(100); } catch (_) { return; }
+    const events = (r && r.events) || [];
+    const sum = CUV.summarize ? CUV.summarize(events) : { total: events.length };
+    $("cuSummary").textContent = events.length
+      ? `共 ${sum.total} 步 · 只读 ${sum.read} · 写入 ${sum.write} · 危险 ${sum.danger} · 失败 ${sum.failed}`
+      : "暂无操作记录";
+    const feed = $("cuFeed"); feed.innerHTML = "";
+    if (!events.length) { feed.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary);padding:8px;text-align:center">Agent 还没在你电脑上执行任何操作</div>'; return; }
+    // 最近的在上面
+    for (const ev of events.slice().reverse()) {
+      const d = CUV.describe(ev);
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);font-size:12px";
+      const badge = `<span style="font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid ${cuTone(d.tone)};color:${cuTone(d.tone)};white-space:nowrap">${d.riskLabel}</span>`;
+      const resultIcon = d.ok ? '<span style="color:var(--success)">通过</span>' : `<span style="color:var(--danger)" title="${String(d.error || "").replace(/"/g, "&quot;")}">失败</span>`;
+      row.innerHTML =
+        `<span style="font-size:14px">${d.icon}</span>` +
+        `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary)">${String(d.text).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</span>` +
+        (d.confirm ? '<span style="font-size:10px;color:var(--text-tertiary)" title="此操作经过用户确认">需确认</span>' : "") +
+        badge + resultIcon;
+      feed.appendChild(row);
+    }
+  }
+  async function loadCuSafety() {
+    if (!CUV || !CUV.getSafety) return;
+    try { const s = await CUV.getSafety(); const lv = (s && (s.level || s)) || "confirm"; if ($("cuSafety")) $("cuSafety").value = lv; } catch (_) {}
+  }
+  if ($("cuLogBtn")) $("cuLogBtn").addEventListener("click", () => {
+    const p = $("cuPanel");
+    p.style.display = p.style.display === "none" ? "flex" : "none";
+    if (p.style.display === "flex") { loadCuSafety(); renderCuFeed(); }
+  });
+  if ($("cuPanelClose")) $("cuPanelClose").addEventListener("click", () => { $("cuPanel").style.display = "none"; });
+  if ($("cuLogRefresh")) $("cuLogRefresh").addEventListener("click", renderCuFeed);
+  if ($("cuLogClear")) $("cuLogClear").addEventListener("click", async () => { if (CUV && CUV.replayClear) { await CUV.replayClear(); renderCuFeed(); } });
+  if ($("cuSafety")) $("cuSafety").addEventListener("change", async () => {
+    if (CUV && CUV.setSafety) { try { await CUV.setSafety($("cuSafety").value); } catch (_) {} }
+  });
+
+  // ── V103.90 本地模型安装向导（硬件/运行时/模型文件 逐步检查）──
+  const LLMW = window.hashmmLLM;
+  function llStepColor(state) { return ({ ok: "var(--success)", warn: "var(--accent)", todo: "var(--text-tertiary)", blocked: "var(--danger)" })[state] || "var(--text-secondary)"; }
+  function llStepIcon(state) { return ({ ok: "通过", warn: "注意", todo: "待办", blocked: "阻塞" })[state] || "待办"; }
+  async function renderLlSetup() {
+    if (!LLMW || !LLMW.localStatus || $("localLlmPanel").style.display === "none") return;
+    let st; try { st = await LLMW.localStatus(); } catch (_) { return; }
+    if (!st || !st.ok) { $("llSetupSteps").innerHTML = '<div style="font-size:11px;color:var(--danger)">' + ((st && st.error) || "状态获取失败") + '</div>'; return; }
+    const steps = LLMW.setupSteps ? LLMW.setupSteps(st) : [];
+    const overall = LLMW.setupOverall ? LLMW.setupOverall(st) : { summary: "" };
+    $("llSetupSummary").textContent = overall.summary ? "· " + overall.summary : "";
+    const box = $("llSetupSteps"); box.innerHTML = "";
+    steps.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:9px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary)";
+      const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+      row.innerHTML =
+        `<span style="color:${llStepColor(s.state)};font-weight:bold;font-size:13px">${llStepIcon(s.state)}</span>` +
+        `<div style="flex:1;min-width:0">
+           <div style="font-size:12px;color:var(--text-primary)">${i + 1}. ${esc(s.title)}</div>
+           <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">${esc(s.detail)}</div>
+           ${s.action ? `<div style="font-size:11px;color:var(--accent);margin-top:3px">→ ${esc(s.action)}</div>` : ""}
+         </div>`;
+      box.appendChild(row);
+    });
+  }
+  if ($("localLlmSetup")) $("localLlmSetup").addEventListener("click", () => {
+    const p = $("localLlmPanel");
+    p.style.display = p.style.display === "none" ? "flex" : "none";
+    if (p.style.display === "flex") renderLlSetup();
+  });
+  if ($("llSetupClose")) $("llSetupClose").addEventListener("click", () => { $("localLlmPanel").style.display = "none"; });
+  if ($("llSetupRefresh")) $("llSetupRefresh").addEventListener("click", renderLlSetup);
+  for (const id of ["visBase", "visKey", "visModel"]) $(id).addEventListener("change", saveVisionCfg);
+
+  // V103.90 视觉模型连通性测试（复用 llm:testConnection）
+  function showVisTest(level, msg, hint) {
+    const el = $("visTestOut"); if (!el) return;
+    const colors = { ok: "var(--success)", warn: "var(--accent)", error: "var(--danger)", info: "var(--text-secondary)" };
+    el.style.display = "block"; el.style.color = colors[level] || colors.info;
+    el.style.borderColor = level === "error" ? "var(--danger)" : "var(--border)";
+    el.innerHTML = msg + (hint ? `<div style="color:var(--text-tertiary);margin-top:3px">${hint}</div>` : "");
+  }
+  async function testVisConn() {
+    const LB = window.hashmmLLM; if (!LB || !LB.testConnection) { showVisTest("info", "当前版本不支持测试"); return; }
+    const base = $("visBase").value.trim(), key = $("visKey").value.trim(), model = $("visModel").value.trim();
+    if (!base) { showVisTest("error", "请先填写视觉模型 Base URL"); return; }
+    const _val = window.hashmmValidate;
+    if (_val) { const v = _val.backendUrl(base); if (!v.ok) { showVisTest("error", v.reason); return; } }
+    $("visTest").disabled = true; showVisTest("info", "正在测试视觉端点 " + base + " …");
+    let r; try { r = await LB.testConnection({ baseUrl: base, apiKey: key, model }); } catch (e) { showVisTest("error", "测试出错：" + (e && e.message || e)); $("visTest").disabled = false; return; }
+    $("visTest").disabled = false;
+    if (!r) { showVisTest("error", "无响应"); return; }
+    const dl = $("visModelList"); if (dl) { dl.innerHTML = ""; for (const m of (r.models || []).slice(0, 200)) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); } }
+    let hint = r.hint || "";
+    if ((r.models || []).length && !r.modelFound) hint = (hint ? hint + "　" : "") + "可用模型：" + r.models.slice(0, 8).join("、");
+    showVisTest(r.level || (r.ok ? "ok" : "error"), r.message || "", hint);
+  }
+  if ($("visTest")) $("visTest").addEventListener("click", testVisConn);
+
+  // V103.90：助手消息渲染 Markdown（安全），并给代码块挂复制按钮；用户消息保持纯文本。
+  function renderAssistantBody(bodyEl, text) {
+    const MD = window.hashmmMD;
+    const useMd = (typeof _prefs === "undefined") || _prefs.renderMarkdown !== false;
+    if (MD && MD.render && useMd) {
+      bodyEl.innerHTML = MD.render(text || "");
+      // 给每个代码块加复制按钮
+      bodyEl.querySelectorAll("pre").forEach(pre => {
+        if (pre.querySelector(".code-copy")) return;
+        const code = pre.querySelector("code");
+        const btn = document.createElement("button");
+        btn.className = "code-copy"; btn.textContent = "复制";
+        btn.addEventListener("click", () => {
+          try { navigator.clipboard.writeText(code ? code.textContent : ""); btn.textContent = "已复制"; setTimeout(() => btn.textContent = "复制", 1500); } catch (_) {}
+        });
+        pre.appendChild(btn);
+      });
+    } else {
+      bodyEl.textContent = text || "";
+    }
+  }
+  function addMsg(role, text) {
+    const row = document.createElement("div");
+    row.className = "m-row" + (role === "user" ? " user" : "");
+    row.innerHTML = '<div class="m-role"></div><div class="m-body"></div>';
+    row.querySelector(".m-role").textContent = role === "user" ? "你" : "助手";
+    const body = row.querySelector(".m-body");
+    if (role === "user") body.textContent = text;
+    else renderAssistantBody(body, text);
+    // V103.90 每条消息操作栏（复制/引用/分享，hover 显现）
+    addMsgActions(row, body, role);
+    $("chatMsgs").appendChild(row);
+    $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+    return body;
+  }
+  function addMsgActions(row, body, role) {
+    const MA = window.hashmmMsgAct;
+    const bar = document.createElement("div");
+    bar.className = "msg-actions";
+    const mk = (label, title, fn) => { const b = document.createElement("button"); b.textContent = label; b.title = title; b.addEventListener("click", fn); return b; };
+    const msgOf = () => ({ role, content: body.textContent || "" });
+    const flash = (b, t) => { const o = b.textContent; b.textContent = t; setTimeout(() => b.textContent = o, 1200); };
+    bar.appendChild(mk(tr("ui.msgCopy", "复制"), "复制这条消息", function () { try { navigator.clipboard.writeText(body.textContent || ""); flash(this, "已复制"); } catch (_) {} }));
+    bar.appendChild(mk(tr("ui.msgQuote", "引用"), "把这条作为上下文插入输入框", function () { const t = $("chatText"); if (t && MA) { t.value = MA.buildQuote(msgOf()) + t.value; t.focus(); flash(this, "已引用"); } }));
+    bar.appendChild(mk(tr("ui.msgShare", "分享"), "复制带角色的可分享文本", function () { try { if (MA) navigator.clipboard.writeText(MA.buildShareText(msgOf())); flash(this, "已复制分享文本"); } catch (_) {} }));
+    row.appendChild(bar);
+  }
+
+  // ── 本地知识库（V73：本地 BM25 检索 + 云端 LLM = 本地 RAG） ──
+  const RAG = window.hashmmRAG;
+  async function refreshKB() {
+    if (!RAG) return;
+    try {
+      const r = await RAG.stat();
+      if (r && r.ok) $("kbStat").textContent = r.stat.chunks
+        ? `本地知识库：${r.stat.files} 个文件 · ${r.stat.chunks} 个切片`
+        : "本地知识库：空（点「添加文件夹」摄取你的文档/代码）";
+    } catch (_) {}
+  }
+  $("btnKB").addEventListener("click", () => {
+    const r = $("kbRow"); r.style.display = r.style.display === "none" ? "flex" : "none";
+    refreshKB();
+  });
+  $("kbAdd").addEventListener("click", async () => { await runIngest(); });
+  $("kbClear").addEventListener("click", async () => { if (RAG) { if (!confirm("将清空整个本地知识库（所有文件夹的索引）。此操作不可撤销，继续？")) return; await RAG.clear(); refreshKB(); renderKBPanel(); } });
+
+  // ── V103.90 知识库管理面板（分组 / 单独同步·移除 / 搜索预览 / 详细进度）──
+  function fmtBytes(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+  function shortPath(p, max) {
+    p = String(p || ""); max = max || 42;
+    if (p.length <= max) return p;
+    return "…" + p.slice(-(max - 1));
+  }
+  function setKbProg(text) {
+    const el = $("kbProg");
+    if (!text) { el.style.display = "none"; el.textContent = ""; }
+    else { el.style.display = "block"; el.textContent = text; }
+  }
+  // 共享的摄取流程（详细进度：当前文件 / 进度 / 跳过）
+  async function runIngest() {
+    if (!RAG) return;
+    setKbProg("准备摄取…");
+    const off = RAG.onProgress((m) => {
+      const pct = m.total ? Math.round((m.done / m.total) * 100) : 0;
+      setKbProg(`${m.sync ? "同步" : "摄取"}中 ${pct}%（${m.done}/${m.total}）· ${m.files} 文件 / ${m.chunks} 切片${m.current ? " · " + m.current : ""}${m.skipped ? " · 跳过 " + m.skipped : ""}`);
+    });
+    let r;
+    try { r = await RAG.pickAndIngest(); } finally { off(); }
+    if (r && r.ok) setKbProg(`已摄取 ${r.ingested.files} 文件 / ${r.ingested.chunks} 切片${r.ingested.skipped ? `（跳过 ${r.ingested.skipped} 个：二进制/超大）` : ""}`);
+    else if (r && r.canceled) setKbProg("");
+    else setKbProg("摄取失败");
+    setTimeout(() => setKbProg(""), 4000);
+    refreshKB(); renderKBPanel();
+  }
+  // 渲染文件夹卡片
+  async function renderKBPanel() {
+    if (!RAG || $("kbPanel").style.display === "none") return;
+    let r; try { r = await RAG.folderList(); } catch (_) { return; }
+    if (!r || !r.ok) return;
+    const s = r.stat || {};
+    $("kbPanelStat").textContent = s.chunks
+      ? `共 ${s.files} 文件 · ${s.chunks} 切片 · ${s.folders} 文件夹 · ${fmtBytes(s.bytes)} · ${s.terms} 词项`
+      : "本地知识库：空（点「添加文件夹」摄取你的文档/代码）";
+    const box = $("kbFolders"); box.innerHTML = "";
+    const folders = (r.folders || []).filter(f => f.folder && f.folder !== "(未分组)");
+    const ungrouped = (r.folders || []).find(f => f.folder === "(未分组)");
+    if (!folders.length && !ungrouped) {
+      box.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary);padding:8px;text-align:center">还没有索引任何文件夹</div>';
+      return;
+    }
+    for (const f of folders) {
+      const card = document.createElement("div");
+      card.style.cssText = "display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary)";
+      card.innerHTML =
+        `<div style="flex:1;min-width:0">
+           <div style="font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${f.folder.replace(/"/g, "&quot;")}">${shortPath(f.folder)}</div>
+           <div style="font-size:10px;color:var(--text-tertiary)">${f.files} 文件 · ${f.chunks} 切片 · ${fmtBytes(f.size)}</div>
+         </div>
+         <button class="mini kbSync" data-folder="${f.folder.replace(/"/g, "&quot;")}" title="重扫该文件夹：只重摄新增/改动的文件、清掉已删除的（增量同步，快）">↻ 同步</button>
+         <button class="mini kbRemove" data-folder="${f.folder.replace(/"/g, "&quot;")}" title="从知识库移除该文件夹（不删你磁盘上的原文件）">移除</button>`;
+      box.appendChild(card);
+    }
+    if (ungrouped) {
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:10px;color:var(--text-tertiary);padding:4px 2px";
+      note.textContent = `另有 ${ungrouped.files} 个早期版本摄取的文件（${ungrouped.chunks} 切片）未记录来源文件夹，可「清空」后重新添加以纳入管理。`;
+      box.appendChild(note);
+    }
+    // 绑定同步/移除（事件委托）
+    box.querySelectorAll(".kbSync").forEach(btn => btn.addEventListener("click", async () => {
+      const folder = btn.getAttribute("data-folder");
+      setKbProg("正在同步：" + shortPath(folder));
+      const off = RAG.onProgress((m) => { const pct = m.total ? Math.round((m.done / m.total) * 100) : 0; setKbProg(`同步中 ${pct}%（${m.done}/${m.total}）· ${m.current || ""}`); });
+      let res; try { res = await RAG.sync(folder); } finally { off(); }
+      if (res && res.ok) { const x = res.summary; setKbProg(`同步完成：新增 ${x.added} · 改动 ${x.changed} · 删除 ${x.removed} · 未变 ${x.unchanged}`); }
+      else setKbProg("同步失败：" + ((res && res.error) || ""));
+      setTimeout(() => setKbProg(""), 5000);
+      refreshKB(); renderKBPanel();
+    }));
+    box.querySelectorAll(".kbRemove").forEach(btn => btn.addEventListener("click", async () => {
+      const folder = btn.getAttribute("data-folder");
+      if (!confirm(`从知识库移除文件夹「${shortPath(folder)}」？\n（只移除索引，不会删除你磁盘上的原文件）`)) return;
+      const res = await RAG.removeFolder(folder);
+      if (res && res.ok) setKbProg(`已移除 ${res.removed.files} 文件 / ${res.removed.chunks} 切片`);
+      setTimeout(() => setKbProg(""), 3000);
+      refreshKB(); renderKBPanel();
+    }));
+  }
+  // 搜索预览
+  async function kbSearchPreview() {
+    if (!RAG) return;
+    const q = $("kbSearchIn").value.trim();
+    const out = $("kbSearchOut"); out.innerHTML = "";
+    if (!q) return;
+    out.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary)">检索中…</div>';
+    let r; try { r = await RAG.search(q, 5); } catch (_) { out.innerHTML = '<div style="font-size:11px;color:var(--danger)">检索失败</div>'; return; }
+    out.innerHTML = "";
+    const results = (r && r.results) || [];
+    if (!results.length) { out.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary)">没有召回内容（知识库可能为空或无相关切片）</div>'; return; }
+    const modeTag = document.createElement("div");
+    modeTag.style.cssText = "font-size:10px;color:var(--text-tertiary)";
+    modeTag.textContent = `召回 ${results.length} 条 · 模式：${r.mode || "bm25"}`;
+    out.appendChild(modeTag);
+    for (const it of results) {
+      const card = document.createElement("div");
+      card.style.cssText = "padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary)";
+      const fileName = String(it.file || "").split(/[\\/]/).pop();
+      card.innerHTML =
+        `<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--text-tertiary)">
+           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${String(it.file || "").replace(/"/g, "&quot;")}">${fileName}</span>
+           <span>score ${it.score}</span>
+         </div>
+         <div style="font-size:11px;color:var(--text-secondary);margin-top:3px;max-height:60px;overflow:hidden">${String(it.text || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])).slice(0, 300)}</div>`;
+      out.appendChild(card);
+    }
+  }
+  $("kbManage").addEventListener("click", () => {
+    const p = $("kbPanel");
+    p.style.display = p.style.display === "none" ? "flex" : "none";
+    if (p.style.display === "flex") renderKBPanel();
+  });
+  $("kbPanelClose").addEventListener("click", () => { $("kbPanel").style.display = "none"; });
+  $("kbPanelAdd").addEventListener("click", runIngest);
+  $("kbSearchBtn").addEventListener("click", kbSearchPreview);
+  $("kbSearchIn").addEventListener("keydown", (e) => { if (e.key === "Enter") kbSearchPreview(); });
+  refreshKB();
+
+  // ── V77 语义检索（ONNX 可选层：设备检测 → 下载 → 启用 → 重建索引） ──
+  const SEMB = window.hashmmSemantic;
+  let semEnabled = false;
+  async function renderSemPanel(d) {
+    const box = $("semSteps"); if (!box || !SEMB || !SEMB.steps) return;
+    let kbChunks = 0; try { const ks = await (window.hashmmRAG && window.hashmmRAG.stat()); if (ks && ks.ok) kbChunks = ks.stat.chunks || 0; } catch (_) {}
+    const status = { deviceOk: d.ok, memGB: d.memGB, cores: d.cores, ortInstalled: d.ortInstalled, modelDownloaded: d.modelDownloaded, enabled: d.enabled, vectors: d.vectors || 0, kbChunks };
+    const steps = SEMB.steps(status);
+    const colors = { ok: "var(--success)", warn: "var(--accent)", todo: "var(--text-tertiary)", blocked: "var(--danger)" };
+    const icons = { ok: "通过", warn: "注意", todo: "待办", blocked: "阻塞" };
+    const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    box.innerHTML = "";
+    steps.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:8px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary)";
+      row.innerHTML =
+        `<span style="color:${colors[s.state]};font-weight:bold">${icons[s.state]}</span>` +
+        `<div style="flex:1;min-width:0"><div style="font-size:12px;color:var(--text-primary)">${i + 1}. ${esc(s.title)}</div>` +
+        `<div style="font-size:11px;color:var(--text-secondary)">${esc(s.detail)}</div>` +
+        `${s.action ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">→ ${esc(s.action)}</div>` : ""}</div>`;
+      box.appendChild(row);
+    });
+  }
+  async function refreshSem() {
+    if (!SEMB) return;
+    try {
+      const d = await SEMB.deviceCheck();
+      semEnabled = d.enabled;
+      let txt = d.advice + ` · 内存${d.memGB}G/${d.cores}核`;
+      if (!d.ortInstalled) txt = "onnxruntime 未安装（打包时未编译此可选组件）——保持 BM25 词法检索";
+      else if (!d.modelDownloaded) { $("semDownload").style.display = "inline-block"; }
+      else {
+        $("semToggle").style.display = "inline-block";
+        $("semToggle").textContent = d.enabled ? "停用（回 BM25）" : "启用";
+        if (d.enabled) $("semReindex").style.display = "inline-block";
+        txt += d.enabled ? " · 语义+BM25 混合检索中" : " · 模型已就绪";
+      }
+      $("semStat").textContent = txt;
+      renderSemPanel(d);   // V103.90 渲染状态步骤面板
+    } catch (_) { $("semStat").textContent = "检测失败"; }
+  }
+  if ($("semBtn")) {
+    $("semBtn").addEventListener("click", () => {
+      const r = $("semRow"); const show = r.style.display === "none";
+      r.style.display = show ? "flex" : "none";
+      if ($("semPanel")) $("semPanel").style.display = show ? "flex" : "none";
+      refreshSem();
+    });
+    SEMB && SEMB.onProgress((m) => {
+      $("semStat").textContent = (m.stage === "model" ? "下载模型 " : m.stage === "vocab" ? "下载词表 " : "建向量索引 ") + m.pct + "%";
+    });
+    $("semDownload").addEventListener("click", async () => {
+      $("semDownload").disabled = true;
+      const r = await SEMB.downloadModel();
+      $("semDownload").disabled = false;
+      if (r && r.ok) { $("semDownload").style.display = "none"; }
+      else $("semStat").textContent = "下载失败：" + ((r && r.error) || "网络问题，可重试");
+      refreshSem();
+    });
+    $("semToggle").addEventListener("click", async () => {
+      if (semEnabled) { await SEMB.disable(); }
+      else {
+        const r = await SEMB.enable();
+        if (r && r.ok) { $("semStat").textContent = "已启用——首次需「重建向量索引」"; }
+        else $("semStat").textContent = (r && r.reason) || "启用失败";
+      }
+      refreshSem();
+    });
+    $("semReindex").addEventListener("click", async () => {
+      $("semReindex").disabled = true;
+      const r = await SEMB.reindex();
+      $("semReindex").disabled = false;
+      $("semStat").textContent = r && r.ok ? `向量索引完成：${r.stat.vectors} 块` : "索引失败：" + ((r && r.error) || "");
+    });
+  }
+
+  // ── Computer Use 工具卡片 + 视觉配置 ──
+  function loadVisionCfg() {
+    try { return JSON.parse(localStorage.getItem("hashmm_vision_cfg") || "{}"); } catch (_) { return {}; }
+  }
+  function saveVisionCfg() {
+    localStorage.setItem("hashmm_vision_cfg", JSON.stringify({
+      base: $("visBase").value.trim(), key: $("visKey").value.trim(), model: $("visModel").value.trim() }));
+  }
+  const TOOL_ICONS = {
+    run_shell: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+    read_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    write_file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    list_dir: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    capture_screen: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+  };
+  const TOOL_LABELS = { run_shell:"执行命令", read_file:"读取文件", write_file:"写入文件", list_dir:"列出目录", capture_screen:"截取屏幕" };
+  function makeToolCard(name, args) {
+    const card = document.createElement("div");
+    card.className = "tool-card";
+    const arg = args.command || args.path || args.reason || "";
+    card.innerHTML =
+      '<div class="tool-card-head">' +
+      '<div class="tool-card-icon" style="background:var(--accent)">' + (TOOL_ICONS[name]||"") + '</div>' +
+      '<span class="tool-card-name">' + (TOOL_LABELS[name]||name) + '</span>' +
+      '<span class="tool-card-arg"></span>' +
+      '<span class="tool-card-status" style="background:var(--bg-tertiary);color:var(--ink-3)">执行中</span>' +
+      '</div>';
+    card.querySelector(".tool-card-arg").textContent = arg;
+    $("chatMsgs").appendChild(card);
+    $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+    return card;
+  }
+  function finishToolCard(card, ok, output) {
+    const st = card.querySelector(".tool-card-status");
+    st.textContent = ok ? "成功" : "失败";
+    st.style.background = ok ? "rgba(22,163,74,.12)" : "rgba(220,38,38,.12)";
+    st.style.color = ok ? "var(--success)" : "var(--danger)";
+    if (output && output !== "__SCREENSHOT__") {
+      const out = document.createElement("div");
+      out.className = "tool-card-out";
+      out.textContent = String(output).slice(0, 2000);
+      card.appendChild(out);
+    }
+    $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+  }
+
+  let offDelta = null;
+
+  // ── V86: 问答栏截屏（视觉型 Computer Use 入口）──
+  // 截完进待发条，发送时：配置了视觉模型 → 本轮转多模态走视觉模型；
+  // 未配置 → 照发文字并在对话流里明示"截图未识别"（hist 只存文本占位，防文本模型幻觉）。
+  let pendingImages = [];
+  let pendingFiles = [];   // V103.90 文本附件 [{name, content, size}]
+  function renderAttach() {
+    const strip = $("attachStrip");
+    strip.innerHTML = "";
+    const has = pendingImages.length || pendingFiles.length;
+    strip.style.display = has ? "flex" : "none";
+    pendingImages.forEach((u, i) => {
+      const d = document.createElement("div"); d.className = "att";
+      const img = document.createElement("img"); img.src = u; d.appendChild(img);
+      const x = document.createElement("button"); x.textContent = "\u00d7"; x.title = "移除";
+      x.addEventListener("click", () => { pendingImages.splice(i, 1); renderAttach(); });
+      d.appendChild(x);
+      strip.appendChild(d);
+    });
+    // V103.90 文本/代码文件卡片
+    const AT = window.hashmmAttach;
+    pendingFiles.forEach((f, i) => {
+      const lbl = AT ? AT.label({ name: f.name, size: f.size }) : { short: f.name, size: "", icon: "FILE" };
+      const d = document.createElement("div");
+      d.style.cssText = "position:relative;display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--bg-secondary);max-width:180px;";
+      d.innerHTML = `<span style="font-size:16px;">${lbl.icon}</span><div style="min-width:0;"><div style="font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${lbl.short}</div><div style="font-size:10px;color:var(--text-tertiary);">${lbl.size}</div></div>`;
+      const x = document.createElement("button"); x.textContent = "\u00d7"; x.title = "移除"; x.style.cssText = "position:absolute;top:-6px;right:-6px;width:16px;height:16px;line-height:14px;border-radius:50%;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:11px;";
+      x.addEventListener("click", () => { pendingFiles.splice(i, 1); renderAttach(); });
+      d.appendChild(x);
+      strip.appendChild(d);
+    });
+  }
+  // V103.90 处理拖入/选择的文件（图片→多模态，文本→上下文，其他→拒）
+  async function handleDroppedFiles(fileList) {
+    const AT = window.hashmmAttach;
+    const files = [...(fileList || [])];
+    for (const file of files) {
+      const v = AT ? AT.validate(file) : { ok: false, reason: "不支持" };
+      if (!v.ok) { cfgIOMsgFlash("跳过 " + file.name + "：" + v.reason); continue; }
+      if (v.kind === "image") {
+        try { const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); pendingImages.push(url); }
+        catch (_) { cfgIOMsgFlash("读取失败：" + file.name); }
+      } else if (v.kind === "text") {
+        try { const txt = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(file); }); pendingFiles.push({ name: file.name, content: txt, size: file.size }); }
+        catch (_) { cfgIOMsgFlash("读取失败：" + file.name); }
+      }
+    }
+    renderAttach();
+    if ($("chatText")) $("chatText").focus();
+  }
+  $("shotBtn").addEventListener("click", async () => {
+    const CU = window.hashmmCU;
+    if (!CU || $("shotBtn").disabled) return;
+    $("shotBtn").disabled = true;
+    try {
+      const cap = await CU.capture({ hideSelf: true });
+      if (cap && cap.ok && cap.dataUrl) { openShotAnnotate(cap.dataUrl); }   // V103.90 截完先进标注
+    } catch (_) {}
+    $("shotBtn").disabled = false;
+  });
+
+  // ── V103.90 截图标注（兑现"可标注"：画布画框圈重点 + 颜色 + 撤销/清除 + 合成加入对话）──
+  const SHOT_COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
+  let _shotImg = null, _shotRects = [], _shotColor = SHOT_COLORS[0], _shotDrawing = null;
+  function _shotLW() { const cv = $("shotCanvas"); return Math.max(2, Math.round((cv ? cv.width : 800) / 400)); }
+  function _shotRedraw() {
+    const cv = $("shotCanvas"); if (!cv) return; const ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (_shotImg) ctx.drawImage(_shotImg, 0, 0, cv.width, cv.height);
+    const lw = _shotLW();
+    for (const r of _shotRects) { ctx.strokeStyle = r.color; ctx.lineWidth = lw; ctx.strokeRect(r.x, r.y, r.w, r.h); }
+    if (_shotDrawing) { ctx.strokeStyle = _shotColor; ctx.lineWidth = lw; ctx.strokeRect(_shotDrawing.x, _shotDrawing.y, _shotDrawing.w, _shotDrawing.h); }
+  }
+  function _shotXY(e) {
+    const cv = $("shotCanvas"); const rect = cv.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (cv.width / rect.width);
+    const y = (e.clientY - rect.top) * (cv.height / rect.height);
+    const SH = window.hashmmShot;
+    return SH ? SH.clampPoint(x, y, cv.width, cv.height) : { x, y };
+  }
+  function openShotAnnotate(dataUrl) {
+    const img = new Image();
+    img.onload = () => {
+      _shotImg = img; _shotRects = []; _shotDrawing = null;
+      const cv = $("shotCanvas"); cv.width = img.naturalWidth || img.width; cv.height = img.naturalHeight || img.height;
+      _shotRedraw();
+      $("shotModal").style.display = "flex";
+    };
+    img.onerror = () => { pendingImages.push(dataUrl); renderAttach(); };  // 加载失败兜底：直接加原图
+    img.src = dataUrl;
+  }
+  function _shotClose() { $("shotModal").style.display = "none"; _shotImg = null; _shotRects = []; _shotDrawing = null; }
+  // 颜色选择
+  (function () {
+    const box = $("shotColors"); if (!box) return;
+    SHOT_COLORS.forEach((c, i) => {
+      const sw = document.createElement("span");
+      sw.style.cssText = `width:16px;height:16px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${i === 0 ? "var(--text-primary)" : "transparent"};`;
+      sw.addEventListener("click", () => { _shotColor = c; [...box.children].forEach((s, j) => s.style.borderColor = SHOT_COLORS[j] === c ? "var(--text-primary)" : "transparent"); });
+      box.appendChild(sw);
+    });
+  })();
+  // 画布绘制（window 级 move/up，拖出画布也能画，坐标已 clamp）
+  (function () {
+    const cv = $("shotCanvas"); if (!cv) return;
+    cv.addEventListener("mousedown", (e) => { const p = _shotXY(e); _shotDrawing = { x0: p.x, y0: p.y, x: p.x, y: p.y, w: 0, h: 0, color: _shotColor }; });
+    window.addEventListener("mousemove", (e) => {
+      if (!_shotDrawing) return;
+      const p = _shotXY(e); const SH = window.hashmmShot;
+      const nr = SH ? SH.normalizeRect(_shotDrawing.x0, _shotDrawing.y0, p.x, p.y)
+                    : { x: Math.min(_shotDrawing.x0, p.x), y: Math.min(_shotDrawing.y0, p.y), w: Math.abs(p.x - _shotDrawing.x0), h: Math.abs(p.y - _shotDrawing.y0) };
+      _shotDrawing.x = nr.x; _shotDrawing.y = nr.y; _shotDrawing.w = nr.w; _shotDrawing.h = nr.h;
+      _shotRedraw();
+    });
+    window.addEventListener("mouseup", () => {
+      if (!_shotDrawing) return;
+      const SH = window.hashmmShot;
+      const tiny = SH ? SH.isTinyRect(_shotDrawing) : (_shotDrawing.w < 4 || _shotDrawing.h < 4);
+      if (!tiny) _shotRects.push({ x: _shotDrawing.x, y: _shotDrawing.y, w: _shotDrawing.w, h: _shotDrawing.h, color: _shotDrawing.color });
+      _shotDrawing = null; _shotRedraw();
+    });
+  })();
+  if ($("shotUndo")) $("shotUndo").addEventListener("click", () => { _shotRects.pop(); _shotRedraw(); });
+  if ($("shotClearAnno")) $("shotClearAnno").addEventListener("click", () => { _shotRects = []; _shotRedraw(); });
+  if ($("shotCancel")) $("shotCancel").addEventListener("click", _shotClose);
+  if ($("shotSkip")) $("shotSkip").addEventListener("click", () => { if (_shotImg) { pendingImages.push(_shotImg.src); renderAttach(); } _shotClose(); $("chatText").focus(); });
+  if ($("shotConfirm")) $("shotConfirm").addEventListener("click", () => {
+    const cv = $("shotCanvas");
+    if (cv && _shotImg) { try { pendingImages.push(cv.toDataURL("image/png")); renderAttach(); } catch (_) {} }
+    _shotClose(); $("chatText").focus();
+  });
+  function noticeRow(label, text) {
+    const el = addMsg("assistant", "");
+    el.parentElement.querySelector(".m-role").textContent = label;
+    el.style.color = "var(--text-tertiary)"; el.style.fontSize = "11px";
+    el.textContent = text;
+  }
+  function toMultimodal(text, images) {
+    return { role: "user", content: [
+      { type: "text", text },
+      ...images.map(u => ({ type: "image_url", image_url: { url: u } })),
+    ]};
+  }
+
+  async function sendChat() {
+    if (chatting || !LLM) return;
+    const q = $("chatText").value.trim();
+    if (!q && !pendingImages.length && !pendingFiles.length) return;
+    if (q) lastUserText = q;                 // V103.90 供重新生成
+    $("chatToolbar").style.display = "flex";  // 有对话后显示工具栏
+
+    // 深度检索（Self-RAG）：勾选则走后端 /api/deepsearch（模型驱动多跳 + deepseek 作答 + 自评
+    // + 自适应再检索 + 忠实度门控），不走本地 BM25 + 客户端 deepseek。需已连接后端。
+    if (q && $("deepUse") && $("deepUse").checked) {
+      $("chatText").value = "";
+      addMsg("user", q);
+      const B = window.hashmmBackend;
+      const bodyEl = addMsg("assistant", "深度检索中…（多跳检索 + 自我校验，可能需 1–2 分钟）");
+      chatting = true; $("chatSend").textContent = "停止";
+      try {
+        const rr = B ? await B.deepsearch({ query: q, max_hops: 3 })
+                     : { ok: false, error: "桌面端未提供后端通道" };
+        if (!rr || !rr.ok) {
+          bodyEl.textContent = "[深度检索失败] " + ((rr && rr.error) || "未知错误")
+            + "（请确认已连接后端，且后端启动时带了 HASHMM_SEARCHR1_LORA 等模型环境变量）";
+        } else {
+          const d = rr.data || {};
+          const DF = window.hashmmDeep;
+          const disp = DF ? DF.format(d) : null;
+          bodyEl.textContent = (disp ? disp.answer : d.answer) || "（无答案）";
+          if (disp && !disp.degraded) {
+            // 过程头：自评 / 置信度 / 多跳 / 来源数 / 引用数
+            const meta = document.createElement("div");
+            meta.style.cssText = "margin-top:8px;font-size:11px;color:var(--text-tertiary)";
+            meta.textContent = DF.metaSummary(disp.meta);
+            bodyEl.appendChild(meta);
+            // 子问题/多跳（若后端给了）
+            if (disp.subQuestions && disp.subQuestions.length) {
+              const sq = document.createElement("div");
+              sq.style.cssText = "margin-top:6px;font-size:11px;color:var(--text-secondary)";
+              sq.innerHTML = "检索路径：" + disp.subQuestions.map(q => String(q).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))).join(" → ");
+              bodyEl.appendChild(sq);
+            }
+            // 编号来源卡片（可展开看片段）
+            if (disp.sources && disp.sources.length) {
+              const wrap = document.createElement("div");
+              wrap.style.cssText = "margin-top:8px;display:flex;flex-direction:column;gap:4px";
+              const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+              for (const s of disp.sources) {
+                const cited = disp.citedNumbers.includes(s.n);
+                const det = document.createElement("details");
+                det.style.cssText = "font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);padding:5px 8px";
+                const fileName = s.file.split(/[\\/]/).pop();
+                det.innerHTML =
+                  `<summary style="cursor:pointer;color:var(--text-secondary);${cited ? "font-weight:600" : ""}">` +
+                  `[${s.n}] ${esc(fileName)}${s.page != null ? " · 第" + s.page + "页" : ""}` +
+                  `${s.score != null ? ' <span style="color:var(--text-tertiary)">· ' + (Math.round(s.score * 1000) / 1000) + "</span>" : ""}` +
+                  `${cited ? ' <span style="color:var(--accent)">· 答案引用</span>' : ""}</summary>` +
+                  `<div style="margin-top:4px;color:var(--text-tertiary);max-height:120px;overflow:auto">${esc(s.snippet) || "（无片段）"}</div>`;
+                wrap.appendChild(det);
+              }
+              bodyEl.appendChild(wrap);
+            }
+          }
+          hist.push({ role: "user", content: q });
+          hist.push({ role: "assistant", content: (disp ? disp.answer : d.answer) || "" });
+        }
+      } catch (e) {
+        bodyEl.textContent = "[深度检索异常] " + ((e && e.message) || e);
+      }
+      chatting = false; $("chatSend").textContent = "发送";
+      $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+      return;
+    }
+
+    const cfg = loadLLMCfg();
+    if (!cfg.key) { $("cfgRow").style.display = "flex"; $("llmKey").focus(); return; }
+    // V86: 取走待发截图；视觉配置决定本轮怎么处理它们
+    const imgs = pendingImages.splice(0); renderAttach();
+    const visCfg = loadVisionCfg();
+    const hasVision = !!(visCfg.base && visCfg.key && visCfg.model);
+    const qe = q || (imgs.length ? "请分析截图内容" : "");
+    $("chatText").value = "";
+    const uBody = addMsg("user", q || "（截图提问）");
+    if (imgs.length) {
+      const strip = document.createElement("div");
+      strip.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px";
+      for (const u of imgs) {
+        const im = document.createElement("img"); im.src = u;
+        im.style.cssText = "height:72px;max-width:160px;object-fit:cover;border:1px solid var(--border);border-radius:8px";
+        strip.appendChild(im);
+      }
+      uBody.appendChild(strip);
+    }
+    // V73: 本地检索注入——勾选且知识库非空时，检索 top-4 拼进本轮上下文（带来源标注）
+    let userContent = qe;
+    if (q && RAG && $("kbUse") && $("kbUse").checked) {
+      try {
+        const sr = await RAG.search(q, 4);
+        if (sr && sr.ok && sr.results.length) {
+          const ctx = sr.results.map((r, i) => `[${i+1}] (${r.file})\n${r.text}`).join("\n\n");
+          userContent = "参考以下本地知识库片段回答（无关片段忽略；引用时标注[编号]）：\n\n"
+            + ctx + "\n\n---\n问题：" + q;
+          const srcEl = addMsg("assistant", "");
+          srcEl.parentElement.querySelector(".m-role").textContent = "检索";
+          srcEl.style.color = "var(--text-tertiary)";
+          srcEl.style.fontSize = "11px";
+          srcEl.textContent = "命中 " + sr.results.length + " 个知识片段 · " +
+            [...new Set(sr.results.map(r => r.file))].join("、");
+        }
+      } catch (_) {}
+    }
+    // V103.90 文本附件作为上下文（拼在最前，不污染知识库检索词）
+    let _attachNote = "";
+    if (pendingFiles.length && window.hashmmAttach) {
+      userContent = window.hashmmAttach.buildTextContext(pendingFiles) + "\n\n---\n" + userContent;
+      _attachNote = `\n[附带 ${pendingFiles.length} 个文件：${pendingFiles.map(f => f.name).join("、")}]`;
+      pendingFiles = [];                 // 用完即清
+      renderAttach();
+    }
+    // hist 永远只存文本（含截图占位注记），防止后续轮文本模型遇到 image_url 报错或幻觉
+    const histNote = (imgs.length
+      ? (hasVision ? `\n[附带 ${imgs.length} 张截图，已交视觉模型解读]`
+                   : `\n[附带 ${imgs.length} 张截图：未配置视觉模型，本轮未识别]`)
+      : "") + _attachNote;
+    if (imgs.length && !hasVision) {
+      noticeRow("提示", "截图未识别：未配置视觉模型。在上方设置里填写视觉模型 Base/Key/Model（如接 Codex）后即可解读截图。");
+    }
+    hist.push({ role: "user", content: userContent + histNote });
+    const bodyEl = addMsg("assistant", "");
+    chatting = true; $("chatSend").textContent = "停止";
+    let acc = "";
+    offDelta = LLM.onDelta((m) => {
+      if (m.text) { acc += m.text; bodyEl.textContent = acc; $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight; }
+    });
+    const CU = window.hashmmCU;
+    const cuOn = $("cuToggle") && $("cuToggle").checked && CU;
+    if (cuOn) {
+      // ── Computer Use 循环：LLM 与工具多轮交互，直到无 tool_calls ──
+      if (offDelta) { offDelta(); offDelta = null; }
+      bodyEl.textContent = "思考中…";
+      const tools = await CU.tools(hasVision);
+      let convMsgs = [
+        { role: "system", content: "你是能操控用户电脑的助手。需要时调用 run_shell/read_file/write_file/list_dir 完成任务。每步说明你要做什么。任务完成后给出总结。" },
+        ...hist.slice(-12),
+      ];
+      // V86: 带截图提问且配了视觉模型 → 末位用户消息转多模态（首轮即走视觉模型）
+      if (imgs.length && hasVision) convMsgs[convMsgs.length - 1] = toMultimodal(userContent, imgs);
+      let guard = 0;
+      while (guard++ < 8) {
+        const lastHasImg = Array.isArray(convMsgs[convMsgs.length-1]?.content)
+          && convMsgs[convMsgs.length-1].content.some(p => p.type === "image_url");
+        const useVis = hasVision && lastHasImg;
+        const rr = await LLM.chatTools({
+          baseUrl: useVis ? visCfg.base : (cfg.base || "https://api.deepseek.com"),
+          apiKey: useVis ? visCfg.key : cfg.key,
+          model: useVis ? visCfg.model : (cfg.model || "deepseek-chat"),
+          messages: convMsgs, tools });
+        if (!rr || !rr.ok) { bodyEl.textContent = "[错误] " + ((rr && rr.error) || "失败"); break; }
+        const msg = rr.message;
+        convMsgs.push(msg);
+        if (msg.content) { acc += (acc ? "\n\n" : "") + msg.content; bodyEl.textContent = acc; }
+        const calls = msg.tool_calls || [];
+        if (!calls.length) { hist.push({ role: "assistant", content: acc }); renderAssistantBody(bodyEl, acc); persistConv(); notifyAssistant(acc); break; }
+        for (const call of calls) {
+          let cargs = {}; try { cargs = JSON.parse(call.function.arguments || "{}"); } catch (_) {}
+          const card = makeToolCard(call.function.name, cargs);
+          let exec, toolContent;
+          if (call.function.name === "capture_screen") {
+            // 视觉型：截屏 → 多模态消息喂视觉模型
+            const cap = await CU.capture();
+            if (cap && cap.ok) {
+              finishToolCard(card, true, "已截取屏幕画面");
+              convMsgs.push({ role: "tool", tool_call_id: call.id, content: "（屏幕截图见下条消息）" });
+              convMsgs.push({ role: "user", content: [
+                { type: "text", text: "这是当前屏幕截图，请据此继续：" },
+                { type: "image_url", image_url: { url: cap.dataUrl } },
+              ]});
+              continue;
+            } else {
+              finishToolCard(card, false, (cap && cap.error) || "截屏失败");
+              convMsgs.push({ role: "tool", tool_call_id: call.id, content: "截屏失败" });
+              continue;
+            }
+          }
+          exec = await CU.exec(call.function.name, cargs);
+          finishToolCard(card, exec.ok, exec.ok ? (exec.output || "完成") : (exec.error || "失败"));
+          convMsgs.push({ role: "tool", tool_call_id: call.id,
+            content: (exec.output || exec.error || "（无输出）").slice(0, 4000) });
+        }
+      }
+      chatting = false; $("chatSend").textContent = "发送";
+      return;
+    }
+    // V103.90 方案3：勾选「本地模型」且本地可用 → 全程离线作答（数据不出端），不走云端。
+    // 复用已接好的 LLM.onDelta 流式回吐；带截图走视觉模型时不接管（本地文本模型不处理图像）。
+    const wantLocal = $("localLlmUse") && $("localLlmUse").checked && LLM.localGenerate && !(imgs.length && hasVision);
+    if (wantLocal) {
+      // 近几轮对话拼成纯文本，给无状态的本地会话一点上下文
+      const recent = hist.slice(-7, -1)
+        .map(m => (m.role === "user" ? "用户：" : "助手：") + (m.content || "")).join("\n");
+      const lr = await LLM.localGenerate({
+        system: "你是 HashMM 企业知识助手。基于提供的本地知识库片段作答，事实需标注[编号]出处；"
+              + "无依据时如实说明，绝不编造。回答简洁专业。",
+        context: "",
+        user: (recent ? recent + "\n\n" : "") + userContent,
+        options: { temperature: 0.3, maxTokens: 1024 },
+      });
+      if (offDelta) { offDelta(); offDelta = null; }
+      chatting = false; $("chatSend").textContent = "发送";
+      if (!lr || !lr.ok) {
+        bodyEl.textContent = (acc ? acc + "\n" : "") + "[本地模型不可用] " + ((lr && lr.error) || "")
+          + "\n（可取消勾选「本地模型」改用云端）";
+      } else {
+        if (!acc && lr.text) { acc = lr.text; bodyEl.textContent = acc; }  // 兜底：未走 delta 流时用返回全文
+        hist.push({ role: "assistant", content: acc });
+        renderAssistantBody(bodyEl, acc); persistConv(); notifyAssistant(acc);
+      }
+      return;
+    }
+    // V86: 带截图且配了视觉模型 → 本轮消息转多模态、走视觉模型（hist 不变，仍是文本占位）
+    let msgs = hist.slice(-20);
+    let useBase = cfg.base || "https://api.deepseek.com", useKey = cfg.key, useModel = cfg.model || "deepseek-chat";
+    if (imgs.length && hasVision) {
+      msgs[msgs.length - 1] = toMultimodal(userContent, imgs);
+      useBase = visCfg.base; useKey = visCfg.key; useModel = visCfg.model;
+    }
+    const r = await LLM.chat({ baseUrl: useBase,
+      apiKey: useKey, model: useModel,
+      messages: msgs });
+    if (offDelta) { offDelta(); offDelta = null; }
+    chatting = false; $("chatSend").textContent = "发送";
+    if (!r || !r.ok) bodyEl.textContent = acc + "\n[错误] " + ((r && r.error) || "请求失败");
+    else { hist.push({ role: "assistant", content: acc }); renderAssistantBody(bodyEl, acc); persistConv(); notifyAssistant(acc); }
+  }
+  // V103.90 方案3：本地模型开关——探测运行时与模型可用性，可用才显示；持久化勾选；不可用给提示。
+  (async function initLocalLlm() {
+    try {
+      if (!(window.hashmmLLM && hashmmLLM.localStatus)) return;
+      const label = $("localLlmLabel"), box = $("localLlmUse");
+      if (!label || !box) return;
+      const st = await hashmmLLM.localStatus();
+      if (!st || !st.ok) return;
+      // 运行时已安装才展示开关（没装就别用一个永远点不动的勾选框打扰用户）
+      if (st.runtimeAvailable) {
+        label.style.display = "flex";
+        label.title = st.hint || label.title;
+        try { box.checked = localStorage.getItem("hashmm_local_llm") === "1"; } catch (_) {}
+        // 勾了但模型没就绪 → 取消并提示
+        if (box.checked && !st.viable) { box.checked = false; }
+        box.addEventListener("change", async () => {
+          if (box.checked) {
+            const s2 = await hashmmLLM.localStatus();
+            if (!s2 || !s2.ok || !s2.viable) {
+              box.checked = false;
+              if (typeof noticeRow === "function")
+                noticeRow("本地模型", (s2 && s2.hint) || "本地模型暂不可用");
+              return;
+            }
+            if (typeof noticeRow === "function")
+              noticeRow("本地模型", "已开启：本机作答，文档与问答数据不出设备。");
+          }
+          try { localStorage.setItem("hashmm_local_llm", box.checked ? "1" : "0"); } catch (_) {}
+        });
+      }
+    } catch (_) { /* 探测失败静默——保持云端默认 */ }
+  })();
+  $("chatSend").addEventListener("click", () => {
+    if (chatting) { LLM.abort(); return; }
+    sendChat();
+  });
+  $("chatText").addEventListener("keydown", (e) => {
+    // V103.90 尊重「Enter 发送」偏好：开→Enter 发送、Shift+Enter 换行；关→Enter 换行、Ctrl/⌘+Enter 发送
+    if (e.key !== "Enter") return;
+    const sendOnEnter = !_prefs || _prefs.sendOnEnter !== false;
+    const wantSend = sendOnEnter ? (!e.shiftKey) : (e.ctrlKey || e.metaKey);
+    if (wantSend) { e.preventDefault(); if (!chatting) sendChat(); }
+  });
+
+  // ── V103.90 重新生成 / 清空对话 ──
+  if ($("chatRegen")) $("chatRegen").addEventListener("click", () => {
+    if (chatting) return;
+    if (!lastUserText) return;
+    // 从尾部删 DOM 行直到（含）最近一条用户消息；hist 同步回退到该用户消息之前
+    const msgs = $("chatMsgs");
+    const rows = [...msgs.querySelectorAll(".m-row")];
+    for (let i = rows.length - 1; i >= 0; i--) { const isUser = rows[i].classList.contains("user"); rows[i].remove(); if (isUser) break; }
+    while (hist.length && hist[hist.length - 1].role !== "user") hist.pop();
+    if (hist.length) hist.pop();   // 删掉那条用户消息（sendChat 会按 lastUserText 重新加）
+    $("chatText").value = lastUserText;
+    sendChat();
+  });
+  if ($("chatClear")) $("chatClear").addEventListener("click", () => {
+    if (chatting) return;
+    if (!confirm("清空当前对话？（不影响知识库与配置）")) return;
+    $("chatMsgs").innerHTML = "";
+    hist.length = 0;
+    $("chatToolbar").style.display = "none";
+    _convId = null;
+  });
+
+  // ═══ V103.90 偏好设置 / 配置导入导出 / 对话历史 ═══
+  const PREFS = window.hashmmPrefs, CIO = window.hashmmConfigIO, CONV = window.hashmmConv, D2 = window.hashmmDesktop;
+  let _prefs = (PREFS && PREFS.DEFAULTS) ? Object.assign({}, PREFS.DEFAULTS) : { theme: "dark", fontSize: 14, density: "comfortable", sendOnEnter: true, renderMarkdown: true };
+  let _convId = null, _convList = [];
+
+  // —— 偏好：应用 CSS 变量 + 字号/行距 ——
+  function applyPrefs(p) {
+    if (!PREFS) return;
+    _prefs = PREFS.normalize(p);
+    const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const { vars } = PREFS.cssVariables(_prefs, dark);
+    const root = document.documentElement;
+    for (const k in vars) root.style.setProperty(k, vars[k]);
+    document.body.style.fontSize = vars["--app-font-size"] || "14px";
+    // 同步控件
+    if ($("prefTheme")) $("prefTheme").value = _prefs.theme;
+    if ($("prefFont")) { $("prefFont").value = _prefs.fontSize; $("prefFontVal").textContent = _prefs.fontSize + "px"; }
+    if ($("prefDensity")) $("prefDensity").value = _prefs.density;
+    if ($("prefSendEnter")) $("prefSendEnter").checked = _prefs.sendOnEnter;
+    if ($("prefMarkdown")) $("prefMarkdown").checked = _prefs.renderMarkdown;
+  }
+  async function savePrefs() {
+    if (CIO && CIO.applyMainPatch) { try { await CIO.applyMainPatch({ preferences: _prefs }); } catch (_) {} }
+  }
+  function onPrefChange(key, val) { _prefs = PREFS ? PREFS.update(_prefs, key, val) : _prefs; applyPrefs(_prefs); savePrefs(); }
+  if ($("prefTheme")) $("prefTheme").addEventListener("change", () => onPrefChange("theme", $("prefTheme").value));
+  if ($("prefFont")) $("prefFont").addEventListener("input", () => { $("prefFontVal").textContent = $("prefFont").value + "px"; onPrefChange("fontSize", Number($("prefFont").value)); });
+  if ($("prefDensity")) $("prefDensity").addEventListener("change", () => onPrefChange("density", $("prefDensity").value));
+  if ($("prefSendEnter")) $("prefSendEnter").addEventListener("change", () => onPrefChange("sendOnEnter", $("prefSendEnter").checked));
+  if ($("prefMarkdown")) $("prefMarkdown").addEventListener("change", () => onPrefChange("renderMarkdown", $("prefMarkdown").checked));
+  if ($("btnSettings")) $("btnSettings").addEventListener("click", () => { const p = $("settingsPanel"); p.style.display = p.style.display === "none" ? "flex" : "none"; if ($("historyPanel")) $("historyPanel").style.display = "none"; });
+  if ($("settingsClose")) $("settingsClose").addEventListener("click", () => { $("settingsPanel").style.display = "none"; });
+
+  // —— 配置导入导出 ——
+  function cfgIOMsg(text, kind) { const el = $("cfgIOMsg"); if (!el) return; el.style.display = "block"; el.style.color = kind === "err" ? "var(--danger)" : kind === "ok" ? "var(--success)" : "var(--text-secondary)"; el.textContent = text; }
+  async function doExport(includeSecrets) {
+    if (!CIO || !D2) return;
+    try {
+      const main = await D2.getConfig();
+      const llmCfg = (function () { try { return JSON.parse(localStorage.getItem("hashmm_llm_cfg") || "{}"); } catch (_) { return {}; } })();
+      const visionCfg = (function () { try { return JSON.parse(localStorage.getItem("hashmm_vision_cfg") || "{}"); } catch (_) { return {}; } })();
+      const json = CIO.buildExportString({ mainConfig: main, llmCfg, visionCfg, preferences: _prefs }, { includeSecrets });
+      const r = await CIO.exportToFile(json, includeSecrets ? "hashmm-config-backup.json" : "hashmm-config-share.json");
+      if (r && r.ok) cfgIOMsg("已导出到 " + r.path, "ok");
+      else if (!(r && r.canceled)) cfgIOMsg("导出失败：" + ((r && r.error) || ""), "err");
+    } catch (e) { cfgIOMsg("导出出错：" + (e && e.message || e), "err"); }
+  }
+  if ($("cfgExportFull")) $("cfgExportFull").addEventListener("click", () => doExport(true));
+  if ($("cfgExportSafe")) $("cfgExportSafe").addEventListener("click", () => doExport(false));
+  if ($("cfgImport")) $("cfgImport").addEventListener("click", async () => {
+    if (!CIO) return;
+    try {
+      const r = await CIO.importFromFile();
+      if (!r || !r.ok) { if (!(r && r.canceled)) cfgIOMsg("读取失败：" + ((r && r.error) || ""), "err"); return; }
+      const parsed = CIO.parseImport(r.content);
+      if (!parsed.ok) { cfgIOMsg((parsed.errors || []).join("；"), "err"); return; }
+      const warn = (parsed.warnings || []).length ? "\n注意：" + parsed.warnings.join("；") : "";
+      if (!confirm("导入这份配置？将覆盖当前后端列表与模型配置。" + warn)) return;
+      const split = CIO.splitForApply(parsed.data);
+      await CIO.applyMainPatch(split.mainPatch);
+      try { localStorage.setItem("hashmm_llm_cfg", JSON.stringify(split.llmCfg || {})); } catch (_) {}
+      try { localStorage.setItem("hashmm_vision_cfg", JSON.stringify(split.visionCfg || {})); } catch (_) {}
+      if (split.preferences && Object.keys(split.preferences).length) applyPrefs(split.preferences);
+      cfgIOMsg("导入成功，部分设置在重新连接后生效", "ok");
+    } catch (e) { cfgIOMsg("导入出错：" + (e && e.message || e), "err"); }
+  });
+
+  // —— 对话历史持久化 ——
+  async function loadConvList() { if (!CONV) return; try { const r = await CONV.load(); _convList = CONV.deserialize((r && r.content) || ""); } catch (_) { _convList = []; } }
+  async function persistConv() {
+    if (!CONV || !hist.length) return;
+    const conv = { id: _convId, messages: hist.slice(), title: _convId ? (CONV.getById(_convList, _convId) || {}).title : "" };
+    _convList = CONV.upsert(_convList, conv);
+    // upsert 后找回当前会话 id（新会话会被分配 id）
+    if (!_convId) { const top = _convList[0]; if (top) _convId = top.id; }
+    try { await CONV.save(CONV.serialize(_convList)); } catch (_) {}
+    // V103.90 同步多标签（临时标签提升为真 convId / 更新标题）
+    try { if (typeof syncTabWithConv === "function") { const c = CONV.getById(_convList, _convId); syncTabWithConv(_convId, c && c.title); } } catch (_) {}
+  }
+  function renderHist() {
+    const box = $("histList"); if (!box || !CONV) return;
+    const sum = CONV.listSummary(_convList);
+    box.innerHTML = "";
+    if (!sum.length) { box.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary);padding:8px;text-align:center;">还没有历史对话</div>'; return; }
+    const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    for (const c of sum) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);" + (c.id === _convId ? "border-color:var(--accent);" : "");
+      const when = new Date(c.updatedAt || 0); const wd = `${when.getMonth() + 1}/${when.getDate()} ${("0" + when.getHours()).slice(-2)}:${("0" + when.getMinutes()).slice(-2)}`;
+      row.innerHTML = `<div style="flex:1;min-width:0;cursor:pointer;"><div style="font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.title)}</div><div style="font-size:10px;color:var(--text-tertiary);">${c.count} 条 · ${wd}</div></div><span class="histDel" style="cursor:pointer;color:var(--text-tertiary);padding:0 4px;">×</span>`;
+      row.querySelector("div").addEventListener("click", () => loadConv(c.id));
+      row.querySelector(".histDel").addEventListener("click", async (e) => { e.stopPropagation(); _convList = CONV.remove(_convList, c.id); if (c.id === _convId) _convId = null; try { await CONV.save(CONV.serialize(_convList)); } catch (_) {} renderHist(); });
+      box.appendChild(row);
+    }
+  }
+  function loadConv(id) {
+    const c = CONV && CONV.getById(_convList, id); if (!c) return;
+    hist.length = 0; for (const m of c.messages) hist.push(m);
+    _convId = id;
+    $("chatMsgs").innerHTML = "";
+    for (const m of c.messages) {
+      const role = m.role === "user" ? "user" : "assistant";
+      const text = typeof m.content === "string" ? m.content : (Array.isArray(m.content) ? (m.content.find(p => p && p.type === "text") || {}).text || "[多模态消息]" : "");
+      if (role === "user" || text) addMsg(role, text);
+    }
+    $("chatToolbar").style.display = "flex";
+    $("historyPanel").style.display = "none";
+    // V103.90 从历史加载 → 开/激活对应标签
+    try { if (window.hashmmTabs) { _tabState = window.hashmmTabs.open(_tabState, { id: id, title: c.title }); if (_tabState.overflow) delete _tabState.overflow; renderTabs(); } } catch (_) {}
+  }
+  if ($("btnHistory")) $("btnHistory").addEventListener("click", async () => { const p = $("historyPanel"); const show = p.style.display === "none"; p.style.display = show ? "flex" : "none"; if ($("settingsPanel")) $("settingsPanel").style.display = "none"; if (show) { await loadConvList(); renderHist(); } });
+  if ($("historyClose")) $("historyClose").addEventListener("click", () => { $("historyPanel").style.display = "none"; });
+  if ($("histNew")) $("histNew").addEventListener("click", () => { hist.length = 0; _convId = null; $("chatMsgs").innerHTML = ""; $("chatToolbar").style.display = "none"; $("historyPanel").style.display = "none"; if ($("chatText")) $("chatText").focus(); });
+
+  // 初始化：加载偏好 + 对话历史
+  (async () => {
+    let cfg = null;
+    try { cfg = D2 && await D2.getConfig(); } catch (_) {}
+    try { if (cfg && cfg.preferences) applyPrefs(cfg.preferences); else applyPrefs(_prefs); } catch (_) { applyPrefs(_prefs); }
+    // V103.90 多语言：填充语言选择器 + 应用已存语言
+    initLangSelect();
+    const savedLang = (cfg && cfg.uiLanguage) || "zh-CN";
+    if ($("prefLang")) $("prefLang").value = savedLang;
+    applyI18n(savedLang);
+    await loadConvList();
+    // 通知开关初值
+    try { const NT = window.hashmmNotify; if (NT && $("prefNotify")) { const r = await NT.getEnabled(); $("prefNotify").checked = !(r && r.enabled === false); } } catch (_) {}
+  })();
+
+  // ═══ V103.90 多语言界面（复用现有 i18n 引擎）═══
+  const I18N = window.hashmmI18n;
+  const LANG_NAMES = { "zh-CN": "简体中文", "en": "English" };
+  function initLangSelect() {
+    const sel = $("prefLang"); if (!sel || !I18N) return;
+    sel.innerHTML = "";
+    for (const loc of I18N.availableLocales()) { const o = document.createElement("option"); o.value = loc; o.textContent = LANG_NAMES[loc] || loc; sel.appendChild(o); }
+  }
+  // 翻译辅助（供动态生成的元素用）
+  function tr(key, fallback) { if (!I18N) return fallback; const v = I18N.t(key); return (v && v !== key) ? v : fallback; }
+  function applyI18n(locale) {
+    if (!I18N) return;
+    if (locale) I18N.setLocale(locale);
+    document.querySelectorAll("[data-i18n]").forEach(el => { const k = el.getAttribute("data-i18n"); const v = I18N.t(k); if (v && v !== k) el.textContent = v; });
+    document.querySelectorAll("[data-i18n-ph]").forEach(el => { const k = el.getAttribute("data-i18n-ph"); const v = I18N.t(k); if (v && v !== k) el.placeholder = v; });
+    // 动态区域：已渲染的每条消息操作栏文案
+    document.querySelectorAll(".msg-actions").forEach(bar => {
+      const btns = bar.querySelectorAll("button");
+      if (btns[0]) btns[0].textContent = tr("ui.msgCopy", btns[0].textContent);
+      if (btns[1]) btns[1].textContent = tr("ui.msgQuote", btns[1].textContent);
+      if (btns[2]) btns[2].textContent = tr("ui.msgShare", btns[2].textContent);
+    });
+    // 历史空态（若历史面板开着）
+    renderHistEmptyMaybe();
+  }
+  function renderHistEmptyMaybe() { const box = $("histList"); if (box && box.children.length === 1 && box.firstChild && box.firstChild.textContent && /历史对话|chat history/i.test(box.firstChild.textContent)) box.firstChild.textContent = tr("ui.historyEmpty", box.firstChild.textContent); }
+  if ($("prefLang")) $("prefLang").addEventListener("change", async () => {
+    const loc = $("prefLang").value;
+    applyI18n(loc);
+    if (window.hashmmConfigIO && window.hashmmConfigIO.applyMainPatch) { try { await window.hashmmConfigIO.applyMainPatch({ uiLanguage: loc }); } catch (_) {} }
+  });
+
+  // V103.90 桌面通知：作答完成且窗口在后台时弹通知 + 未读角标
+  function notifyAssistant(text) { try { const NT = window.hashmmNotify; if (NT) NT.assistantDone(text || ""); } catch (_) {} }
+  if ($("prefNotify")) $("prefNotify").addEventListener("change", () => { try { const NT = window.hashmmNotify; if (NT) NT.setEnabled($("prefNotify").checked); } catch (_) {} });
+
+  // ═══ V300 第二期：任务检查点 / 回滚面板 ═══
+  async function showCheckpointPanel() {
+    const CK = window.hashmmCheckpoint;
+    if (!CK) return;
+    let data;
+    try { data = await CK.list(); } catch (_e) { data = { items: [] }; }
+    const items = (data && data.items) || [];
+    const old = document.getElementById("ckptOverlay");
+    if (old) old.remove();
+    const ov = document.createElement("div");
+    ov.id = "ckptOverlay";
+    ov.style.cssText = "position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const rows = items.length ? items.map((it) => {
+        const when = new Date(it.createdAt).toLocaleString();
+        const badge = it.restored ? "已回滚" : (it.reversible ? "可回滚" : "不可回滚");
+        const btn = (it.reversible && !it.restored)
+          ? `<button data-ck="${esc(it.id)}" class="ckptRewind" style="padding:5px 12px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;font-size:12.5px;">回滚到此</button>`
+          : `<span style="font-size:11.5px;color:var(--text-tertiary);">${badge}</span>`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.summary)}</div>
+            <div style="font-size:11px;color:var(--text-tertiary);">${esc(when)} · ${it.fileCount} 个文件 · ${badge}</div>
+          </div>${btn}</div>`;
+      }).join("")
+      : `<div style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px;">本次会话还没有检查点。<br>当 Agent 写文件或执行删除/移动类命令时，会在这里出现可回滚的检查点。</div>`;
+    ov.innerHTML = `<div style="width:min(560px,92vw);max-height:80vh;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:16px;padding:18px;">
+        <div style="display:flex;align-items:center;margin-bottom:12px;">
+          <div style="flex:1;font-size:15px;font-weight:600;color:var(--text-primary);">任务检查点</div>
+          <button id="ckptClose" style="border:none;background:transparent;color:var(--text-tertiary);font-size:20px;cursor:pointer;">×</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;">回滚会用检查点里的快照覆盖当前文件（新建的文件会被删除），执行前会再确认一次。</div>
+        ${rows}
+      </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+    const closeBtn = document.getElementById("ckptClose");
+    if (closeBtn) closeBtn.addEventListener("click", () => ov.remove());
+    ov.querySelectorAll(".ckptRewind").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const id = b.getAttribute("data-ck");
+        b.disabled = true; b.textContent = "回滚中…";
+        try {
+          const r = await CK.rewind(null, id);
+          if (r && r.ok) { b.textContent = "已回滚"; setTimeout(() => showCheckpointPanel(), 600); }
+          else if (r && r.canceled) { b.disabled = false; b.textContent = "回滚到此"; }
+          else { b.textContent = "回滚失败"; }
+        } catch (_e) { b.textContent = "回滚失败"; }
+      });
+    });
+  }
+
+  // ═══ V103.90 命令面板（Ctrl/⌘+K）═══
+  const CMD = window.hashmmCmd;
+  const clickEl = (id) => { const el = $(id); if (el) el.click(); };
+  const COMMANDS = [
+    { id: "new", title: "新建对话", keywords: ["new", "chat", "新建", "对话"], action: () => clickEl("histNew") },
+    { id: "history", title: "对话历史", keywords: ["history", "历史", "记录"], action: () => clickEl("btnHistory") },
+    { id: "settings", title: "打开设置", keywords: ["settings", "preferences", "设置", "偏好", "主题", "字号"], action: () => clickEl("btnSettings") },
+    { id: "kb", title: "知识库管理", keywords: ["knowledge", "kb", "知识库", "文档"], action: () => clickEl("btnKB") },
+    { id: "cfg", title: "模型配置", keywords: ["config", "model", "配置", "模型", "api"], action: () => clickEl("btnCfg") },
+    { id: "export", title: "导出对话", keywords: ["export", "markdown", "pdf", "导出", "保存"], action: () => clickEl("btnExportChat"), when: () => hist.length > 0 },
+    { id: "clear", title: "清空对话", keywords: ["clear", "清空"], action: () => clickEl("chatClear"), when: () => hist.length > 0 },
+    { id: "regen", title: "重新生成", keywords: ["regenerate", "重新", "重生成"], action: () => clickEl("chatRegen"), when: () => !!lastUserText },
+    { id: "shot", title: "截图标注", keywords: ["screenshot", "截图", "标注"], action: () => clickEl("shotBtn") },
+    { id: "theme", title: "切换深色 / 浅色主题", keywords: ["theme", "dark", "light", "主题", "深色", "浅色"], action: () => { const t = _prefs.theme === "light" ? "dark" : "light"; onPrefChange("theme", t); } },
+    { id: "ckpt", title: "任务检查点 / 回滚", keywords: ["checkpoint", "rewind", "检查点", "回滚", "撤销", "还原"], action: () => showCheckpointPanel(), when: () => !!window.hashmmCheckpoint },
+  ];
+  let _cmdSel = 0, _cmdResults = [];
+  function renderCmdList() {
+    const q = $("cmdInput").value;
+    // 渲染层先按 when 预筛（函数不能过 bridge），只把纯对象交给模糊匹配
+    const usable = COMMANDS.filter(c => typeof c.when !== "function" || c.when());
+    const plain = usable.map(c => ({ id: c.id, title: c.title, keywords: c.keywords }));
+    const ranked = CMD ? CMD.filter(plain, q) : plain;
+    _cmdResults = ranked.map(r => COMMANDS.find(c => c.id === r.id)).filter(Boolean);
+    if (_cmdSel >= _cmdResults.length) _cmdSel = 0;
+    const box = $("cmdList"); box.innerHTML = "";
+    if (!_cmdResults.length) { box.innerHTML = '<div style="padding:14px;text-align:center;font-size:12px;color:var(--text-tertiary);">无匹配命令</div>'; return; }
+    _cmdResults.forEach((c, i) => {
+      const row = document.createElement("div");
+      row.style.cssText = "padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--text-primary);" + (i === _cmdSel ? "background:var(--bg-tertiary);" : "");
+      row.textContent = c.title;
+      row.addEventListener("mouseenter", () => { _cmdSel = i; renderCmdSelOnly(); });
+      row.addEventListener("click", () => runCmd(c));
+      box.appendChild(row);
+    });
+  }
+  function renderCmdSelOnly() { [...$("cmdList").children].forEach((el, i) => { el.style.background = i === _cmdSel ? "var(--bg-tertiary)" : ""; }); }
+  function openPalette() { $("cmdPalette").style.display = "flex"; $("cmdInput").value = ""; _cmdSel = 0; renderCmdList(); setTimeout(() => $("cmdInput").focus(), 0); }
+  function closePalette() { $("cmdPalette").style.display = "none"; }
+  function runCmd(c) { closePalette(); try { c.action(); } catch (_) {} }
+  if ($("cmdInput")) {
+    $("cmdInput").addEventListener("input", () => { _cmdSel = 0; renderCmdList(); });
+    $("cmdInput").addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); _cmdSel = CMD ? CMD.moveSelection(_cmdSel, 1, _cmdResults.length) : 0; renderCmdSelOnly(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); _cmdSel = CMD ? CMD.moveSelection(_cmdSel, -1, _cmdResults.length) : 0; renderCmdSelOnly(); }
+      else if (e.key === "Enter") { e.preventDefault(); if (_cmdResults[_cmdSel]) runCmd(_cmdResults[_cmdSel]); }
+      else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+    });
+  }
+  if ($("cmdPalette")) $("cmdPalette").addEventListener("click", (e) => { if (e.target === $("cmdPalette")) closePalette(); });
+  // 全局快捷键
+  window.addEventListener("keydown", (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && (e.key === "k" || e.key === "K")) { e.preventDefault(); if ($("cmdPalette").style.display === "none") openPalette(); else closePalette(); return; }
+    if (mod && (e.key === "n" || e.key === "N") && !e.shiftKey) { e.preventDefault(); clickEl("histNew"); return; }   // 新对话
+    if (mod && (e.key === "t" || e.key === "T")) { e.preventDefault(); newTabUI(); return; }                          // 新标签
+    if (mod && e.key === "Tab") { e.preventDefault(); switchAdjacentTab(e.shiftKey ? -1 : 1); return; }               // 切换标签
+    if (mod && (e.key === "f" || e.key === "F")) { e.preventDefault(); openSearch(); return; }                        // 会话内搜索
+  });
+
+  // ═══ V103.90 多标签会话 ═══
+  const TABS = window.hashmmTabs;
+  let _tabState = { tabs: [], activeId: null };
+  function renderTabs() {
+    const bar = $("tabBar"), list = $("tabList");
+    if (!bar || !list) return;
+    bar.style.display = _tabState.tabs.length ? "flex" : "none";
+    list.innerHTML = "";
+    const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    for (const t of _tabState.tabs) {
+      const active = t.id === _tabState.activeId;
+      const tab = document.createElement("div");
+      tab.style.cssText = "display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px 7px 0 0;cursor:pointer;font-size:12px;max-width:160px;white-space:nowrap;border:1px solid var(--border);border-bottom:" + (active ? "1px solid var(--bg-primary)" : "1px solid var(--border)") + ";background:" + (active ? "var(--bg-primary)" : "var(--bg-secondary)") + ";color:" + (active ? "var(--text-primary)" : "var(--text-secondary)") + ";";
+      tab.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;">${esc(t.title)}</span><span class="tabClose" style="flex:0 0 auto;opacity:.6;padding:0 2px;">×</span>`;
+      tab.querySelector("span").addEventListener("click", () => switchTab(t.id));
+      tab.addEventListener("click", (ev) => { if (!ev.target.classList.contains("tabClose")) switchTab(t.id); });
+      tab.querySelector(".tabClose").addEventListener("click", (ev) => { ev.stopPropagation(); closeTabUI(t.id); });
+      list.appendChild(tab);
+    }
+  }
+  function newTabUI() {
+    if (!TABS) return;
+    const tmpId = "tmp_" + Date.now().toString(36);
+    _tabState = TABS.open(_tabState, { id: tmpId, title: "新对话" });
+    if (_tabState.overflow) { delete _tabState.overflow; alert("标签数量已达上限"); return; }
+    _convId = null; hist.length = 0;
+    $("chatMsgs").innerHTML = ""; $("chatToolbar").style.display = "none";
+    renderTabs();
+    if ($("chatText")) $("chatText").focus();
+  }
+  function switchTab(id) {
+    if (!TABS) return;
+    _tabState = TABS.setActive(_tabState, id);
+    renderTabs();
+    if (String(id).startsWith("tmp_")) { _convId = null; hist.length = 0; $("chatMsgs").innerHTML = ""; $("chatToolbar").style.display = "none"; }
+    else { loadConv(id); }
+  }
+  function switchAdjacentTab(dir) { if (!TABS || _tabState.tabs.length < 2) return; _tabState = TABS.adjacent(_tabState, dir); renderTabs(); switchTab(_tabState.activeId); }
+  function closeTabUI(id) {
+    if (!TABS) return;
+    const wasActive = _tabState.activeId === id;
+    _tabState = TABS.close(_tabState, id);
+    renderTabs();
+    if (wasActive) {
+      if (_tabState.activeId) switchTab(_tabState.activeId);
+      else { _convId = null; hist.length = 0; $("chatMsgs").innerHTML = ""; $("chatToolbar").style.display = "none"; }
+    }
+  }
+  // 把当前会话登记/更新到标签（首次保存后把临时标签提升为真 convId）
+  function syncTabWithConv(convId, title) {
+    if (!TABS || !convId) return;
+    const act = _tabState.tabs.find(t => t.id === _tabState.activeId);
+    if (act && String(act.id).startsWith("tmp_")) { act.id = convId; _tabState.activeId = convId; act.title = title || act.title; renderTabs(); return; }
+    // 没有对应标签（如直接从历史加载或单会话首次保存）→ 确保有一个
+    if (!_tabState.tabs.find(t => t.id === convId)) { _tabState = TABS.open(_tabState, { id: convId, title: title || "对话" }); }
+    else { _tabState = TABS.rename(_tabState, convId, title); _tabState = TABS.setActive(_tabState, convId); }
+    renderTabs();
+  }
+  if ($("tabNew")) $("tabNew").addEventListener("click", newTabUI);
+
+  // ═══ V103.90 导出对话（Markdown / PDF / 纯文本）═══
+  const EXP = window.hashmmExport;
+  function currentConv() {
+    let title = "HashMM 对话";
+    if (_convId && CONV) { const c = CONV.getById(_convList, _convId); if (c && c.title) title = c.title; }
+    else if (CONV && hist.length) title = CONV.deriveTitle(hist);
+    return { title, messages: hist.slice(), updatedAt: Date.now() };
+  }
+  function toggleExportMenu(show) { const m = $("exportMenu"); if (m) m.style.display = (show === undefined ? (m.style.display === "none" ? "block" : "none") : (show ? "block" : "none")); }
+  if ($("btnExportChat")) $("btnExportChat").addEventListener("click", (e) => { e.stopPropagation(); if (!hist.length) { alert("当前对话为空"); return; } toggleExportMenu(); });
+  document.addEventListener("click", () => toggleExportMenu(false));
+  function buildExportHtml(conv) {
+    const MD = window.hashmmMD;
+    const esc = (t) => String(t || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    let body = `<h1>${esc(conv.title)}</h1>`;
+    for (const m of conv.messages) {
+      if (!m || !m.role || m.role === "system") continue;
+      const who = m.role === "user" ? "你" : "助手";
+      const text = typeof m.content === "string" ? m.content : (Array.isArray(m.content) ? (m.content.find(p => p && p.type === "text") || {}).text || "[多模态消息]" : "");
+      const rendered = (MD && MD.render) ? MD.render(text) : "<p>" + esc(text) + "</p>";
+      body += `<div class="msg ${m.role}"><div class="who">${who}</div><div class="content">${rendered}</div></div>`;
+    }
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;line-height:1.7;color:#1a1a1e;max-width:760px;margin:0 auto;padding:24px;}
+      h1{font-size:20px;border-bottom:2px solid #eee;padding-bottom:10px;}
+      .msg{margin:14px 0;padding:10px 14px;border-radius:8px;border:1px solid #eaeaea;}
+      .msg.user{background:#f5f7ff;} .who{font-weight:600;font-size:12px;color:#666;margin-bottom:6px;}
+      pre{background:#f4f4f6;border:1px solid #e2e2e6;border-radius:6px;padding:10px;overflow-x:auto;font-size:12px;}
+      code{background:#f0f0f2;padding:1px 5px;border-radius:4px;} pre code{background:none;padding:0;}
+      blockquote{border-left:3px solid #ddd;margin:6px 0;padding:2px 10px;color:#555;}
+    </style></head><body>${body}</body></html>`;
+  }
+  async function doExportChat(fmt) {
+    if (!EXP) return;
+    toggleExportMenu(false);
+    const conv = currentConv();
+    try {
+      if (fmt === "md") {
+        const r = await EXP.saveText(EXP.toMarkdown(conv), EXP.filename(conv.title, "md"));
+        if (r && r.ok) cfgIOMsgFlash("已导出 Markdown 到 " + r.path);
+      } else if (fmt === "txt") {
+        const r = await EXP.saveText(EXP.toPlainText(conv), EXP.filename(conv.title, "txt"));
+        if (r && r.ok) cfgIOMsgFlash("已导出文本到 " + r.path);
+      } else if (fmt === "pdf") {
+        const r = await EXP.savePdf(buildExportHtml(conv), EXP.filename(conv.title, "pdf"));
+        if (r && r.ok) cfgIOMsgFlash("已导出 PDF 到 " + r.path);
+        else if (r && !r.canceled) cfgIOMsgFlash("PDF 导出失败：" + ((r && r.error) || ""));
+      }
+    } catch (e) { cfgIOMsgFlash("导出出错：" + (e && e.message || e)); }
+  }
+  // 轻量提示（复用一个短暂浮条）
+  let _flashTimer = null;
+  function cfgIOMsgFlash(text) {
+    let el = $("exportFlash");
+    if (!el) { el = document.createElement("div"); el.id = "exportFlash"; el.style.cssText = "position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;z-index:10001;box-shadow:0 6px 20px rgba(0,0,0,.3);"; document.body.appendChild(el); }
+    el.textContent = text; el.style.display = "block";
+    if (_flashTimer) clearTimeout(_flashTimer);
+    _flashTimer = setTimeout(() => { el.style.display = "none"; }, 3500);
+  }
+  document.querySelectorAll(".exportOpt").forEach(opt => opt.addEventListener("click", (e) => { e.stopPropagation(); doExportChat(opt.getAttribute("data-fmt")); }));
+
+  // ═══ V103.90 会话内搜索（Ctrl/⌘+F）═══
+  const SRCH = window.hashmmSearch;
+  let _searchOrig = new Map(), _searchMarks = [], _searchActive = 0;
+  function restoreSearch() { _searchOrig.forEach((html, el) => { if (el && el.isConnected) el.innerHTML = html; }); _searchOrig = new Map(); _searchMarks = []; }
+  function runSearch(query) {
+    restoreSearch();
+    const q = String(query || "");
+    if (!q) { $("chatSearchCount").textContent = "0/0"; return; }
+    const bodies = $("chatMsgs").querySelectorAll(".m-body");
+    bodies.forEach(b => {
+      const text = b.textContent || "";
+      if (SRCH && SRCH.findMatches(text, q).length) {
+        _searchOrig.set(b, b.innerHTML);
+        b.innerHTML = SRCH.highlightHtml(text, q);
+      }
+    });
+    _searchMarks = [...$("chatMsgs").querySelectorAll("mark.search-hit")];
+    _searchActive = 0;
+    if (_searchMarks.length) setActiveMark(0); else $("chatSearchCount").textContent = "0/0";
+  }
+  function setActiveMark(i) {
+    _searchMarks.forEach(m => m.classList.remove("active"));
+    const m = _searchMarks[i];
+    if (m) { m.classList.add("active"); m.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    $("chatSearchCount").textContent = (_searchMarks.length ? (i + 1) : 0) + "/" + _searchMarks.length;
+  }
+  function stepSearch(delta) {
+    if (!_searchMarks.length) return;
+    _searchActive = SRCH ? SRCH.stepHit(_searchActive, delta, _searchMarks.length) : 0;
+    setActiveMark(_searchActive);
+  }
+  function openSearch() {
+    if (!hist.length) return;
+    $("chatSearchBar").style.display = "flex";
+    const inp = $("chatSearchIn");
+    inp.value = ""; setTimeout(() => inp.focus(), 0);
+    runSearch("");
+  }
+  function closeSearch() { restoreSearch(); $("chatSearchBar").style.display = "none"; }
+  if ($("chatSearchIn")) {
+    $("chatSearchIn").addEventListener("input", () => { _searchActive = 0; runSearch($("chatSearchIn").value); });
+    $("chatSearchIn").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); stepSearch(e.shiftKey ? -1 : 1); }
+      else if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+    });
+  }
+  if ($("chatSearchNext")) $("chatSearchNext").addEventListener("click", () => stepSearch(1));
+  if ($("chatSearchPrev")) $("chatSearchPrev").addEventListener("click", () => stepSearch(-1));
+  if ($("chatSearchClose")) $("chatSearchClose").addEventListener("click", closeSearch);
+  // V103.90 拖放文件到对话区
+  (function () {
+    const zone = $("chatWrap"); if (!zone) return;
+    let depth = 0;
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "display:none;position:absolute;inset:0;z-index:50;background:rgba(108,140,255,.12);border:2.5px dashed var(--accent);border-radius:10px;align-items:center;justify-content:center;font-size:15px;color:var(--accent);pointer-events:none;";
+    overlay.textContent = "松手添加文件（图片走视觉，文本/代码作上下文）";
+    zone.style.position = zone.style.position || "relative";
+    zone.appendChild(overlay);
+    zone.addEventListener("dragenter", (e) => { e.preventDefault(); depth++; overlay.style.display = "flex"; });
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+    zone.addEventListener("dragleave", (e) => { e.preventDefault(); depth = Math.max(0, depth - 1); if (!depth) overlay.style.display = "none"; });
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault(); depth = 0; overlay.style.display = "none";
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleDroppedFiles(e.dataTransfer.files);
+    });
+  })();
+</script>
+<script>
+/* Cockpit 记忆面板（自包含、纯附加；无桥接则不出现，全程 try/catch 不影响其它 UI） */
+(function(){
+  try {
+    if (!window.hashmmMemory) return;
+    var M = window.hashmmMemory;
+    function el(tag, css, txt){ var d=document.createElement(tag); if(css) d.style.cssText=css; if(txt!=null) d.textContent=txt; return d; }
+    function mini(txt, on){ var b=el("button", "font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border,#ccc);background:var(--bg,#fff);color:var(--text-primary,#222);cursor:pointer", txt); b.onclick=on; return b; }
+    var btn = el("button", "position:fixed;right:16px;bottom:16px;z-index:99998;font-size:12px;padding:7px 12px;border-radius:18px;border:1px solid var(--border,#ccc);background:var(--bg-secondary,#fff);color:var(--text-primary,#222);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)", "记忆");
+    btn.title = "查看/编辑助理记住的设置、常用目录、偏好（与手机端同一份记忆）";
+    var panel = el("div", "position:fixed;right:16px;bottom:58px;z-index:99998;width:340px;max-height:62vh;overflow:auto;display:none;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--border,#ccc);border-radius:12px;background:var(--bg-secondary,#fff);color:var(--text-primary,#222);box-shadow:0 6px 24px rgba(0,0,0,.28);font-size:12px");
+    document.body.appendChild(btn); document.body.appendChild(panel);
+    function sect(t){ return el("div", "margin-top:6px;font-weight:600;color:var(--text-secondary,#666)", t); }
+    function lineRow(){ return el("div", "display:flex;align-items:center;gap:6px;padding:2px 0"); }
+    function engLabel(v){ return v==="bing"?"必应":v==="google"?"谷歌":v==="baidu"?"百度":"未指定"; }
+    function render(data){
+      data = data || {};
+      panel.innerHTML="";
+      var head = el("div", "display:flex;align-items:center;gap:8px");
+      head.appendChild(el("b", "flex:1", "助理记忆"));
+      head.appendChild(mini("刷新", load));
+      head.appendChild(mini("收起", function(){ panel.style.display="none"; }));
+      panel.appendChild(head);
+      var f = data.fields || {};
+      panel.appendChild(sect("设置"));
+      // 默认搜索引擎：下拉
+      var se = lineRow();
+      se.appendChild(el("span", "color:var(--text-secondary,#666)", "默认搜索："));
+      var sel = el("select", "font-size:12px;padding:2px 6px");
+      [["","不指定"],["bing","必应"],["google","谷歌"],["baidu","百度"]].forEach(function(o){ var op=el("option",null,o[1]); op.value=o[0]; if((f.searchEngine||"")===o[0]) op.selected=true; sel.appendChild(op); });
+      sel.onchange=function(){ M.setField("searchEngine", sel.value).then(function(r){ if(r&&r.ok) render(r.data); }); };
+      se.appendChild(sel);
+      panel.appendChild(se);
+      // 下载目录
+      var dd = lineRow();
+      dd.appendChild(el("span", "color:var(--text-secondary,#666)", "下载目录："));
+      dd.appendChild(el("span", "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", f.downloadDir || "未设置"));
+      dd.appendChild(mini("选目录", function(){ if(M.pickDir) M.pickDir().then(function(r){ if(r&&r.ok) render(r.data); }); }));
+      if (f.downloadDir) dd.appendChild(mini("清除", function(){ M.setField("downloadDir","").then(function(r){ if(r&&r.ok) render(r.data); }); }));
+      panel.appendChild(dd);
+      // 称呼
+      if (f.name){ var nm=lineRow(); nm.appendChild(el("span","color:var(--text-secondary,#666)","称呼：")); nm.appendChild(el("span","flex:1",f.name)); nm.appendChild(mini("清除", function(){ M.setField("name","").then(function(r){ if(r&&r.ok) render(r.data); }); })); panel.appendChild(nm); }
+      // 常用目录
+      panel.appendChild(sect("常用目录"));
+      var dirs = data.dirs || [];
+      if (!dirs.length) panel.appendChild(el("div","color:var(--text-tertiary,#999)","（还没学到，多用几次取文件就会记住）"));
+      dirs.forEach(function(d){ var r2=lineRow(); r2.appendChild(el("span","flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",(d.path||""))); r2.appendChild(el("span","color:var(--text-tertiary,#999)","×"+(d.count||0))); r2.appendChild(mini("忘记", function(){ M.forgetDir(d.path).then(function(r){ if(r&&r.ok) render(r.data); }); })); panel.appendChild(r2); });
+      // 偏好
+      var prefs = data.prefs || [];
+      if (prefs.length){ panel.appendChild(sect("偏好/备注")); prefs.forEach(function(pf){ var r3=lineRow(); r3.appendChild(el("span","flex:1",pf)); r3.appendChild(mini("忘记", function(){ M.forgetPref(pf).then(function(r){ if(r&&r.ok) render(r.data); }); })); panel.appendChild(r3); }); }
+      // 最近
+      var recent = data.recent || [];
+      if (recent.length){ panel.appendChild(sect("最近任务")); recent.slice(0,6).forEach(function(x){ panel.appendChild(el("div","color:var(--text-tertiary,#999)","· "+x)); }); }
+      // 清空
+      var clr = mini("清空全部记忆", function(){ M.clear().then(function(r){ if(r&&r.ok) render(r.data); }); });
+      clr.style.marginTop="8px"; clr.style.color="var(--danger,#c00)"; panel.appendChild(clr);
+    }
+    function load(){ M.get().then(function(r){ render((r&&r.data)||{}); }).catch(function(){ render({}); }); }
+    btn.onclick=function(){ if(panel.style.display==="none"||!panel.style.display){ panel.style.display="flex"; load(); } else { panel.style.display="none"; } };
+  } catch(e) { /* 任何异常都不影响 Cockpit 其它功能 */ }
+})();
+</script>
+<script>
+/* Cockpit 任务面板（自包含、纯附加）：看并行/序列进度、取消、直接发起；无桥接不出现，try/catch 不影响其它 UI */
+(function(){
+  try {
+    if (!window.hashmmTasks) return;
+    var T = window.hashmmTasks;
+    function el(tag, css, txt){ var d=document.createElement(tag); if(css) d.style.cssText=css; if(txt!=null) d.textContent=txt; return d; }
+    function mini(txt, on){ var b=el("button", "font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border,#ccc);background:var(--bg,#fff);color:var(--text-primary,#222);cursor:pointer", txt); b.onclick=on; return b; }
+    var btn = el("button", "position:fixed;right:96px;bottom:16px;z-index:99998;font-size:12px;padding:7px 12px;border-radius:18px;border:1px solid var(--border,#ccc);background:var(--bg-secondary,#fff);color:var(--text-primary,#222);cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)", "任务");
+    btn.title = "并行/序列任务进度（与手机端同源），可取消，也可直接发起";
+    var panel = el("div", "position:fixed;right:96px;bottom:58px;z-index:99998;width:360px;max-height:62vh;overflow:auto;display:none;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--border,#ccc);border-radius:12px;background:var(--bg-secondary,#fff);color:var(--text-primary,#222);box-shadow:0 6px 24px rgba(0,0,0,.28);font-size:12px");
+    document.body.appendChild(btn); document.body.appendChild(panel);
+    function statusColor(s){ return s==="done"?"#16a34a":s==="failed"?"#dc2626":s==="paused"?"#d97706":s==="running"?"#2563eb":"#9ca3af"; }
+    function statusWord(s){ return s==="done"?"已完成":s==="running"?"进行中":s==="failed"?"失败":s==="paused"?"待确认":s==="canceled"?"已取消":"等待"; }
+    function dot(s){
+      var d=el("span","display:inline-block;flex:0 0 auto;width:9px;height:9px;border-radius:50%");
+      if(s==="running"){ d.style.cssText="display:inline-block;flex:0 0 auto;width:11px;height:11px;border:1.6px solid #2563eb;border-top-color:transparent;border-radius:50%;animation:hmspin .8s linear infinite"; }
+      else if(s==="pending"){ d.style.background="transparent"; d.style.border="1.5px solid #9ca3af"; }
+      else { d.style.background=statusColor(s); }
+      return d;
+    }
+    try { if(!document.getElementById("hmspin-style")){ var st=document.createElement("style"); st.id="hmspin-style"; st.textContent="@keyframes hmspin{to{transform:rotate(360deg)}}"; document.head.appendChild(st); } } catch(e){}
+    function render(list){
+      list = list || [];
+      panel.innerHTML="";
+      var head = el("div", "display:flex;align-items:center;gap:8px");
+      head.appendChild(el("b", "flex:1", "任务进度"));
+      head.appendChild(mini("收起", function(){ panel.style.display="none"; }));
+      panel.appendChild(head);
+      var bar = el("div", "display:flex;gap:6px;flex-wrap:wrap;padding:2px 0");
+      bar.appendChild(mini("浏览器查", function(){ var g=prompt("让电脑用浏览器查什么？（落到最近的对话，手机也能看到）"); if(g&&g.trim()) T.dispatch("agent", g.trim()).then(function(r){ if(!r||!r.ok) alert((r&&r.error)||"发起失败"); }); }));
+      bar.appendChild(mini("多步操作", function(){ var g=prompt("让电脑做的一串操作（如：整理下载文件夹）？"); if(g&&g.trim()) T.dispatch("seq", g.trim()).then(function(r){ if(!r||!r.ok) alert((r&&r.error)||"发起失败"); }); }));
+      panel.appendChild(bar);
+      panel.appendChild(el("div", "height:1px;background:var(--border,#eee);margin:4px 0"));
+      if(!list.length){ panel.appendChild(el("div", "color:var(--text-tertiary,#999)", "暂无运行中的任务（手机或上面发起后这里实时显示）")); return; }
+      list.forEach(function(task){
+        var card = el("div", "border:1px solid var(--border,#eee);border-radius:8px;padding:8px;margin:4px 0");
+        card.appendChild(el("div", "font-weight:600;margin-bottom:6px;color:var(--text-secondary,#666)", task.title||"任务"));
+        (task.items||[]).forEach(function(it){
+          var row = el("div", "display:flex;align-items:center;gap:0;padding:2px 0");
+          row.appendChild(dot(it.s));
+          row.appendChild(el("span", "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px", it.l||""));
+          row.appendChild(el("span", "font-size:11px;margin-left:6px;color:"+statusColor(it.s), statusWord(it.s)));
+          if(it.s==="running"||it.s==="pending"||it.s==="paused"){ var cb=mini("取消", function(){ T.cancel(task.rid+":"+it.i); }); cb.style.marginLeft="6px"; row.appendChild(cb); }
+          card.appendChild(row);
+        });
+        panel.appendChild(card);
+      });
+    }
+    try { T.onUpdate(render); } catch(e) {}
+    btn.onclick=function(){ if(panel.style.display==="none"||!panel.style.display){ panel.style.display="flex"; T.get().then(function(r){ render((r&&r.tasks)||[]); }).catch(function(){ render([]); }); } else { panel.style.display="none"; } };
+  } catch(e) { /* 不影响 Cockpit 其它功能 */ }
+})();
+</script>
+</body>
+</html>

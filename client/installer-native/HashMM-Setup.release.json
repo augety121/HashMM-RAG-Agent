@@ -1,0 +1,30 @@
+{
+  "schema": "hashmm.artifact-release.v2",
+  "product": "HashMM",
+  "product_version": "28.0.2",
+  "desktop_version": "17.0.2",
+  "backend_version": "2.8.2",
+  "backend_release": "V2802",
+  "api_version": "28.0.2",
+  "protocols": {
+    "event": "hashmm.event.v1",
+    "sync": "hashmm.sync.v3",
+    "work": "hashmm.work-run.v1",
+    "remote": "hashmm.remote.v4",
+    "provider": "hashmm.provider-fabric.v2",
+    "canvas": "hashmm.canvas-ops.v1",
+    "behavior": "hashmm.behavior-kernel.v1"
+  },
+  "minimum_compatible": {
+    "desktop": "16.0.0",
+    "android_version_code": 270,
+    "backend_release": "V2700"
+  },
+  "artifact": "HashMM-Setup.exe",
+  "bytes": 288781049,
+  "sha256": "829468f4af7e8752484fd1ae9c3eec3e12bef54862ca776f92f79201af20c459",
+  "publisher_signature": {
+    "required": false,
+    "verified_by_build": false
+  }
+}

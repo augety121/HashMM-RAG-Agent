@@ -1,0 +1,68 @@
+--- app_pr/HashMM-App-V271/app/src/main/java/com/hashmm/app/ui/chat/ChatFormat.kt	2026-07-10 14:40:15.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/chat/ChatFormat.kt	2026-07-10 15:28:17.948023027 +0000
+@@ -7,35 +7,44 @@
+ import java.time.temporal.ChronoUnit
+ 
+ private val hm: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+-private val mmddHm: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
+ private val ymd: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
++private val ymdHm: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+ private val weekdayCn = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+ 
++/** 把 ISO timestamptz 解析成本地时区的 ZonedDateTime；失败返回 null。App 时间显示的统一入口。 */
++private fun parseLocal(iso: String) = try {
++    OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault())
++} catch (_: Exception) {
++    null
++}
++
+ /**
+- * V269 会话列表时间显示（对齐桌面端 fmtItemDate，直接回应"几天内显示星期、超过 7 天显示完整年月日"）：
++ * V272 会话列表时间显示（严格按诉求）：
+  *   今天    → 今天 HH:mm
+  *   昨天    → 昨天 HH:mm
+- *   7 天内  → 周三 HH:mm
+- *   同年更早 → MM-dd HH:mm
+- *   跨年    → yyyy-MM-dd
+- * 之前无论多早一律显示 "MM-dd HH:mm"，用户反馈"看不出是哪天/像都在今天"。解析失败安全回退。
++ *   前天    → 前天 HH:mm
++ *   3–6 天  → 周三 HH:mm（星期几）
++ *   ≥7 天   → yyyy-MM-dd（年月日，带年）
++ * 之前无论多早一律 "MM-dd HH:mm"，用户反馈"看不出是哪天/像都在今天/没有前天"。解析失败安全回退。
+  */
+ fun formatChatTime(iso: String): String {
+     if (iso.isBlank()) return ""
+-    return try {
+-        val zoned = OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault())
+-        val date = zoned.toLocalDate()
+-        val today = LocalDate.now(ZoneId.systemDefault())
+-        val diff = ChronoUnit.DAYS.between(date, today)   // 今天=0，昨天=1，…
+-        when {
+-            diff <= 0L -> "今天 " + zoned.format(hm)
+-            diff == 1L -> "昨天 " + zoned.format(hm)
+-            diff < 7L -> weekdayCn[date.dayOfWeek.value - 1] + " " + zoned.format(hm)
+-            date.year == today.year -> zoned.format(mmddHm)
+-            else -> zoned.format(ymd)
+-        }
+-    } catch (e: Exception) {
+-        // ISO 解析失败：退回原始前 16 位（yyyy-MM-dd HH:mm 形态）
+-        iso.take(16).replace('T', ' ')
++    val zoned = parseLocal(iso) ?: return iso.take(16).replace('T', ' ')
++    val date = zoned.toLocalDate()
++    val today = LocalDate.now(ZoneId.systemDefault())
++    val diff = ChronoUnit.DAYS.between(date, today)   // 今天=0，昨天=1，前天=2…
++    return when {
++        diff <= 0L -> "今天 " + zoned.format(hm)
++        diff == 1L -> "昨天 " + zoned.format(hm)
++        diff == 2L -> "前天 " + zoned.format(hm)
++        diff < 7L -> weekdayCn[date.dayOfWeek.value - 1] + " " + zoned.format(hm)
++        else -> zoned.format(ymd)   // ≥7 天：完整年月日
+     }
+ }
++
++/** 点进会话/长按查看的完整时间戳：yyyy-MM-dd HH:mm（"点击可以看到年月日"）。解析失败回退原串。 */
++fun formatChatTimeFull(iso: String): String {
++    if (iso.isBlank()) return ""
++    val zoned = parseLocal(iso) ?: return iso.take(16).replace('T', ' ')
++    return zoned.format(ymdHm)
++}

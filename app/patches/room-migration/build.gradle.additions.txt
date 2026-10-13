@@ -1,0 +1,16 @@
+# ── 第 1 步：gradle/libs.versions.toml 的 [versions] 加 ──
+room = "2.7.1"
+
+# ── [libraries] 加 ──
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx     = { module = "androidx.room:room-ktx",     version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+# ── 第 2 步：app/build.gradle.kts 的 dependencies { } 加 ──
+implementation(libs.room.runtime)
+implementation(libs.room.ktx)
+ksp(libs.room.compiler)          # KSP 已配置（Hilt 在用），Room 直接复用
+
+# 说明：Room 2.7.x 支持 KSP2 / Kotlin 2.x（本项目 kotlin=2.3.0, ksp=2.3.5）。
+# 若构建报 Room 与 KSP 版本不兼容，把 room 版本调到与你 AGP/Kotlin 匹配的最新稳定版即可
+# （只改 versions.toml 一行，不动代码）。

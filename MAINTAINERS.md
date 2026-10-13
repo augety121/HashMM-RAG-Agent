@@ -1,6 +1,6 @@
 # 维护者验证
 
-当前公开文件仅允许说明、通用 Actions 与合成隐私检查。私有产品源码不能进入任一公开 PR；包括旧版本恢复、复制到 docs/scripts 或打包上传的形式。
+当前公开文件包含原有已脱敏旧版源码、说明、通用 Actions 与合成隐私检查。旧版源码仅从固定公开基线 `e676bc3caacb4d238b9026c6025aae5049d71060` 恢复并保持原样；后来的私有产品源码不能进入任一公开 PR，也不能复制到 docs/scripts 或打包上传。公开仓库不保留Release，所有平台和服务器包在同一个私有Release交付。
 
 `Private validation` 保留七项受控检查，`Private platform candidates` 提供苹果/Linux 原生宿主。仅仓库所有者从 main 手动触发，指定准确开放私有 PR 及完整 head；复用 private-validation 环境中的 HASHMM_SOURCE_READ（Contents/Pull requests read）与 HASHMM_STATUS_WRITE（Commit statuses write）。不扩展权限，不在文档写令牌。详情见 [平台说明](docs/PRIVATE-PLATFORM-BUILDS.md)。
 
@@ -8,4 +8,4 @@
 
 原始七项测试失败与原生平台候选分别记录；签名、安装、GPU、真实页面和生产验收分开。用户已明确授权本轮相关构建修复 PR 合并及标准 runner 执行，不包含收费资源、商店发布或生产部署。
 
-当前分支撤下历史产品源码是普通可恢复提交，不清除旧分支/提交/PR/缓存。维护历史隐私需要单独处理整个 Git 引用和 GitHub 保留对象，不能将当前文件树白名单通过说成历史不可见。
+2026-10-13已按所有者要求恢复当前分支中的旧源码，保留2026-09-16隐私清理及之后通用Actions。不要再以“防止新增私有源码”为由移除旧公开源码或改写历史。历史产品功能与测试不代表当前私有版本已验收。

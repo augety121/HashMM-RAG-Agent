@@ -20,7 +20,7 @@
 </div>
 
 > [!IMPORTANT]
-> 本仓库的历史标签保留此前已经公开的 HashMM 历史版本（V2802）源码；本页恢复原有产品介绍与安全素材。当前主分支用于公开构建与反馈，不新增私有产品源码。下文版本、功能、截图和验证记录描述该历史版本；当前持续开发的 HashMM 源码保留在私有仓库，不在此公开同步。协作方式见 [COMMUNITY.md](COMMUNITY.md)。请勿提交真实密钥、用户数据、模型、索引、日志和设备凭据。当前文件清理不代表旧 Git 历史已清除。
+> 当前主分支已恢复此前公开且完成隐私清理的 HashMM 历史版本（V2802）源码，来源固定为 `e676bc3caacb4d238b9026c6025aae5049d71060`；现有通用 Actions 保留。下文版本、功能、截图和验证记录描述该历史版本，后来的私有产品源码不在此同步。公开仓库不保留 Release；本轮所有平台和服务器包统一交付在私有仓库。协作方式见 [COMMUNITY.md](COMMUNITY.md)。请勿提交真实密钥、用户数据、模型、索引、日志和设备凭据，不改写既有源码历史。
 
 ## 产品概览
 
@@ -307,7 +307,7 @@ cd app
 
 正式 APK 需要提供独立 release keystore 环境变量。keystore、alias 和密码禁止提交到仓库。
 
-桌面端 EXE 与 Android APK 后续统一放在 [GitHub Releases](https://github.com/augety121/HashMM-RAG-Agent/releases)，不重复写入源码历史。
+所有平台安装包和服务器包统一放在[私有仓库 Releases](https://github.com/augety121/hashmm/releases)，需私有仓库访问权限；本公开仓库不保留 Release，也不提交安装载荷到源码历史。
 
 ## 开发与验证
 

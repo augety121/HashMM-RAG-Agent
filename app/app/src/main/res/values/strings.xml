@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">HashMM</string>
+    <string name="app_tagline">企业级 RAG · 自我进化 Agent</string>
+
+    <!-- 首页 -->
+    <string name="home_greeting">HashMM 助手</string>
+    <string name="home_sub">连接并掌控你的 HashMM 客户端</string>
+    <string name="feature_workbench">工作台</string>
+    <string name="feature_workbench_desc">在手机上打开 HashMM，查看知识库与对话</string>
+    <string name="feature_remote">远程控制</string>
+    <string name="feature_remote_desc">查看并操作运行客户端的电脑屏幕</string>
+    <string name="feature_settings">设置</string>
+    <string name="feature_settings_desc">客户端地址、账号、关于</string>
+
+    <!-- 登录 -->
+    <string name="login_title">登录 HashMM</string>
+    <string name="login_sub">与桌面客户端共用同一账号</string>
+    <string name="login_email">邮箱</string>
+    <string name="login_password">密码</string>
+    <string name="login_button">登录</string>
+    <string name="login_required_title">需要登录</string>
+    <string name="login_required_msg">此功能需要登录 HashMM 账号后使用</string>
+    <string name="logout">退出登录</string>
+
+    <!-- 设置 -->
+    <string name="settings_client_url">客户端地址</string>
+    <string name="settings_client_url_hint">http://192.168.1.20:3000</string>
+    <string name="settings_save">保存</string>
+    <string name="settings_account">账号</string>
+    <string name="settings_not_logged_in">未登录</string>
+    <string name="settings_about">关于</string>
+
+    <!-- 通用 -->
+    <string name="back">返回</string>
+    <string name="retry">重试</string>
+    <string name="cancel">取消</string>
+</resources>

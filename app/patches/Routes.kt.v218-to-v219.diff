@@ -1,0 +1,12 @@
+--- /tmp/b-Routes.kt	2026-07-03 14:39:09.369549019 +0000
++++ app/src/main/java/com/hashmm/app/ui/Routes.kt	2026-07-03 14:37:42.516167635 +0000
+@@ -9,6 +9,9 @@
+     const val MEMORY = "memory"                   // 记忆中心（云端同步）
+     const val SCHEDULED = "scheduled_native"      // V218: 定时任务（原生）
+     const val RUNS = "runs_native"                // V218: 运行轨迹（原生）
++    const val AUDIT = "audit_native"              // V219: 权限审计（原生）
++    const val QUALITY = "quality_native"          // V219: 质量看板（原生）
++    const val ADVANCED = "advanced_native"        // V219: 高级能力（原生概览）
+     const val KNOWLEDGE = "knowledge"             // 知识库（直连客户端后端）
+     const val WEB_WORKBENCH = "web_workbench"     // 网页版完整客户端（WebView 兜底）
+     const val WEB_WORKBENCH_ROUTE = "web_workbench?view={view}"   // V216: 可带 view 直达某桌面面板

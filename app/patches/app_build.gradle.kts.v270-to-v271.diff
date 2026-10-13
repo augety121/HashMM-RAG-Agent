@@ -1,0 +1,13 @@
+--- app_pr/HashMM-App-V270/app/build.gradle.kts	2026-07-10 13:21:09.000000000 +0000
++++ app/HashMM-App-V268/app/build.gradle.kts	2026-07-10 14:23:55.736070987 +0000
+@@ -26,8 +26,8 @@
+         applicationId = "com.hashmm.app"   // ← 独立包名，和 HashLens(com.hashlens.app) 并存，不覆盖
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 85
+-        versionName = "1.10.44"
++        versionCode = 86
++        versionName = "1.10.45"
+ 
+         // Supabase（仅用于登录鉴权；publishable key 可公开，配合后端校验）
+         buildConfigField("String", "SUPABASE_URL", "\"${localProp("SUPABASE_URL")}\"")

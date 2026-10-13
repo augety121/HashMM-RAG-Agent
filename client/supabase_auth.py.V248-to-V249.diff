@@ -1,0 +1,43 @@
+--- a/hashmm/api/supabase_auth.py
++++ b/hashmm/api/supabase_auth.py
+@@ -75,7 +75,12 @@
+             return None
+         email = (claims.get("email") or "").strip().lower()
+         app_meta = claims.get("app_metadata") or {}
+-        is_admin = (email and email in admin_emails()) or (app_meta.get("role") == "admin")
++        user_meta = claims.get("user_metadata") or {}
++        # V249 修复：admin 判定三选一——邮箱白名单 / app_metadata.role（需 service key 才能改）/
++        # user_metadata.role（Supabase 仪表盘可直接编辑，用户实际最常在这里设）。
++        is_admin = ((email and email in admin_emails())
++                    or (app_meta.get("role") == "admin")
++                    or (user_meta.get("role") == "admin"))
+         role = "admin" if is_admin else "user"
+         return {
+             "uid": f"sb_{sub}",
+@@ -144,7 +149,13 @@
+         with urllib.request.urlopen(req, timeout=8) as resp:
+             u = json.loads(resp.read().decode("utf-8"))
+         if isinstance(u, dict) and u.get("id"):
+-            return {"sub": u["id"], "email": u.get("email", ""), "role": u.get("role", "authenticated")}
++            # V249 修复：原实现把 app_metadata/user_metadata 丢掉了——App 的 Bearer token 一旦
++            # 走到这条远程兜底路（如旧版 HS256 项目验不过 JWKS），管理员身份就被抹平成普通用户，
++            # 造成"桌面端是管理员、App 不是"。这里原样透传，交给 claims_to_user 统一判。
++            return {"sub": u["id"], "email": u.get("email", ""),
++                    "role": u.get("role", "authenticated"),
++                    "app_metadata": u.get("app_metadata") or {},
++                    "user_metadata": u.get("user_metadata") or {}}
+     except Exception as e:
+         log_suppressed(logger, e)
+     return None
+@@ -201,7 +212,10 @@
+     sub = sb_user.get("id", "")
+     email = (sb_user.get("email") or "").strip()
+     app_meta = sb_user.get("app_metadata") or {}
+-    is_admin = (email and email.lower() in admin_emails()) or (app_meta.get("role") == "admin")
++    user_meta = sb_user.get("user_metadata") or {}
++    is_admin = ((email and email.lower() in admin_emails())
++                or (app_meta.get("role") == "admin")
++                or (user_meta.get("role") == "admin"))   # V249：与 claims_to_user 同一口径
+     role = "admin" if is_admin else "user"
+     return {
+         "id": f"sb_{sub}" if sub else "",

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hashmm.hashlens.org/contracts/hashmm-event-v1.schema.json",
+  "title": "HashMM Event Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "event_id", "stream_id", "event_seq", "actor", "type", "idempotency_key", "trace_id", "occurred_at", "payload_ref"],
+  "properties": {
+    "schema": { "const": "hashmm.event.v1" },
+    "event_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "stream_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "event_seq": { "type": "integer", "minimum": 1 },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["user", "agent", "system", "device"] },
+        "id": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "type": { "type": "string", "pattern": "^[a-z0-9_.-]+$", "maxLength": 128 },
+    "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 256 },
+    "trace_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "occurred_at": { "type": "number", "minimum": 0 },
+    "payload_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "redacted"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "redacted": { "const": true }
+      }
+    }
+  }
+}

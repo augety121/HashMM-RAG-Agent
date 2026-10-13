@@ -1,0 +1,10 @@
+--- app_pr/HashMM-App-V272/app/src/main/java/com/hashmm/app/ui/workbench/AdminToolsViewModel.kt	2026-07-10 23:11:21.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/workbench/AdminToolsViewModel.kt	2026-07-11 02:09:29.263498617 +0000
+@@ -23,6 +23,7 @@
+     // V267 测试中枢（对标桌面端）
+     suspend fun selftestSuites(): Pair<List<AdminToolsRepository.SelfTestSuite>, String?> = repo.selftestSuites()
+     suspend fun selftestRun(ids: List<String>): AdminToolsRepository.SelfTestRun = repo.selftestRun(ids)
++    suspend fun saveSelftestReport(md: String): Pair<Boolean, String?> = repo.saveSelftestReport(md)
+     // V268 上下文透视
+     suspend fun contextInspect(convId: String = ""): AdminToolsRepository.CtxInspect = repo.contextInspect(convId)
+ }

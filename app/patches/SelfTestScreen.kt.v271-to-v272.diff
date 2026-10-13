@@ -1,0 +1,74 @@
+--- app_pr/HashMM-App-V271/app/src/main/java/com/hashmm/app/ui/workbench/SelfTestScreen.kt	2026-07-10 14:40:15.000000000 +0000
++++ app/HashMM-App-V268/app/src/main/java/com/hashmm/app/ui/workbench/SelfTestScreen.kt	2026-07-10 15:37:13.688577707 +0000
+@@ -31,18 +31,17 @@
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.unit.dp
+-import androidx.hilt.navigation.compose.hiltViewModel
+ import com.hashmm.app.data.remote.AdminToolsRepository
+ import com.hashmm.app.ui.components.HmmStateKind
+ import com.hashmm.app.ui.components.HmmStateView
+ import kotlinx.coroutines.launch
+ 
+-/** V267 测试中枢（对标桌面端 SelfTestView，同一后端 /api/selftest）：
+- *  分组勾选要测的功能 → 一键运行 → 逐项 通过/失败/跳过 + 用时。
+- *  评测类慢套件后端限管理员执行，普通账号会显示"跳过"并注明原因，不造数。 */
++/** V272 测试中枢——**跑 App 自己的原生测试**（不再调后端桌面测试）：
++ *  分组勾选（Markdown 渲染 / 消息列表重构 / 时间显示与排序 / 后台直播 / 缓存 + 压力测试）→
++ *  一键在设备本地运行 → 逐项 通过/失败/跳过 + 用时 + 详细日志。压力项默认不勾。 */
+ @OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+-fun SelfTestScreen(onBack: () -> Unit, viewModel: AdminToolsViewModel = hiltViewModel()) {
++fun SelfTestScreen(onBack: () -> Unit) {
+     val scope = rememberCoroutineScope()
+     var suites by remember { mutableStateOf<List<AdminToolsRepository.SelfTestSuite>?>(null) }
+     var loadErr by remember { mutableStateOf<String?>(null) }
+@@ -54,9 +53,11 @@
+     fun reload() {
+         scope.launch {
+             refreshing = true
+-            val (list, err) = viewModel.selftestSuites()
+-            suites = list; loadErr = err
+-            if (sel.isEmpty()) sel = list.filter { !it.slow }.map { it.id }.toSet()   // 默认勾选全部快套件
++            // V272：测试中枢改跑 **App 原生测试**（测 App 自己的 Markdown 渲染/消息重构/时间排序/
++            // 后台流/缓存 + 压力测试），不再调后端那套桌面测试。全部在设备本地跑，秒出、不依赖后端。
++            val list = NativeTestEngine.suiteList()
++            suites = list; loadErr = null
++            if (sel.isEmpty()) sel = list.filter { !it.slow }.map { it.id }.toSet()   // 默认勾非压力项
+             refreshing = false
+         }
+     }
+@@ -66,20 +67,20 @@
+         if (running || sel.isEmpty()) return
+         scope.launch {
+             running = true; run = null
+-            run = viewModel.selftestRun(sel.toList())
++            run = NativeTestEngine.run(sel.toList())   // V272：跑 App 原生测试（含压力项）
+             running = false
+         }
+     }
+ 
+     val list = suites
+     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+-        ModuleHeader(Icons.Outlined.NetworkCheck, "测试中枢", "勾选功能 · 一键自测（与电脑端同源）", onBack)
++        ModuleHeader(Icons.Outlined.NetworkCheck, "测试中枢", "勾选功能 · 一键跑 App 原生测试（含压力测试）", onBack)
+         PullToRefreshBox(isRefreshing = refreshing, onRefresh = { reload() }, modifier = Modifier.fillMaxSize()) {
+             when {
+                 list == null -> HmmStateView(kind = HmmStateKind.Loading, title = "加载套件清单")
+                 loadErr != null -> HmmStateView(kind = HmmStateKind.Error, title = "加载失败", message = loadErr!!, onRetry = { reload() })
+                 list.isEmpty() -> HmmStateView(kind = HmmStateKind.Empty, icon = Icons.Outlined.NetworkCheck,
+-                    title = "暂无套件", message = "后端过旧：unzip -o 新包并重启后端即可")
++                    title = "暂无测试项", message = "App 原生测试引擎未注册套件")
+                 else -> {
+                     val groups = list.groupBy { it.group }
+                     val r = run
+@@ -144,7 +145,8 @@
+                                                     style = MaterialTheme.typography.bodyMedium,
+                                                     color = MaterialTheme.colorScheme.onSurface)
+                                                 if (res != null && res.detail.isNotBlank()) {
+-                                                    Text(res.detail.take(72),
++                                                    // V272：显示完整多行日志（每步一行），不再截断 72 字——用户要详细日志
++                                                    Text(res.detail.take(2000),
+                                                         style = MaterialTheme.typography.bodySmall,
+                                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                 }
