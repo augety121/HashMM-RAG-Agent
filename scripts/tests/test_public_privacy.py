@@ -23,6 +23,8 @@ class PrivacyTests(unittest.TestCase):
 
     def test_only_explicit_public_workflow_and_synthetic_tools_allowed(self):
         self.assertEqual(privacy.check_public_path('.github/workflows/private-platform-build.yml'), [])
+        self.assertEqual(privacy.check_public_path('.github/workflows/spec-review-private-validation.yml'), [])
+        self.assertTrue(privacy.check_public_path('.github/workflows/arbitrary-private-source.yml'))
         self.assertEqual(privacy.check_public_path('scripts/test_platform_workflow.py'), [])
         self.assertTrue(privacy.check_public_path('scripts/private-product-copy.py'))
     def test_detects_credentials_without_returning_value(self):
