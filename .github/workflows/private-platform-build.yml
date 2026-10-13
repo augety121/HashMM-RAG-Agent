@@ -47,7 +47,7 @@ jobs:
               {'os': 'macos-15', 'target': 'ios', 'arch': 'arm64'},
               {'os': 'macos-15', 'target': 'macos', 'arch': 'arm64'},
               {'os': 'macos-15-intel', 'target': 'macos', 'arch': 'x64'},
-              {'os': 'ubuntu-24.04', 'target': 'linux', 'arch': 'x64'},
+              {'os': 'ubuntu-22.04', 'target': 'linux', 'arch': 'x64'},
               {'os': 'windows-2022', 'target': 'windows', 'arch': 'x64'},
               {'os': 'ubuntu-24.04', 'target': 'android', 'arch': 'x64'},
           ]
