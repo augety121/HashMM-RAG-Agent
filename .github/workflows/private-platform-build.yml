@@ -248,7 +248,7 @@ jobs:
           DELIVERY_OUTCOME: ${{ steps.delivery.outcome }}
           DIAGNOSTIC_OUTCOME: ${{ steps.diagnostic_delivery.outcome }}
         run: |
-          import json, os, urllib.request
+          import json, os, urllib.error, urllib.request
           passed = all(os.environ[key] == 'success' for key in ('BUILD_OUTCOME', 'SEAL_OUTCOME', 'DELIVERY_OUTCOME', 'DIAGNOSTIC_OUTCOME'))
           body = {'state': 'success' if passed else 'failure',
               'context': 'platform/' + os.environ['TARGET'] + '-' + os.environ['ARCH'],
@@ -258,5 +258,10 @@ jobs:
               'Accept': 'application/vnd.github+json'})
           try:
               with urllib.request.urlopen(request, timeout=30) as response: response.read()
-          except Exception:
-              raise SystemExit('Private status update failed; credentials and source output withheld.')
+          except Exception as error:
+              error_type = ('HTTPError' if isinstance(error, urllib.error.HTTPError) else
+                  'URLError' if isinstance(error, urllib.error.URLError) else
+                  'TimeoutError' if isinstance(error, TimeoutError) else 'Exception')
+              http_status = error.code if isinstance(error, urllib.error.HTTPError) else None
+              raise SystemExit(f'Private status update failed; error_type={error_type}; http_status={http_status}; '
+                  'credentials and source output withheld.') from None

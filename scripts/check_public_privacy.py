@@ -24,7 +24,8 @@ PUBLIC_FILES = {
     '.github/pull_request_template.md', '.github/workflows/community.yml',
     '.github/workflows/private-validation.yml', '.github/workflows/private-platform-build.yml',
     '.github/workflows/spec-review-private-validation.yml',
-    'docs/PRIVATE-PLATFORM-BUILDS.md', 'scripts/check_public_privacy.py',
+    'docs/PRIVATE-PLATFORM-BUILDS.md', 'docs/actions-tunnel-workflow.md',
+    'scripts/check_public_privacy.py',
     'scripts/test_platform_workflow.py', 'scripts/tests/test_public_privacy.py',
     'tests/test_private_validation_diagnostics.py',
 }
