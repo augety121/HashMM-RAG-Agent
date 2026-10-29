@@ -27,6 +27,22 @@ class PrivacyTests(unittest.TestCase):
         self.assertTrue(privacy.check_public_path('.github/workflows/arbitrary-private-source.yml'))
         self.assertEqual(privacy.check_public_path('scripts/test_platform_workflow.py'), [])
         self.assertTrue(privacy.check_public_path('scripts/private-product-copy.py'))
+
+    def test_reviewed_actions_tunnel_document_is_allowed(self):
+        self.assertEqual(privacy.check_public_path('docs/actions-tunnel-workflow.md'), [])
+
+    def test_adjacent_unreviewed_documents_remain_rejected(self):
+        for name in ('docs/actions-tunnel-workflow.md.bak', 'docs/deployment.md'):
+            self.assertEqual(privacy.check_public_path(name), [(name, 'outside-public-build-allowlist')])
+
+    def test_allowed_document_still_scans_credentials_without_returning_values(self):
+        name = 'docs/actions-tunnel-workflow.md'
+        value = b'sb_' + b'secret_' + b'x' * 32
+        self.assertEqual(privacy.check_public_path(name, value), [])
+        findings = privacy.scan(name, value)
+        self.assertEqual(findings, [(name, 'supabase-key')])
+        self.assertNotIn(value.decode(), repr(findings))
+
     def test_detects_credentials_without_returning_value(self):
         value = b'sb_' + b'secret_' + b'x' * 32
         result = privacy.scan('config.txt', value)
